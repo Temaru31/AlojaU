@@ -12,12 +12,14 @@ import Comparar from './pages/Comparar'
 function App() {
   return (
     <BrowserRouter>
-      <nav className="bg-white shadow sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex gap-4 items-center">
-          <Link to="/" className="font-bold text-xl text-indigo-600">AlojaU</Link>
-          <Link to="/" className="text-sm hover:underline">Buscar</Link>
-          <Link to="/comparar" className="text-sm hover:underline">Comparar</Link>
-          <Link to="/publicar" className="ml-auto bg-indigo-600 text-white px-4 py-2 rounded text-sm">Publicar</Link>
+      <nav className="bg-white shadow sticky top-0 z-10 border-b border-gray-100">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex gap-3 sm:gap-4 items-center min-w-0">
+          <Link to="/" className="font-bold text-lg sm:text-xl text-indigo-600 shrink-0">AlojaU</Link>
+          <div className="flex gap-3 sm:gap-4 items-center min-w-0">
+            <Link to="/" className="text-xs sm:text-sm hover:underline truncate">Buscar</Link>
+            <Link to="/comparar" className="text-xs sm:text-sm hover:underline truncate">Comparar</Link>
+          </div>
+          <Link to="/publicar" className="ml-auto bg-indigo-600 hover:bg-indigo-700 text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-medium shrink-0">Publicar</Link>
         </div>
       </nav>
       <Routes>

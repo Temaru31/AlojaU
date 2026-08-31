@@ -2,12 +2,35 @@
 @tailwind components;
 @tailwind utilities;
 
-/* AlojaU - mobile first, se ve bien en 360px */
+/* AlojaU - mobile first, se ve bien en 360px - FIX overflow + responsive */
 body {
   font-family: system-ui, -apple-system, sans-serif;
   background-color: #f8fafc;
 }
 .leaflet-container {
-  height: 300px;
-  border-radius: 0.5rem;
+  border-radius: 0.75rem;
+  width: 100%;
+}
+@media (max-width: 640px) {
+  .leaflet-container {
+    min-height: 260px;
+  }
+}
+/* Fallback line-clamp si tailwind no lo incluye */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.line-clamp-1 {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* Evita desbordes de URLs largas */
+.break-words {
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
