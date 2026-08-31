@@ -1,0 +1,12 @@
+Para compañeros (cópiales esto):
+
+Hola equipo, repo listo: https://github.com/Temaru31/AlojaU
+
+Pasos:
+1. git clone https://github.com/Temaru31/AlojaU.git
+2. cd AlojaU && git checkout develop
+3. Lee docs/GUIA_EQUIPO.md (10 min)
+4. git checkout feature/HU-00X (tu HU asignada)
+5. Sigue docs/SCRUM_Y_QA.md (DoD 6 puntos) y docs/SPRINT1_SCOPE.md
+
+Dudas: ver docs/ARQUITECTURA.md y .github/pull_request_template.md

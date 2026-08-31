@@ -30,8 +30,8 @@ def get_current_user(authorization: str = Header(None)):
         return MOCK_TOKENS[token]
     return decode_token(token)
 
-def require_arrendador(user=Header(None)):
-    u = get_current_user(user) if isinstance(user, str) else user
+def require_arrendador(authorization: str = Header(None)):
+    u = get_current_user(authorization)
     if u.get("rol") != "ARRENDADOR":
         raise HTTPException(status_code=403, detail="Solo ARRENDADOR")
     return u
