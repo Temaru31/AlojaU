@@ -1,0 +1,66 @@
+======================================================================
+COMO EMPEZAR - AlojaU para compañeros (cópiales este bloque)
+Repositorio: https://github.com/Temaru31/AlojaU
+Rama base: develop (Sprint 1 = 20SP/37h)
+======================================================================
+
+¡Hola equipo! Repo ya listo con primer incremento demoable.
+
+1. CLONAR (10 min)
+-------------------
+git clone https://github.com/Temaru31/AlojaU.git
+cd AlojaU
+git checkout develop
+git pull
+Lee: docs/GUIA_EQUIPO.md (10 min) + docs/SPRINT1_SCOPE.md + docs/ARQUITECTURA.md
+
+2. TU HU Y RAMA (ya creadas, cada uno hace checkout de la suya)
+---------------------------------------------------------------
+HU-001 Buscar campus      -> git checkout feature/HU-001-buscar-campus   (Yeixon) 5SP
+HU-002 Filtros            -> git checkout feature/HU-002-filtros         (Yeixon) 3SP
+HU-003 Detalle            -> git checkout feature/HU-003-detalle         (Adrian) 3SP
+HU-005 Publicar PENDIENTE -> git checkout feature/HU-005-publicar        (Adrian) 5SP
+HU-007 Índice confianza   -> git checkout feature/HU-007-indice-confianza (Angel) 2SP
+HU-008 WhatsApp           -> git checkout feature/HU-008-whatsapp        (Yeixon) 2SP
+
+3. CORRER LOCAL (3 terminales - funciona sin BD por mock)
+----------------------------------------------------------
+# T1 BD (opcional Sprint1, si quieren datos reales)
+docker-compose up -d
+docker exec -i alojau_db psql -U alojau -d alojau < backend/db/schema.sql
+docker exec -i alojau_db psql -U alojau -d alojau < backend/db/seed.sql
+
+# T2 Backend
+cd backend
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+uvicorn app.main:app --reload --port 8000  # http://localhost:8000/docs
+
+# T3 Frontend
+cd frontend
+npm install
+cp .env.example .env
+npm run dev  # http://localhost:5173
+
+4. REGLAS DE ORO (para no perderse con IA)
+--------------------------------------------
+- Endpoint SIEMPRE /api/publicaciones (no /api/listings)
+- Fotos mínimo 3 (HU-005 C2)
+- Distancia = Haversine geodésica, NO tiempo a pie (p26)
+- Índice 0-100 = 40+20+15+15+10 + disclaimer, reportes PENDIENTE+CONFIRMADO (no ACTIVO)
+- Toda publicación nace PENDIENTE + audit (no ACTIVO directo)
+- Ver docs/IA_BITACORA.md: bitácora + 4 controles p40 en cada PR
+
+5. PR Y DOD (cuando termines)
+-------------------------------
+git commit -m "feat(HU-001): listado Tulcán"
+git push -u origin feature/HU-001-buscar-campus
+GitHub → Pull Request → base: develop → adjunta 2 capturas (Desktop 1280 + Mobile 375) + checklist DoD 6 puntos (ver .github/pull_request_template.md)
+Pide review a quien NO codeó tu HU (revisión cruzada, WIP 2)
+
+Dudas: docs/SCRUM_Y_QA.md §4 tiene casos Gherkin con curl exactos para probar sin BD.
+======================================================================
+LÍDER: después del push ya no necesitas token. Está guardado via credential.helper store.
+Si quieres borrarlo: rm ~/.git-credentials  y  github.com → Settings → Developer settings → Tokens → Delete
+======================================================================
