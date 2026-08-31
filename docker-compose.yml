@@ -1,0 +1,25 @@
+services:
+  db:
+    image: postgres:16
+    container_name: alojau_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: alojau
+      POSTGRES_PASSWORD: alojau123
+      POSTGRES_DB: alojau
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: alojau_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@alojau.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "5050:80"
+    depends_on:
+      - db
+volumes:
+  pgdata:

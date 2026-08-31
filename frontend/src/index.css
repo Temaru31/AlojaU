@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* AlojaU - mobile first, se ve bien en 360px */
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background-color: #f8fafc;
+}
+.leaflet-container {
+  height: 300px;
+  border-radius: 0.5rem;
+}
