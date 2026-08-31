@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatCOP, formatDistancia, getColorIndice, getLabelIndice } from './formatters'
+import { formatCOP, formatDistancia, getColorIndice, getLabelIndice, formatTiempoCaminando, formatDistanciaConTiempo } from './formatters'
 
 describe('formatters', ()=>{
   it('formatCOP formatea moneda COP', ()=>{
@@ -32,5 +32,17 @@ describe('formatters', ()=>{
   it('no desborda con números grandes', ()=>{
     const s = formatCOP(10000000)
     expect(s.length).toBeLessThan(30)
+  })
+  it('formatTiempoCaminando realista (80m/min)', ()=>{
+    expect(formatTiempoCaminando(80)).toBe('~1 min a pie')
+    expect(formatTiempoCaminando(111)).toBe('~1 min a pie') // 111/80=1.38 -> 1
+    expect(formatTiempoCaminando(160)).toBe('~2 min a pie')
+    expect(formatTiempoCaminando(780)).toBe('~10 min a pie')
+    expect(formatTiempoCaminando(null)).toBeNull()
+    expect(formatTiempoCaminando(5000)).toContain('h') // 5000/80=62 -> 1h 2min
+  })
+  it('formatDistanciaConTiempo combina', ()=>{
+    expect(formatDistanciaConTiempo(320)).toBe('320 m • ~4 min a pie')
+    expect(formatDistanciaConTiempo(null)).toBe('—')
   })
 })

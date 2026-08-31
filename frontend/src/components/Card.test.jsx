@@ -1,6 +1,8 @@
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, afterEach } from 'vitest'
+import { render, screen, cleanup } from '@testing-library/react'
 import Card from './Card'
+
+afterEach(()=> cleanup())
 
 const basePub = {
   id: 1,
@@ -29,14 +31,14 @@ describe('Card - HU-001/003 y overflow', ()=>{
 
   it('maneja fotos como array (no muestra URLs crudas)', ()=>{
     render(<Card pub={basePub} />)
-    // Debe mostrar "4 fotos", no URLs
-    expect(screen.getByText(/4 fotos/)).toBeInTheDocument()
+    // Debe mostrar "4 fotos" (overlay + texto), no URLs crudas
+    expect(screen.getAllByText(/4 fotos/).length).toBeGreaterThan(0)
     expect(screen.queryByText(/https:\/\/a.com/)).not.toBeInTheDocument()
   })
 
   it('maneja fotos como número legacy', ()=>{
     render(<Card pub={{...basePub, fotos: 4}} />)
-    expect(screen.getByText(/4 fotos/)).toBeInTheDocument()
+    expect(screen.getAllByText(/4 fotos/).length).toBeGreaterThan(0)
   })
 
   it('maneja canon legacy', ()=>{

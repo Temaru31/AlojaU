@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { api } from '../services/api'
 import Indice from '../components/IndiceConfianza'
 import MapaZona from '../components/MapaZona'
+import { formatTiempoCaminando } from '../utils/formatters'
 // HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp + Mapa zona
 export default function Detalle(){
   const {id}=useParams()
@@ -17,6 +18,7 @@ export default function Detalle(){
   const zona = pub.zona_nombre || pub.zona || '—'
   const dist = pub.distancia_geodesica_m ?? pub.dist_m
   const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? 3)
+  const tiempo = formatTiempoCaminando(dist)
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-4 sm:py-6 grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
       <div className="md:col-span-2 space-y-4 min-w-0">
@@ -36,13 +38,13 @@ export default function Detalle(){
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {pub.fotos.slice(0,4).map((url,i)=> (
               <div key={i} className="aspect-[4/3] overflow-hidden rounded-lg bg-gray-100">
-                <img src={url} alt={`Foto ${i+1}`} className="w-full h-full object-cover" loading="lazy" onError={e=>e.currentTarget.style.display='none'} />
+                <img src={url} alt={`Foto ${i+1} de ${pub.titulo}`} className="w-full h-full object-cover" loading="lazy" onError={e=>{ e.currentTarget.src=`https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600&h=400&fit=crop`; e.currentTarget.onerror=null }} />
               </div>
             ))}
           </div>
         )}
         <p className="text-sm break-words"><b>Reglas:</b> <span className="break-words">{pub.reglas_convivencia||pub.reglas || '—'}</span></p>
-        <p className="text-sm break-words"><b>Dirección ref:</b> {pub.direccion_referencial} • <b>Distancia:</b> {dist != null ? `${dist} m` : '—'} (Haversine, no ruteo a pie)</p>
+        <p className="text-sm break-words"><b>Dirección ref:</b> {pub.direccion_referencial} • <b>Distancia:</b> {dist != null ? `${dist} m` : '—'}{tiempo ? ` • ${tiempo}` : ''} <span className="text-xs text-gray-500">(línea recta, no ruta a pie)</span></p>
         <div className="overflow-hidden rounded-xl">
           <MapaZona zona={zona} dist_m={dist ?? 320} campus={{lat:2.443,lng:-76.606}} />
         </div>

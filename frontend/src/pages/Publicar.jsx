@@ -38,7 +38,7 @@ export default function Publicar(){
     longitud: '',
     servicios_ids: [1],
     campus_ids: [1],
-    fotos: ['https://res.cloudinary.com/demo/image/upload/v1/alojau/demo1.jpg','https://res.cloudinary.com/demo/image/upload/v1/alojau/demo2.jpg','https://res.cloudinary.com/demo/image/upload/v1/alojau/demo3.jpg'],
+    fotos: ['https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600&h=400&fit=crop','https://images.unsplash.com/photo-1484154218962-a197022b5858?w=600&h=400&fit=crop','https://images.unsplash.com/photo-1493809842364-78817add58d1?w=600&h=400&fit=crop'],
   })
   const [errors, setErrors] = useState({})
   const [submitError, setSubmitError] = useState('')
