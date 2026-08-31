@@ -1,6 +1,13 @@
 from fastapi.testclient import TestClient
 from app.main import app
 client=TestClient(app)
+
+def _items(data):
+    """Helper paginación: soporta array legacy o {items,total,pages}"""
+    if isinstance(data, dict) and "items" in data:
+        return data["items"]
+    return data
+
 def test_health():
     r=client.get("/health")
     assert r.status_code==200
@@ -12,8 +19,9 @@ def test_campus():
 def test_publicaciones_filtro():
     r=client.get("/api/publicaciones", params={"campus_id":1})
     assert r.status_code==200
+    pubs = _items(r.json())
     # solo ACTIVO
-    for p in r.json():
+    for p in pubs:
         assert p["estado"]=="ACTIVO"
 def test_publicaciones_rango_invalido():
     r=client.get("/api/publicaciones", params={"campus_id":1, "precio_min":600000, "precio_max":400000})

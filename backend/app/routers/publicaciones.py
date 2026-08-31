@@ -20,6 +20,7 @@ from app.core.security import get_current_user, require_arrendador
 from app.schemas.publicacion import PublicacionCreate, PublicacionOut, DesgloseConfianza
 from app.services.haversine import haversine_m
 from app.services.trust import calcular_indice, dias_desde, DISCLAIMER
+from app.core.pagination import paginate_params, build_paginated
 
 router = APIRouter(prefix="/api/publicaciones", tags=["publicaciones"])
 
@@ -134,14 +135,18 @@ async def _query_db_lista(
     precio_max: Optional[int],
     tipo: Optional[str],
     servicios: Optional[List[int]],
+    page: int = 1,
+    size: int = 9,
 ):
     """
     Sprint1 real DB: SELECT + JOIN publicacion_campus + cálculo distancia.
     Si campus_id, ordenar por distancia (Haversine precalculado en publicacion_campus.distancia_geodesica_m)
     Filtros combinables (HU-002 C1-3).
+    Paginación: page 1-indexed, size 1-50.
     """
     # Lazy import para evitar ciclo
     from app.models import Publicacion, PublicacionCampus, Usuario
+    from sqlalchemy import func, select as sel
 
     stmt = select(Publicacion).options(selectinload(Publicacion.imagenes), selectinload(Publicacion.servicios)).where(Publicacion.estado == "ACTIVO")
 
@@ -209,7 +214,12 @@ async def _query_db_lista(
             "telefono_whatsapp": u.telefono_whatsapp if tel_ver else None,
             "usuario_id": p.usuario_id,
         })
-    return out
+    # Paginación en memoria (para MVP, dataset pequeño; para >100 usar LIMIT/OFFSET en SQL)
+    total = len(out)
+    # si campus_id, ya está ordenado por distancia; si no, mantiene orden por id
+    offset, size_norm = paginate_params(page, size)
+    paginated_items = out[offset:offset+size_norm]
+    return build_paginated(paginated_items, total, page, size_norm)
 
 # --- Endpoints Sprint1 ---
 @router.get("", summary="HU-001 Buscar por sede + HU-002 Filtros combinables")
@@ -219,6 +229,8 @@ async def list_publicaciones(
     precio_max: Optional[int] = Query(None, ge=0, le=10_000_000, description="COP máximo"),
     tipo: Optional[str] = Query(None, pattern="^(HABITACION_FAMILIAR|HABITACION_INDEPENDIENTE|APARTAESTUDIO|COMPARTIDO)$"),
     servicios: Optional[str] = Query(None, max_length=50, description="IDs coma separados, ej: 1,3"),
+    page: int = Query(1, ge=1, le=1000, description="Página 1-indexed"),
+    size: int = Query(9, ge=1, le=50, description="Tamaño página"),
     db: AsyncSession = Depends(get_session),
 ):
     """
@@ -251,20 +263,16 @@ async def list_publicaciones(
 
     # Intento DB real con fallback mock
     try:
-        # Si db es None o ping falla, except -> mock
-        # test rápido: intenta query simple; si timeout -> mock
-        db_items = await _query_db_lista(db, campus_id, precio_min, precio_max, tipo, servicios_ids)
-        # Si DB vacía en dev, también fallback a mock para demo (opcional)
-        # Comentado para producción: if not db_items: return mock filtrado
-        return db_items
+        paginated = await _query_db_lista(db, campus_id, precio_min, precio_max, tipo, servicios_ids, page, size)
+        # Para compatibilidad con frontend viejo que espera array, si page==1 y size==9 y total<=9, devuelve array si no hay paginación explícita?
+        # Ahora siempre devolvemos paginado; frontend nuevo lo maneja, tests viejos actualizados para soportar ambos
+        return paginated
     except Exception as e:
         # Fallback MOCK (no bloquea frontend - NFR disponibilidad)
-        # print(f"[Sprint1 mock fallback] DB no disponible: {e}")
         filtradas = [p for p in MOCK_PUBS if p["estado"] == "ACTIVO"]
 
         if campus_id:
             filtradas = [p for p in filtradas if campus_id in p.get("campus_ids", [])]
-            # ordenar por Haversine (P95 <500ms: cálculo en memoria O(n))
             filtradas.sort(key=lambda p: haversine_m(p["latitud"], p["longitud"], MOCK_CAMPUS[campus_id]["lat"], MOCK_CAMPUS[campus_id]["lng"]) if p.get("latitud") else 999999)
 
         if precio_min is not None:
@@ -276,7 +284,11 @@ async def list_publicaciones(
         if servicios_ids:
             filtradas = [p for p in filtradas if all(s in p.get("servicios_ids", []) for s in servicios_ids)]
 
-        return [_to_out(p, campus_id) for p in filtradas]
+        items = [_to_out(p, campus_id) for p in filtradas]
+        total = len(items)
+        offset, size_norm = paginate_params(page, size)
+        paginated_items = items[offset:offset+size_norm]
+        return build_paginated(paginated_items, total, page, size_norm)
 
 @router.get("/{pub_id}", summary="HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp")
 async def get_publicacion(pub_id: int = Path(..., ge=1, le=1000000), db: AsyncSession = Depends(get_session)):

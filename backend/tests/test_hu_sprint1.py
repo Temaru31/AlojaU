@@ -32,11 +32,25 @@ BASE_PAYLOAD = {
 def auth_header(token="mock-token-arrendador"):
     return {"Authorization": f"Bearer {token}"}
 
+def _items(data):
+    """Helper paginación: soporta array legacy o {items,total,pages}"""
+    if isinstance(data, dict) and "items" in data:
+        return data["items"]
+    return data
+
+def _assert_paginado(data):
+    """Verifica estructura paginada cuando aplica"""
+    if isinstance(data, dict) and "items" in data:
+        assert "total" in data and "pages" in data and "page" in data and "size" in data
+        assert data["total"] >= len(data["items"])
+        assert data["pages"] >= 1
+    return _items(data)
+
 # --- HU-001 ---
 def test_hu001_c1_solo_activo_y_orden_haversine():
     r = client.get("/api/publicaciones", params={"campus_id": 1})
     assert r.status_code == 200
-    pubs = r.json()
+    pubs = _assert_paginado(r.json())
     assert len(pubs) >= 2
     for p in pubs:
         assert p["estado"] == "ACTIVO", "Solo ACTIVO en catálogo (HU-001 C1)"
@@ -46,19 +60,20 @@ def test_hu001_c1_solo_activo_y_orden_haversine():
         assert dists == sorted(dists), "Debe ordenar por Haversine (HU-001 C1)"
 
 def test_hu001_c2_cero_resultados_mensaje_vacio():
-    # campus inexistente o precio muy alto debe dar []
+    # campus inexistente o precio muy alto debe dar [] / paginado vacío
     r = client.get("/api/publicaciones", params={"campus_id": 999, "precio_min": 5000000})
     assert r.status_code == 200
-    assert r.json() == [] or all(p["estado"] == "ACTIVO" for p in r.json())
+    pubs = _items(r.json())
+    assert pubs == [] or all(p["estado"] == "ACTIVO" for p in pubs)
     # precio_min extremo sin resultados
     r2 = client.get("/api/publicaciones", params={"campus_id": 1, "precio_min": 9999999})
     assert r2.status_code == 200
-    assert r2.json() == []
+    assert _items(r2.json()) == []
 
 def test_hu001_c3_card_campos_minimos():
     r = client.get("/api/publicaciones", params={"campus_id": 1})
     assert r.status_code == 200
-    for p in r.json():
+    for p in _items(r.json()):
         assert "tipo_inmueble" in p
         assert "canon_mensual" in p
         assert p["canon_mensual"] > 0
@@ -73,20 +88,20 @@ def test_hu002_c1_rango_invalido_bloqueado():
     # rango válido debe pasar
     r2 = client.get("/api/publicaciones", params={"campus_id": 1, "precio_min": 400000, "precio_max": 600000})
     assert r2.status_code == 200
-    for p in r2.json():
+    for p in _items(r2.json()):
         assert 400000 <= p["canon_mensual"] <= 600000
 
 def test_hu002_c2_filtros_tipo_servicios_and():
     # tipo
     r = client.get("/api/publicaciones", params={"campus_id": 1, "tipo": "APARTAESTUDIO"})
     assert r.status_code == 200
-    for p in r.json():
+    for p in _items(r.json()):
         assert p["tipo_inmueble"] == "APARTAESTUDIO"
     # servicios AND (debe contener todos)
     r2 = client.get("/api/publicaciones", params={"campus_id": 1, "servicios": "1"})
     assert r2.status_code == 200
     # todos deben tener servicio 1
-    for p in r2.json():
+    for p in _items(r2.json()):
         assert 1 in p.get("servicios_ids", [])
 
 def test_hu002_c1_validacion_tipos():
@@ -130,7 +145,7 @@ def test_hu003_c3_pendiente_no_en_catalogo_pero_detalle():
     new_id = data["id"]
     # No debe aparecer en catálogo ACTIVO (busca por título, no solo id, para evitar colisión mock vs DB)
     r2 = client.get("/api/publicaciones", params={"campus_id": 1})
-    titulos = [p["titulo"] for p in r2.json()]
+    titulos = [p["titulo"] for p in _items(r2.json())]
     assert titulo_unico not in titulos, "PENDIENTE no debe aparecer en catálogo (HU-003 C3 / HU-005 C3)"
     # Pero detalle sí debe ser accesible y mostrar estado PENDIENTE
     r3 = client.get(f"/api/publicaciones/{new_id}")
@@ -190,6 +205,54 @@ def test_hu005_validacion_canon_y_fotos_url():
     payload2 = {**BASE_PAYLOAD, "fotos": ["not-a-url", "https://a.com/2.jpg", "https://a.com/3.jpg"]}
     r2 = client.post("/api/publicaciones", json=payload2, headers=auth_header())
     assert r2.status_code == 422
+
+# --- Paginación (HU-001/002 + §6) ---
+def test_paginacion_basica():
+    r = client.get("/api/publicaciones", params={"campus_id": 1, "page": 1, "size": 2})
+    assert r.status_code == 200
+    data = r.json()
+    assert "items" in data and "total" in data and "pages" in data
+    assert data["page"] == 1 and data["size"] == 2
+    assert len(data["items"]) <= 2
+    assert data["total"] >= len(data["items"])
+    assert data["pages"] == (data["total"] + 2 - 1) // 2
+    # página 2 debe tener otros ids
+    r2 = client.get("/api/publicaciones", params={"campus_id": 1, "page": 2, "size": 2})
+    assert r2.status_code == 200
+    data2 = r2.json()
+    if data["total"] > 2:
+        assert len(data2["items"]) > 0
+        ids1 = {p["id"] for p in data["items"]}
+        ids2 = {p["id"] for p in data2["items"]}
+        assert ids1.isdisjoint(ids2), "Páginas no deben repetir ids"
+
+def test_paginacion_size_limite():
+    # size grande dentro de límite
+    r = client.get("/api/publicaciones", params={"campus_id": 1, "page": 1, "size": 50})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["size"] == 50
+    # size 0 inválido 422
+    r2 = client.get("/api/publicaciones", params={"page": 0, "size": 9})
+    assert r2.status_code == 422
+    # size >50 422
+    r3 = client.get("/api/publicaciones", params={"page": 1, "size": 51})
+    assert r3.status_code == 422
+
+def test_paginacion_filtros_combinados():
+    # Filtros + paginación: precio + tipo + servicios + page
+    r = client.get("/api/publicaciones", params={"campus_id": 1, "precio_min": 400000, "precio_max": 600000, "page": 1, "size": 3})
+    assert r.status_code == 200
+    data = r.json()
+    for p in _items(data):
+        assert 400000 <= p["canon_mensual"] <= 600000
+        assert p["estado"] == "ACTIVO"
+    # con tipo + servicios
+    r2 = client.get("/api/publicaciones", params={"campus_id": 1, "tipo": "APARTAESTUDIO", "servicios": "1", "page": 1, "size": 9})
+    assert r2.status_code == 200
+    for p in _items(r2.json()):
+        assert p["tipo_inmueble"] == "APARTAESTUDIO"
+        assert 1 in p.get("servicios_ids", [])
 
 # --- HU-007 ---
 def test_hu007_desglose_y_disclaimer():

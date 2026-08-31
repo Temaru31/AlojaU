@@ -4,10 +4,14 @@ import { api } from '../services/api'
 import Indice from '../components/IndiceConfianza'
 import MapaZona from '../components/MapaZona'
 import { formatTiempoCaminando } from '../utils/formatters'
-// HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp + Mapa zona
+import { useFavoritos } from '../contexts/FavoritosContext'
+import { useComparar } from '../contexts/CompararContext'
+// HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp + Mapa zona + HU-004/009 Favoritos/Comparar
 export default function Detalle(){
   const {id}=useParams()
   const [pub,setPub]=useState(null)
+  const favHook = useFavoritos()
+  const compHook = useComparar()
   useEffect(()=>{ api.get(`/api/publicaciones/${id}`).then(r=>setPub(r.data)).catch(()=>setPub(null)) },[id])
   if(!pub) return <p className="p-4">Cargando...</p>
   const isActivo = pub.estado === 'ACTIVO'
@@ -19,6 +23,8 @@ export default function Detalle(){
   const dist = pub.distancia_geodesica_m ?? pub.dist_m
   const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? 3)
   const tiempo = formatTiempoCaminando(dist)
+  const isFav = favHook.isFav(pub.id)
+  const isComp = compHook.isSelected(pub.id)
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-4 sm:py-6 grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6">
       <div className="md:col-span-2 space-y-4 min-w-0">
@@ -27,6 +33,15 @@ export default function Detalle(){
             No disponible para contacto — Estado: <b>{pub.estado}</b> {pub.estado==='PENDIENTE' ? '(en moderación, HU-003 C3)' : ''} — Solo ACTIVO es contactable.
           </div>
         )}
+        <div className="flex gap-2">
+          <button onClick={()=> favHook.toggle(pub.id)} aria-pressed={isFav} className={`px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition ${isFav ? 'bg-red-500 text-white border-red-500' : 'bg-white border-gray-200 hover:bg-gray-50'}`}>
+            {isFav ? '♥ En favoritos' : '♡ Añadir a favoritos'}
+          </button>
+          <button onClick={()=> compHook.toggle(pub.id)} aria-pressed={isComp} className={`px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition ${isComp ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-gray-200 hover:bg-gray-50'}`}>
+            {isComp ? '✓ En comparar' : '+ Comparar (máx 3)'}
+          </button>
+        </div>
+        {compHook.error && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2" role="alert">{compHook.error}</p>}
         <h1 className="text-xl sm:text-2xl font-bold break-words leading-tight">{pub.titulo}</h1>
         <p className="text-indigo-600 font-bold text-lg sm:text-xl break-words">{canon != null ? `$${Number(canon).toLocaleString('es-CO')} COP/mes` : '—'} {deposito ? `+ depósito $${Number(deposito).toLocaleString('es-CO')}` : ''}</p>
         <div className="flex gap-2 flex-wrap text-xs sm:text-sm min-w-0">

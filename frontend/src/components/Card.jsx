@@ -1,6 +1,11 @@
-// HU-001/003: Tarjeta de publicación con índice de confianza - FIX overflow + responsive
+// HU-001/003: Tarjeta de publicación con índice de confianza + Favoritos/Comparar (HU-004/009)
 import { formatTiempoCaminando } from '../utils/formatters'
+import { useFavoritos } from '../contexts/FavoritosContext'
+import { useComparar } from '../contexts/CompararContext'
+
 export default function Card({ pub }) {
+  const favHook = useFavoritos()
+  const compHook = useComparar()
   const color = pub.indice_confianza >= 80 ? 'bg-green-100 text-green-700' : pub.indice_confianza >= 50 ? 'bg-yellow-100 text-yellow-700' : 'bg-orange-100 text-orange-700'
   const canon = pub.canon_mensual ?? pub.canon
   const zona = pub.zona_nombre || pub.zona || '—'
@@ -10,6 +15,8 @@ export default function Card({ pub }) {
   const fallbackCover = `https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600&h=400&fit=crop`
   const tiempo = formatTiempoCaminando(dist)
   const distText = dist != null ? `${typeof dist === 'number' ? dist.toLocaleString('es-CO') : dist}m${tiempo ? ` • ${tiempo}` : ''}` : '—'
+  const isFav = favHook.isFav(pub.id)
+  const isComp = compHook.isSelected(pub.id)
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden hover:shadow-md transition flex flex-col h-full group min-w-0">
       <div className="h-36 sm:h-40 w-full overflow-hidden bg-gray-100 relative">
@@ -24,6 +31,28 @@ export default function Card({ pub }) {
         <span className="absolute bottom-2 right-2 bg-black/60 text-white text-[11px] px-2 py-1 rounded-full backdrop-blur-sm">
           {numFotos} fotos
         </span>
+        {/* Favorito - corazón */}
+        <button
+          type="button"
+          aria-label={isFav ? 'Quitar de favoritos' : 'Añadir a favoritos'}
+          aria-pressed={isFav}
+          onClick={(e)=> { e.preventDefault(); e.stopPropagation(); favHook.toggle(pub.id)}}
+          className={`absolute top-2 left-2 w-7 h-7 rounded-full flex items-center justify-center text-sm backdrop-blur-sm border transition ${isFav ? 'bg-red-500 text-white border-red-500' : 'bg-white/90 text-gray-600 border-white hover:bg-white'}`}
+          title={isFav ? 'En favoritos (HU-009)' : 'Añadir a favoritos'}
+        >
+          {isFav ? '♥' : '♡'}
+        </button>
+        {/* Comparar - checkbox */}
+        <button
+          type="button"
+          aria-label={isComp ? 'Quitar de comparar' : 'Añadir a comparar'}
+          aria-pressed={isComp}
+          onClick={(e)=> { e.preventDefault(); e.stopPropagation(); compHook.toggle(pub.id)}}
+          className={`absolute top-2 right-2 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold backdrop-blur-sm border transition ${isComp ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white/90 text-gray-600 border-white hover:bg-white'}`}
+          title={isComp ? 'En comparar (HU-004)' : 'Añadir a comparar (máx 3)'}
+        >
+          {isComp ? '✓' : '+'}
+        </button>
       </div>
       <div className="p-3 sm:p-4 flex flex-col gap-2 flex-1 min-w-0">
         <div className="flex items-start justify-between gap-2 min-w-0">
