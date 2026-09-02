@@ -8,7 +8,24 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from dotenv import load_dotenv
 
 load_dotenv()
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://alojau:alojau123@localhost:5432/alojau")
+_RAW_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://alojau:alojau123@localhost:5432/alojau")
+
+# Normaliza para Supabase pooler + asyncpg
+# Supabase requiere ssl y pgbouncer handling para asyncpg
+def _normalize_supabase_url(url: str) -> str:
+    # Asegura prefijo asyncpg
+    if url.startswith("postgresql://") and "+asyncpg" not in url:
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    # Si es Supabase y no tiene ssl, añadir ssl=require
+    if "supabase.com" in url and "ssl" not in url.lower():
+        url += ("&" if "?" in url else "?") + "ssl=require"
+    return url
+
+DATABASE_URL = _normalize_supabase_url(_RAW_URL)
+
+# Detecta pgbouncer para desactivar statement cache (asyncpg + pgbouncer)
+_is_pgbouncer = "pgbouncer=true" in DATABASE_URL.lower()
+_connect_args = {"statement_cache_size": 0} if _is_pgbouncer else {}
 
 # pool 5-20 para 50-100 concurrentes Tabla18 (NFR)
 # Sprint1: pool_pre_ping evita "cold start" + silent disconnect en Render
@@ -19,6 +36,7 @@ engine = create_async_engine(
     max_overflow=15,
     pool_pre_ping=True,
     pool_recycle=300,
+    connect_args=_connect_args,
 )
 AsyncSession = async_sessionmaker(engine, expire_on_commit=False)
 
