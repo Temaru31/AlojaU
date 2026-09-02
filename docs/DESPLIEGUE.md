@@ -1,150 +1,202 @@
-# AlojaU — Guía de Despliegue Gratuito $0 (Vercel + Render + Supabase)
+# AlojaU — Guía de Despliegue Replicable $0 (Vercel + Render + Supabase)
 
-> **Objetivo:** URL limpia `https://alojau.vercel.app` (frontend) + `https://alojau-api.onrender.com` (backend) auto-deploy desde `main`. Costo $0, cold-start 10-15s en Render Free. **Seguridad primero:** no subir `.env`, `SECRET_KEY` ≥32, `CORS` sin `*`.
+> **Para quién:** cualquier compañero o docente que quiera replicar el deploy en 15 min sin leer todo el histórico. **Objetivo:** `https://aloja-u.vercel.app` (frontend) + `https://alojau-api.onrender.com` (backend) auto-deploy desde `main`, costo $0. **Seguridad:** sin `.env` en repo, `SECRET_KEY` ≥32, `CORS` sin `*`. Actualizado tras deploy real `02-09-2026` (6 pubs en prod).
+
+---
+
+## Índice
+
+1. [Arquitectura $0](#1-arquitectura-0) — por qué Vercel+Render+Supabase
+2. [Pre-requisitos](#2-pre-requisitos)
+3. [Paso 1 — Supabase (DB 5 min)](#3-paso-1--supabase-db-5-min)
+4. [Paso 2 — Render (backend 7 min)](#4-paso-2--render-backend-7-min)
+5. [Paso 3 — Vercel (frontend 5 min)](#5-paso-3--vercel-frontend-5-min)
+6. [Variables de entorno](#6-variables-de-entorno) — qué poner y dónde, sin exponer
+7. [Auto-deploy y flujo Git](#7-auto-deploy-y-flujo-git)
+8. [Verificación](#8-verificación-post-deploy)
+9. [Costos y límites free](#9-costos-y-límites-free)
+10. [Checklist seguridad](#10-checklist-seguridad-pre-entrega)
+11. [Errores cometidos — tener presente](#11-errores-cometidos--tener-presente)
+12. [FAQ replicar y operar](#12-faq-replicar-y-operar)
+13. [Soporte MCP](#13-soporte-mcp)
 
 ---
 
 ## 1) Arquitectura $0
 
 ```
-GitHub Temaru31/AlojaU (main) ──auto-deploy──> Vercel (frontend Vite) ──VITE_API_URL──> Render (FastAPI) ──DATABASE_URL──> Supabase PG (500MB)
-       │                                                                              │
-       └─────────────── TODA la config vía env vars en dashboards (no en repo) ───────┘
+GitHub Temaru31/AlojaU (main)
+   ├─auto-deploy─> Vercel (frontend Vite: npm run build → dist) ──VITE_API_URL──> Render (FastAPI: uvicorn $PORT) ──DATABASE_URL (asyncpg+ssl)──> Supabase PG 16 (500MB, pooler)
+   └────────────────── config solo por env vars en dashboards (nada en repo) ────────────────────────────────────────────┘
 ```
 
-**Por qué este stack (vs Railway/Fly/Netlify):** documentado en `docs/ARQUITECTURA.md:42`, Vercel detecta Vite sin config, Render Free 750h/mes + `healthCheckPath: /health`, Supabase tiene SQL editor para `schema.sql`/`seed.sql` y pooler. Alternativa Neon (3GB) vale si Supabase se llena.
+**Stack elegido (vs alternativas):**
+| Capa | Elegido Free | Por qué | Alternativa |
+|------|--------------|---------|-------------|
+| Frontend | **Vercel Hobby** | Detecta Vite, `frontend/vercel.json:1` rewrites SPA, env `VITE_API_URL`, 100 deploy/día | Netlify similar, pero Vercel más simple para `react-router` |
+| Backend | **Render Free** | `render.yaml:1` + `backend/Dockerfile:1`, `healthCheck /health`, 750h/mes | Railway $5 luego paga, Fly.io requiere Docker manual |
+| DB | **Supabase Free** | `SQL Editor` para `schema.sql/seed.sql`, pooler `5432/6543`, 500MB | Neon 3GB, vale si Supabase se llena cambiando solo `DATABASE_URL` |
+
+> Ver `docs/ARQUITECTURA.md:42` para stack oficial $0.
 
 ---
 
-## 2) Pre-requisitos (tú)
+## 2) Pre-requisitos
 
-- Cuenta GitHub con acceso `Temaru31/AlojaU` (ya la tienes).
-- Crear cuentas (2 min c/u, OAuth GitHub) en: `vercel.com`, `render.com`, `supabase.com`. No requieren tarjeta para free tier.
-- Tener `openssl` o generador para `SECRET_KEY` (te doy comando, no lo guardo).
-
----
-
-## 3) Paso 1 — Base de datos Supabase (5 min)
-
-1. `supabase.com → New Project → alojau` (región `South America (Sao Paulo)` más cercana, password DB anotar temporal).
-2. Project → `Settings → Database → Connection string → Session pooler → Copy` (formato `postgresql://postgres.xxx:pass@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?pgbouncer=true`). **No copiar `Direct connection`**.
-3. Convertir para asyncpg: cambiar `postgresql://` → `postgresql+asyncpg://` (ej: `postgresql+asyncpg://postgres.xxx:pass@.../postgres?pgbouncer=true`). Guardar como `DATABASE_URL` temporal en notas.
-4. `SQL Editor → New query` → pegar **contenido completo** de `backend/db/schema.sql:1` → `Run` → debe decir `Success`. Luego pegar `backend/db/seed.sql:1` → `Run` → verifica `Table 6 rows` en `Table Editor → publicaciones` (6 ACTIVO, Tulcán 111m etc.).
-
-> **Seguridad:** no pegar `DATABASE_URL` en chat público ni en GitHub. Solo en Render env var. Borra notas tras pegar.
+- Acceso GitHub a `Temaru31/AlojaU` (ya lo tienes, `main` en `d821299`).
+- Crear cuentas gratuitas (OAuth GitHub, 2 min c/u, sin tarjeta): `vercel.com`, `render.com`, `supabase.com`.
+- Terminal local con `openssl` para `SECRET_KEY` (o `python -c "import secrets; print(secrets.token_hex(32))"`).
 
 ---
 
-## 4) Paso 2 — Backend Render (7 min)
+## 3) Paso 1 — Supabase (DB 5 min)
+
+**Qué hace:** crea el PG 16 remoto donde vivirán `publicaciones`, `campus`, etc. (lo que antes era `docker-compose.yml:2` local).
+
+1. `supabase.com → New Project → alojau` → `Region: South America (Sao Paulo)` → `Password: genera y cópiala temporal` → `Create` (1 min).
+2. Dentro del proyecto → `Settings (engranaje) → Database → Connection string → Session pooler → Copy`. **No usar `Direct connection`**. Formato `postgresql://postgres.xxx:[PASSWORD]@aws-0-us-east-2.pooler.supabase.com:5432/postgres`.
+3. Servirá para Render como `DATABASE_URL` (luego lo convertimos a `postgresql+asyncpg://...` con `ssl=require` — el backend lo hace solo si falta).
+4. `SQL Editor → New query` → abre local `backend/db/schema.sql:1` (VS Code → `backend/db/schema.sql` → `Ctrl+A/C`) → pega → `Run` → `Success` (11 tablas + `haversine_m`).
+5. `New query` → pega `backend/db/seed.sql:1` → `Run` → `Success`. Verifica `Table Editor → publicaciones` → 6 filas `ACTIVO` (`SELECT count(*) → 6`).
+
+> **Seguridad:** no pegues `DATABASE_URL` en chat público/GitHub. Solo en Render env var. Borra nota temporal tras pegarla.
+
+---
+
+## 4) Paso 2 — Render (backend 7 min)
+
+**Qué hace:** levanta FastAPI de `backend/` con tu `DATABASE_URL` y expone `https://alojau-api.onrender.com`.
 
 1. `render.com → New + → Web Service → Connect GitHub → Temaru31/AlojaU → Connect`.
 2. Configurar:
    - `Name: alojau-api`
-   - `Runtime: Docker` (usa `backend/Dockerfile:1`, si eliges `Python` en vez de Docker, usar `Build: pip install -r backend/requirements.txt` y `Start: uvicorn app.main:app --host 0.0.0.0 --port $PORT`)
-   - `Dockerfile Path: ./backend/Dockerfile` `Docker Context: ./backend`
-   - `Plan: Free`
-   - `Health Check Path: /health`
-   - `Auto-Deploy: Yes` (desde `main`)
-3. `Environment → Add Environment Variable` (usar `Add` uno a uno, **Sensitive** para secrets):
+   - `Runtime: Docker` → `Dockerfile Path: ./backend/Dockerfile` `Context: ./backend` (si eliges `Python` en vez de Docker: `Build: pip install -r backend/requirements.txt` `Start: uvicorn app.main:app --host 0.0.0.0 --port $PORT`)
+   - `Plan: Free` `Health Check Path: /health` `Auto-Deploy: Yes` (desde `main`)
+3. `Environment → Add` (uno a uno, marca `Sensitive` para secrets):
    ```
-   DATABASE_URL=postgresql+asyncpg://postgres.xxx:pass@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?pgbouncer=true
-   SECRET_KEY=<pega aquí 64 chars: generar con `openssl rand -hex 32` en tu terminal local, nunca usar el ejemplo>
-   CORS_ORIGINS=https://alojau.vercel.app,http://localhost:5173,http://localhost:3000
+   DATABASE_URL=postgresql+asyncpg://postgres.xxx:[PASSWORD]@aws-0-us-east-2.pooler.supabase.com:5432/postgres
+   # si copiaste sin +asyncpg ni ssl, el backend lo normaliza a +asyncpg + ssl=require solo
+   SECRET_KEY=<64 hex: openssl rand -hex 32>
+   CORS_ORIGINS=https://aloja-u.vercel.app,http://localhost:5173,http://localhost:3000
    ENV=prod
    USE_MOCK_FALLBACK=False
    ```
-   > `SECRET_KEY` debe ser ≥32 chars y distinto de `cambia_esto...` (`backend/app/core/config.py:14` valida y falla si no).
-4. `Create Web Service` → espera 3-5 min build. Ver logs `Build successful` + `Uvicorn running on http://0.0.0.0:10000`. Copiar URL `https://alojau-api.onrender.com`.
-5. Verificar: `curl -s https://alojau-api.onrender.com/health | jq` → `{"status":"ok"}`. Si `500` revisar `DATABASE_URL` (¿asyncpg? ¿pooler?).
+   `SECRET_KEY` debe ser ≥32 y distinto de `cambia_esto...` (`backend/app/core/config.py:14` falla si no).
+4. `Create Web Service` → `Build successful` + `Uvicorn running on 0.0.0.0:10000` (3-5 min) → copia URL `https://alojau-api.onrender.com`.
+5. Verifica: `curl -s https://alojau-api.onrender.com/health | jq` → `{"status":"ok"}`. Si `500` revisa `Logs` (ahora con `logger.error("[DB fallback]")` en `publicaciones.py:270` y `session.py:11`).
 
-> **Tip Render Free:** duerme tras 15min inactividad, primera petición tarda 15s (ver `frontend/src/services/api.js:8` retry 2s ya maneja cold-start).
+> **Nota Render Free:** duerme tras 15 min, primera petición 15s. `frontend/src/services/api.js:8` ya hace retry 2s.
 
 ---
 
-## 5) Paso 3 — Frontend Vercel (5 min)
+## 5) Paso 3 — Vercel (frontend 5 min)
 
-1. `vercel.com → Add New → Project → Import Temaru31/AlojaU` (autorizar GitHub si pide).
+**Qué hace:** compila `frontend/` (`npm run build` → `dist`) y lo sirve en `https://aloja-u.vercel.app`, conectando al backend vía `VITE_API_URL`.
+
+1. `vercel.com → Add New → Project → Import Temaru31/AlojaU` → autoriza GitHub.
 2. Configurar:
    - `Framework Preset: Vite`
-   - `Root Directory: frontend` (clic `Edit` → `frontend`)
-   - `Build Command: npm run build` (autodetectado via `frontend/vercel.json:3`)
-   - `Output Directory: dist`
-   - `Install Command: npm install`
-3. `Environment Variables` → `Add`:
+   - `Root Directory: Edit → frontend` (clave)
+   - `Build Command: npm run build` `Output: dist` `Install: npm install` (viene de `frontend/vercel.json:1`)
+3. `Environment Variables → Add`:
    ```
    VITE_API_URL=https://alojau-api.onrender.com
    ```
-   (sin `/` final, sin `http://localhost`).
-4. `Deploy` → 2 min → URL `https://alojau.vercel.app` (Vercel te da `alojau-xxx.vercel.app`, puedes renombrar en `Settings → Domains → alojau.vercel.app` si libre).
-5. Verificar: abre `https://alojau.vercel.app` → Buscar 6 pubs, filtros, Detalle. Abre DevTools Network → `api/publicaciones?campus_id=1` 200.
-
-6. **Volver a Render:** editar `CORS_ORIGINS` y añadir tu URL real de Vercel si es distinta de `https://alojau.vercel.app` (ej: `https://alojau-1a2b.vercel.app`). `Manual Deploy → Deploy latest commit` para recargar.
+   Sin `/` final.
+4. `Deploy` → 2 min → URL `https://aloja-u.vercel.app` (si es `aloja-u-xxx.vercel.app` renombra en `Settings → Domains`).
+5. Verifica: abre `https://aloja-u.vercel.app` → `6 publicaciones ACTIVAS` (ya con DB real). DevTools `Network → api/publicaciones?campus_id=1` 200.
+6. **Volver a Render:** si tu URL Vercel no es exactamente `https://aloja-u.vercel.app`, edita `CORS_ORIGINS` y añade la real (ej: `https://aloja-u-1a2b.vercel.app`) → `Manual Deploy → Deploy latest commit`.
 
 ---
 
-## 6) Variables de entorno — referencia segura
+## 6) Variables de entorno
 
 | Servicio | Key | Ejemplo | Dónde | Secreto |
 |----------|-----|---------|-------|---------|
-| Render | `DATABASE_URL` | `postgresql+asyncpg://postgres...@pooler.supabase.com:6543/postgres?pgbouncer=true` | Render → Web Service → Environment | **Sí** |
-| Render | `SECRET_KEY` | `openssl rand -hex 32` → `a3f8...64chars` | Render → Environment (Sensitive) | **Sí** |
-| Render | `CORS_ORIGINS` | `https://alojau.vercel.app,http://localhost:5173` | Render → Environment | No |
+| Render | `DATABASE_URL` | `postgresql+asyncpg://postgres...@pooler.supabase.com:5432/postgres` | Render → Environment | **Sí** |
+| Render | `SECRET_KEY` | `openssl rand -hex 32` → `a3f8...64` | Render (Sensitive) | **Sí** |
+| Render | `CORS_ORIGINS` | `https://aloja-u.vercel.app,http://localhost:5173` | Render | No |
 | Render | `ENV` | `prod` | Render | No |
 | Render | `USE_MOCK_FALLBACK` | `False` | Render | No |
-| Vercel | `VITE_API_URL` | `https://alojau-api.onrender.com` | Vercel → Settings → Environment Variables | No |
+| Vercel | `VITE_API_URL` | `https://alojau-api.onrender.com` | Vercel → Settings → Env | No |
 
-**No hacer:** `CORS_ORIGINS=*` con `allow_credentials True` (inseguro, `backend/app/main.py:19` bloquea), `SECRET_KEY` corto (<32) o ejemplo, `DATABASE_URL` con `postgresql://` sin `+asyncpg` (falla `asyncpg`), subir `.env` a Git (` .gitignore:7` ya lo bloquea).
-
----
-
-## 7) Auto-deploy desde `main`
-
-- Vercel y Render por defecto hacen `auto-deploy` en push a `main` (ver `render.yaml:10` `autoDeploy: true` y `vercel.json:1` rewrites). Para desactivar: `Settings → Git → Auto Deploy: Off`.
-- Flujo equipo: `feature/* → PR → develop → PR → main` (`docs/SCRUM_Y_QA.md:90`). Cada push a `main` redespliega front+back en 2-4 min.
-- Rollback: en Vercel `Deployments → ... → Redeploy`, en Render `Manual Deploy → Deploy previous`.
+**No hacer:** `CORS_ORIGINS=*` con `allow_credentials` (inseguro, `main.py:19` lo bloquea), `SECRET_KEY` corto, `DATABASE_URL` sin `+asyncpg`, subir `.env` (ya en `.gitignore:7`).
 
 ---
 
-## 8) Verificación post-deploy (copy-paste)
+## 7) Auto-deploy y flujo Git
+
+- Vercel y Render hacen `auto-deploy` en push a `main` (`render.yaml:10` `autoDeploy: true`). Para desactivar: `Settings → Git → Auto Deploy: Off`.
+- Flujo equipo (`docs/SCRUM_Y_QA.md:90`): `feature/* → PR → develop → PR → main`. Cada push a `main` redespliega front+back en 2-4 min.
+- Rollback: Vercel `Deployments → Redeploy`, Render `Manual Deploy → Deploy previous commit`.
+
+---
+
+## 8) Verificación post-deploy
 
 ```bash
 # backend
 curl -s https://alojau-api.onrender.com/health | jq
 curl -s "https://alojau-api.onrender.com/api/publicaciones?campus_id=1&page=1&size=2" | jq '{total,pages,ids:[.items[].id]}'
-curl -s -I -H "Origin: https://alojau.vercel.app" https://alojau-api.onrender.com/health | grep -i access-control
-
-# frontend (abrir navegador)
-# https://alojau.vercel.app → Buscar 6 pubs, filtrar tipo APARTAESTUDIO (2), servicios WiFi+Amoblado (2), Comparar 2/3 tabla, Favoritos ♥
-# https://alojau.vercel.app/publicacion/1 → mapa Leaflet + WhatsApp
-# https://alojau.vercel.app/comparar → si vacío, "No hay publicaciones"
+curl -s -I -H "Origin: https://aloja-u.vercel.app" https://alojau-api.onrender.com/health | grep -i access-control
+# frontend
+# https://aloja-u.vercel.app → Buscar 6 pubs, filtrar tipo APARTAESTUDIO (2), servicios 1,4 (2), Comparar 2/3, Favoritos ♥
+# https://aloja-u.vercel.app/publicacion/1 → mapa Leaflet + WhatsApp
 ```
 
-**Esperado:** health 200, `total:6`, CORS `allow-origin: https://alojau.vercel.app` (no `*`), frontend carga sin 500.
+**Esperado:** health 200, `total:6`, CORS `allow-origin: https://aloja-u.vercel.app`, frontend sin 500.
 
 ---
 
-## 9) Costo $0 y límites
+## 9) Costos y límites free
 
-- **Vercel Hobby:** 100 deploy/día, 10k req/mes, sin tarjeta. Suficiente sprint demo.
-- **Render Free:** 750h/mes (1 servicio 24/7 cabe), duerme 15min, 512MB RAM. Para demo avisa profesor del cold-start 15s.
-- **Supabase Free:** 500MB, 50k MAU, backup diario. Si 500MB se llena, migrar a Neon (3GB) cambiando solo `DATABASE_URL`.
-- **Alternativa si Render falla:** usar `Railway` ($5 free) con mismo `DATABASE_URL` y `CORS`.
+- **Vercel Hobby:** 100 deploy/día, sin tarjeta.
+- **Render Free:** 750h/mes, duerme 15min, 512MB. Avisa del cold-start al profesor.
+- **Supabase Free:** 500MB, backup diario. Si se llena, cambia solo `DATABASE_URL` a Neon (3GB).
 
 ---
 
 ## 10) Checklist seguridad pre-entrega
 
-- [ ] `.env` no trackeado (`git ls-files | grep .env` vacío)
-- [ ] `SECRET_KEY` ≥32 y no es ejemplo (probar `ENV=prod` local falla si no)
-- [ ] `CORS_ORIGINS` sin `*`, solo Vercel + localhost
-- [ ] `DATABASE_URL` con `+asyncpg` y `pgbouncer=true`
-- [ ] `/health` sin exponer `password`/`secret`
-- [ ] `POST /api/publicaciones/upload` (cuando exista) valida `image/*` y 5MB
+- [ ] `git ls-files | grep .env` vacío
+- [ ] `SECRET_KEY` ≥32 y no es ejemplo
+- [ ] `CORS_ORIGINS` sin `*`
+- [ ] `DATABASE_URL` con `+asyncpg`
+- [ ] `/health` sin `password`/`secret`
+- [ ] Upload futuro valida `image/*` y 5MB
 
 ---
 
-## 11) Soporte MCP
+## 11) Errores cometidos — tener presente
 
-Si quieres que lo configure yo vía navegador: dime `abre Vercel`/`Render`/`Supabase` y uso `desktop-control` para clickear. Necesitarás loguearte y autorizar GitHub; yo guío clicks y pego env vars que me dictes. No haré `Create Project` sin tu OK.
+1. **`bcrypt 4.1+ ValueError: password cannot be longer than 72 bytes`** — `passlib 1.7.4` + `bcrypt 4.1+` falla aunque password sea corta (`AlojaU123`). **Fix:** `backend/requirements.txt:11` `bcrypt==4.0.1` (commit `004a47e`). Render falló en `Build → Live` hasta pinnear.
+2. **`pgbouncer=true` extra con `5432`** — Supabase Session pooler (`5432`) no necesita `pgbouncer=true` (Transaction pooler `6543` sí). Poner `?pgbouncer=true` en `5432` causaba fallback a mock (2 pubs) aunque `seed.sql` tenía 6. **Fix:** usar `5432` sin `pgbouncer` o `6543` con `?pgbouncer=true`; backend ahora normaliza y añade `ssl=require` solo si falta (`session.py:11`).
+3. **`DATABASE_URL` sin `+asyncpg`** — `postgresql://` solo falla en `create_async_engine`. **Fix:** `_normalize_supabase_url` convierte a `postgresql+asyncpg://` si falta.
+4. **CORS `*` o sin Vercel URL** — `main.py:19` `CORSMiddleware` con `allow_origins=["*"]` + `allow_credentials True` es inseguro y bloquea credenciales. **Fix:** `CORS_ORIGINS` con lista explícita `https://aloja-u.vercel.app,http://localhost:5173`.
+5. **Olvidar `seed.sql` tras `schema.sql`** — `schema` crea tablas vacías, frontend muestra `0 publicaciones`. Verificar `Table Editor → publicaciones` 6 filas.
+6. **Usar `Direct connection` en vez de `Session pooler`** — `Direct` expone IP sin pool, Render Free lo corta. Usar `Session pooler` siempre.
+7. **Frente sin `Root Directory: frontend`** — Vercel intenta `npm run build` en raíz y falla `no such file`. Poner `frontend` en Vercel `Root Directory`.
 
-> **Última verificación local antes de desplegar:** `PYTHONPATH=backend pytest -q` 47 passed, `cd frontend && npm run test:run` 38 passed, `npm run build` 483kB.
+---
+
+## 12) FAQ replicar y operar
+
+**¿Si añado una publicación desde la página o modifico Supabase, se auto-actualiza?**
+- **Sí, directo:** `POST /api/publicaciones` (desde `/publicar` con login ARRENDADOR) crea `PENDIENTE` en Supabase (no mock). `GET /api/publicaciones` siempre lee Supabase real (ya no mock). Verás el nuevo ID en `Table Editor → publicaciones` al instante y, tras aprovação `ACTIVO`, aparece en `https://aloja-u.vercel.app` sin hacer nada más. Modificar/borrar en `Table Editor` también se refleja en la próxima petición (no hay cache). Lo que **no** se auto-actualiza es el código: cambiar `frontend/` o `backend/` requiere push.
+
+**¿Front y back están directamente conectados?**
+- **Sí.** `frontend/src/services/api.js:5` usa `import.meta.env.VITE_API_URL` (`https://alojau-api.onrender.com` en prod). Cada `Buscar` hace `GET https://alojau-api.onrender.com/api/publicaciones?campus_id=1` con `CORS` permitido. No hay proxy intermedio. Si backend duerme (Render Free 15 min), frontend reintenta 2s y muestra datos tras cold-start.
+
+**¿Si hago cambios y push a `main` se despliegan solos o debo hacer algo?**
+- **Automático.** Vercel y Render tienen `Auto-Deploy on push to main` activo. Haces `git add . && git commit -m "feat: ..." && git push origin main` → en 2-4 min ambos se redeployan solos (ver `Vercel → Deployments` y `Render → Events: Deploying → Live`). No necesitas `Manual Deploy` salvo que quieras forzar o rollback. Para pausar: `Settings → Git → Auto Deploy: Off`.
+
+**¿Debo guardar contraseñas o compartir algo con compañeros?**
+- **Guardar:** sí, en lugar seguro (no en repo): `DATABASE_URL` completa (con password), `SECRET_KEY` (64 hex), `Supabase project password`. No las subas a GitHub ni a WhatsApp sin cifrar. **Compartir con equipo:** dales acceso al proyecto Supabase (`Supabase → Team → Invite` con su email) y al Team Vercel/Render (`Settings → Teams → Invite`), no les pases la URL con password por chat. Cada uno puede ver las env vars en dashboards (Render `Environment` y Vercel `Settings`) si tiene acceso. Si rotas `SECRET_KEY` todos los JWT viejos expiran (8h) y deben reloguear.
+
+---
+
+## 13) Soporte MCP
+
+Si quieres que lo replique yo vía navegador: dime `abre Supabase/Render/Vercel` y uso `desktop-control` para clickear. Tú solo loguéate y autoriza GitHub; yo guío y pego env vars que me dictes. No haré `Create Project` sin tu OK.
+
+> Última verificación local: `PYTHONPATH=backend pytest -q` 47 passed, `cd frontend && npm run test:run` 38 passed, `npm run build` 483kB.
