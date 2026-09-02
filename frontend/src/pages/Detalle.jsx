@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { api } from '../services/api'
 import Indice from '../components/IndiceConfianza'
 import MapaZona from '../components/MapaZona'
+import GaleriaFotos from '../components/GaleriaFotos'
 import { formatTiempoCaminando } from '../utils/formatters'
 import { useFavoritos } from '../contexts/FavoritosContext'
 import { useComparar } from '../contexts/CompararContext'
@@ -49,15 +50,7 @@ export default function Detalle(){
           <span className="bg-gray-100 px-2.5 py-1 rounded-full truncate max-w-full">{pub.tipo_inmueble}</span>
           {pub.servicios?.map(s=> <span key={s} className="bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full truncate max-w-[160px] border border-indigo-100">{s}</span>)}
         </div>
-        {pub.fotos && Array.isArray(pub.fotos) && pub.fotos.length>0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            {pub.fotos.slice(0,4).map((url,i)=> (
-              <div key={i} className="aspect-[4/3] overflow-hidden rounded-lg bg-gray-100">
-                <img src={url} alt={`Foto ${i+1} de ${pub.titulo}`} className="w-full h-full object-cover" loading="lazy" onError={e=>{ e.currentTarget.src=`https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600&h=400&fit=crop`; e.currentTarget.onerror=null }} />
-              </div>
-            ))}
-          </div>
-        )}
+        <GaleriaFotos fotos={pub.fotos} titulo={pub.titulo} />
         <p className="text-sm break-words"><b>Reglas:</b> <span className="break-words">{pub.reglas_convivencia||pub.reglas || '—'}</span></p>
         <p className="text-sm break-words"><b>Dirección ref:</b> {pub.direccion_referencial} • <b>Distancia:</b> {dist != null ? `${dist} m` : '—'}{tiempo ? ` • ${tiempo}` : ''} <span className="text-xs text-gray-500">(línea recta, no ruta a pie)</span></p>
         <div className="overflow-hidden rounded-xl">

@@ -2,6 +2,7 @@
 // FIX: formulario funcional con validación, auth, POST real, UX responsive y accesible
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
+import UploadFotos from '../components/UploadFotos'
 
 const SERVICIOS = [
   { id: 1, nombre: 'WiFi Fibra' },
@@ -292,21 +293,20 @@ export default function Publicar(){
           </div>
 
           <div>
-            <label className="text-sm font-medium">Fotos (URLs) * <span className="text-gray-400 font-normal">(mínimo 3, máximo 10)</span></label>
-            {form.fotos.map((url,i)=> (
-              <div key={i} className="flex gap-2 mt-1">
-                <input type="url" value={url} onChange={e=>{
-                  const a=[...form.fotos]; a[i]=e.target.value; setForm({...form, fotos:a})
-                }} placeholder={`https://.../foto${i+1}.jpg`} className="border border-gray-200 rounded-lg px-3 py-2 w-full text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-0" />
-                {form.fotos.length>3 && <button type="button" onClick={()=>{
-                  setForm({...form, fotos: form.fotos.filter((_,idx)=> idx!==i)})
-                }} className="text-xs px-2 py-1 rounded border border-red-200 text-red-600 hover:bg-red-50 shrink-0">Quitar</button>}
-              </div>
-            ))}
-            {form.fotos.length < 10 && (
-              <button type="button" onClick={()=> setForm({...form, fotos: [...form.fotos, '']})} className="text-xs text-indigo-600 hover:underline mt-1">+ Añadir otra foto</button>
-            )}
+            <UploadFotos token={token} initialUrls={form.fotos} onUrls={(urls)=> setForm(f=> ({...f, fotos: urls.length? urls : f.fotos}))} />
             {errors.fotos && <p className="text-xs text-red-600 mt-1">{errors.fotos}</p>}
+            {/* Fallback URLs por si no subes archivos (se mantienen las 3 Unsplash) */}
+            <details className="mt-2">
+              <summary className="text-xs text-gray-500 cursor-pointer hover:text-indigo-600">¿Prefieres pegar URLs? (opcional)</summary>
+              <div className="mt-2 space-y-1">
+                {form.fotos.slice(0,3).map((url,i)=> (
+                  <input key={i} type="url" value={url} onChange={e=>{
+                    const a=[...form.fotos]; a[i]=e.target.value; setForm({...form, fotos:a})
+                  }} placeholder={`https://.../foto${i+1}.jpg`} className="border border-gray-200 rounded-lg px-3 py-2 w-full text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                ))}
+                <p className="text-xs text-gray-400">Si subiste fotos arriba, estas URLs se ignoran.</p>
+              </div>
+            </details>
           </div>
 
           <button type="submit" disabled={submitting} className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white py-3 rounded-xl font-medium text-sm mt-2">

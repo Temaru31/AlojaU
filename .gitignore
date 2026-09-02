@@ -12,6 +12,8 @@ dist/
 .DS_Store
 # DB
 pgdata/
+# Uploads (Render ephemeral)
+backend/uploads/
 # IDE
 .vscode/
 .idea/
