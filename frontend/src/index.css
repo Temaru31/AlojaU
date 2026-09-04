@@ -2,13 +2,134 @@
 @tailwind components;
 @tailwind utilities;
 
-/* AlojaU - mobile first, se ve bien en 360px - FIX overflow + responsive */
-body {
-  font-family: system-ui, -apple-system, sans-serif;
-  background-color: #f8fafc;
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+    background-color: #F7F8FA;
+    color: #1F2937;
+    line-height: 1.6;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+    font-weight: 700;
+    line-height: 1.2;
+    color: #14213D;
+  }
+
+  ::selection {
+    background-color: #F4B942;
+    color: #14213D;
+  }
 }
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 font-medium text-sm rounded-md transition-colors duration-200 ;
+    background-color: #14213D;
+    color: #fff;
+  }
+  .btn-primary:hover { background-color: #263A5A; }
+  .btn-primary:active { background-color: #0c1426; }
+
+  .btn-accent {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 font-semibold text-sm rounded-md transition-colors duration-200 ;
+    background-color: #F4B942;
+    color: #14213D;
+  }
+  .btn-accent:hover { background-color: #eda82e; }
+  .btn-accent:active { background-color: #d9951f; }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 font-medium text-sm rounded-md
+           transition-colors duration-200 ;
+    background-color: #fff;
+    color: #263A5A;
+    border: 1px solid #E5E7EB;
+  }
+  .btn-secondary:hover { border-color: #d1d5db; background-color: #F7F8FA; }
+  .btn-secondary:active { background-color: #f1f3f5; }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 font-medium text-sm rounded-md transition-colors duration-200 ;
+    color: #2f4266;
+  }
+  .btn-ghost:hover { background-color: #eef1f6; }
+  .btn-ghost:active { background-color: #d5dbe8; }
+
+  .input-field {
+    @apply w-full px-4 py-2.5 text-sm bg-white rounded-md transition-all duration-200 ;
+    border: 1px solid #E5E7EB;
+    color: #1F2937;
+  }
+  .input-field::placeholder { color: #8c929c; }
+  .input-field:focus { outline: none; box-shadow: 0 0 0 2px #aab7d0; border-color: #556fa1; }
+
+  .select-field {
+    @apply w-full px-4 py-2.5 text-sm bg-white rounded-md appearance-none cursor-pointer transition-all duration-200 ;
+    border: 1px solid #E5E7EB;
+    color: #1F2937;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='none' viewBox='0 0 12 12'%3E%3Cpath fill='%236B7280' d='M2.5 4.5L6 8l3.5-3.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 36px;
+  }
+  .select-field:focus { outline: none; box-shadow: 0 0 0 2px #aab7d0; border-color: #556fa1; }
+
+  .card {
+    @apply bg-white rounded-lg transition-shadow duration-200 ;
+    border: 1px solid #E5E7EB;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.06);
+  }
+
+  .card-hover {
+    @apply card transition-shadow duration-200 ;
+  }
+  .card-hover:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+    border-color: #d1d5db;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-full;
+  }
+
+  .section-title {
+    @apply text-2xl md:text-3xl font-bold tracking-tight;
+    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+    color: #14213D;
+  }
+
+  .section-subtitle {
+    color: #6B7280;
+    font-size: 0.875rem;
+  }
+  @media (min-width: 768px) {
+    .section-subtitle { font-size: 1rem; }
+  }
+
+  .container-main {
+    @apply mx-auto px-4 sm:px-6 lg:px-8;
+    max-width: 80rem;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
 .leaflet-container {
+  height: 300px;
   border-radius: 0.75rem;
+  border: 1px solid #E5E7EB;
   width: 100%;
 }
 @media (max-width: 640px) {
@@ -16,7 +137,6 @@ body {
     min-height: 260px;
   }
 }
-/* Fallback line-clamp si tailwind no lo incluye */
 .line-clamp-2 {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -29,7 +149,6 @@ body {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-/* Evita desbordes de URLs largas */
 .break-words {
   overflow-wrap: break-word;
   word-break: break-word;

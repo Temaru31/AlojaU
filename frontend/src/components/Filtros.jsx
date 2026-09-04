@@ -1,4 +1,3 @@
-// HU-002: Filtros combinables precio, tipo, servicios - multi-checkbox 5 servicios, responsive
 const SERVICIOS_OPCIONES = [
   { id: 1, label: "WiFi Fibra" },
   { id: 2, label: "Baño Privado" },
@@ -18,54 +17,63 @@ function toggleServicio(serviciosStr, servicioId, checked) {
   if (checked) current.add(idStr)
   else current.delete(idStr)
   if (current.size === 0) return undefined
-  return Array.from(current).sort((a,b)=> Number(a)-Number(b)).join(",")
+  return Array.from(current).sort((a, b) => Number(a) - Number(b)).join(",")
 }
 
 export default function Filtros({ filtros, setFiltros }) {
   const selectedIds = parseServicios(filtros.servicios)
+  const hasFilters = filtros.tipo || filtros.wifi || filtros.min || filtros.max || filtros.servicios
   const rangoInvalido = filtros.min && filtros.max && Number(filtros.min) > Number(filtros.max)
 
   return (
-    <div className="bg-white p-3 sm:p-4 rounded-xl shadow-sm border border-gray-100">
+    <div className="card p-4">
       <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 sm:gap-3 items-center">
-        <input
-          type="number"
-          placeholder="Min COP"
-          aria-label="Precio mínimo"
-          className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-full sm:w-32 min-w-0 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          value={filtros.min || ''}
-          onChange={e => setFiltros({ ...filtros, min: e.target.value })}
-          min="0"
-        />
-        <input
-          type="number"
-          placeholder="Max COP"
-          aria-label="Precio máximo"
-          className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-full sm:w-32 min-w-0 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          value={filtros.max || ''}
-          onChange={e => setFiltros({ ...filtros, max: e.target.value })}
-          min="0"
-        />
-        <select
-          aria-label="Filtrar por tipo"
-          className="border border-gray-200 rounded-lg px-3 py-2 text-sm w-full sm:w-auto min-w-0 col-span-2 sm:col-span-1 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          value={filtros.tipo || ''}
-          onChange={e => setFiltros({ ...filtros, tipo: e.target.value })}
-        >
-          <option value="">Tipo</option>
-          <option value="HABITACION_FAMILIAR">Habitación familiar</option>
-          <option value="HABITACION_INDEPENDIENTE">Habitación independiente</option>
-          <option value="APARTAESTUDIO">Apartaestudio</option>
-          <option value="COMPARTIDO">Compartido</option>
-        </select>
+        <div className="w-full sm:w-48">
+          <label className="block text-xs font-medium text-neutral-500 mb-1.5">Tipo de vivienda</label>
+          <select
+            className="select-field"
+            value={filtros.tipo || ''}
+            onChange={e => setFiltros({ ...filtros, tipo: e.target.value })}
+          >
+            <option value="">Todos los tipos</option>
+            <option value="HABITACION_FAMILIAR">Habitacion familiar</option>
+            <option value="HABITACION_INDEPENDIENTE">Habitacion independiente</option>
+            <option value="APARTAESTUDIO">Apartaestudio</option>
+            <option value="COMPARTIDO">Compartido</option>
+          </select>
+        </div>
 
-        {/* Servicios multi-checkbox: 1..5, genera query servicios=1,3 */}
+        <div>
+          <label className="block text-xs font-medium text-neutral-500 mb-1.5">Precio min COP</label>
+          <input
+            type="number"
+            placeholder="Min COP"
+            className="input-field w-full sm:w-32"
+            value={filtros.min || ''}
+            onChange={e => setFiltros({ ...filtros, min: e.target.value })}
+            min="0"
+          />
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-neutral-500 mb-1.5">Precio max COP</label>
+          <input
+            type="number"
+            placeholder="Max COP"
+            className="input-field w-full sm:w-32"
+            value={filtros.max || ''}
+            onChange={e => setFiltros({ ...filtros, max: e.target.value })}
+            min="0"
+          />
+        </div>
+
+        {/* Servicios multi-checkbox */}
         <div className="col-span-2 sm:col-auto flex flex-wrap gap-2 items-center" role="group" aria-label="Filtrar por servicios">
           {SERVICIOS_OPCIONES.map(opt => (
-            <label key={opt.id} className="text-xs sm:text-sm flex items-center gap-1.5 select-none cursor-pointer bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-full px-2.5 py-1">
+            <label key={opt.id} className="text-xs sm:text-sm flex items-center gap-1.5 select-none cursor-pointer bg-neutral-50 hover:bg-neutral-100 border border-neutral-200 rounded-full px-2.5 py-1">
               <input
                 type="checkbox"
-                className="rounded"
+                className="rounded border-neutral-300 text-navy-600 focus:ring-navy-200"
                 checked={selectedIds.includes(String(opt.id))}
                 onChange={e => setFiltros({ ...filtros, servicios: toggleServicio(filtros.servicios, opt.id, e.target.checked) })}
                 aria-label={opt.label}
@@ -75,17 +83,22 @@ export default function Filtros({ filtros, setFiltros }) {
           ))}
         </div>
 
-        <button
-          className="text-xs sm:text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium sm:ml-auto col-span-2 sm:col-auto w-full sm:w-auto focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          onClick={() => setFiltros({})}
-          type="button"
-        >
-          Limpiar
-        </button>
+        {hasFilters && (
+          <button
+            className="btn-ghost text-xs ml-auto col-span-2 sm:col-auto"
+            onClick={() => setFiltros({})}
+            type="button"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            Limpiar filtros
+          </button>
+        )}
       </div>
       {rangoInvalido && (
-        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-3" role="alert">
-          Mín no puede ser mayor que Máx (HU-002 C1) — ajusta el rango antes de filtrar
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mt-3" role="alert">
+          Min no puede ser mayor que Max — ajusta el rango antes de filtrar
         </p>
       )}
     </div>

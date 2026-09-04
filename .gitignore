@@ -17,6 +17,7 @@ backend/uploads/
 # IDE
 .vscode/
 .idea/
+.opencode/
 frontend/node_modules
 backend/venv
 backend/__pycache__
