@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { api } from '../services/api'
 import Indice from '../components/IndiceConfianza'
 import MapaZona from '../components/MapaZona'
+import GaleriaFotos from '../components/GaleriaFotos'
 import { formatTiempoCaminando } from '../utils/formatters'
 import { useFavoritos } from '../contexts/FavoritosContext'
 import { useComparar } from '../contexts/CompararContext'
@@ -73,7 +74,6 @@ export default function Detalle() {
 
   return (
     <div className="container-main py-6 md:py-8">
-      {/* Breadcrumb */}
       <nav className="flex items-center gap-2 text-xs text-neutral-400 mb-6">
         <Link to="/" className="hover:text-navy-600 transition-colors">Buscar</Link>
         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -83,16 +83,13 @@ export default function Detalle() {
       </nav>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
-        {/* Main content */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Aviso estado */}
           {!isActivo && (
             <div className="bg-amber-50 border border-amber-200 text-amber-700 rounded-md p-3 text-sm">
               No disponible para contacto — Estado: <b>{pub.estado}</b> {pub.estado === 'PENDIENTE' ? '(en moderación)' : ''} — Solo ACTIVO es contactable.
             </div>
           )}
 
-          {/* Botones favoritos / comparar */}
           <div className="flex gap-2">
             <button
               onClick={() => favHook.toggle(pub.id)}
@@ -109,6 +106,7 @@ export default function Detalle() {
               {isComp ? '✓ En comparar' : '+ Comparar (máx 3)'}
             </button>
           </div>
+
           {compHook.error && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2" role="alert">{compHook.error}</p>}
 
           <div>
@@ -128,7 +126,6 @@ export default function Detalle() {
             </div>
           </div>
 
-          {/* Tags */}
           <div className="flex flex-wrap gap-2">
             <span className="badge bg-navy-50 text-navy-700 border border-navy-100">
               {pub.tipo_inmueble}
@@ -147,24 +144,8 @@ export default function Detalle() {
             ))}
           </div>
 
-          {/* Fotos */}
-          {pub.fotos && Array.isArray(pub.fotos) && pub.fotos.length > 0 && (
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {pub.fotos.slice(0, 6).map((url, i) => (
-                <div key={i} className="aspect-[4/3] overflow-hidden rounded-lg bg-neutral-100">
-                  <img
-                    src={url}
-                    alt={`Foto ${i + 1} de ${pub.titulo}`}
-                    className="w-full h-full object-cover"
-                    loading="lazy"
-                    onError={e => { e.currentTarget.src = `https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600&h=400&fit=crop`; e.currentTarget.onerror = null }}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
+          <GaleriaFotos fotos={pub.fotos} titulo={pub.titulo} />
 
-          {/* Details */}
           <div className="card p-5 space-y-4">
             <div>
               <h3 className="text-sm font-semibold text-navy-800 mb-1.5">Reglas de convivencia</h3>
@@ -194,7 +175,6 @@ export default function Detalle() {
             </div>
           </div>
 
-          {/* Map */}
           <div>
             <h3 className="text-sm font-semibold text-navy-800 mb-3">Ubicacion referencial</h3>
             <MapaZona
@@ -204,7 +184,6 @@ export default function Detalle() {
             />
           </div>
 
-          {/* CTA WhatsApp */}
           <div className="card p-5">
             {hasTel ? (
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
@@ -239,7 +218,6 @@ export default function Detalle() {
           </div>
         </div>
 
-        {/* Sidebar */}
         <div className="space-y-6">
           <div className="lg:sticky lg:top-32">
             <Indice

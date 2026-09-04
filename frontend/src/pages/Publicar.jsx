@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
+import UploadFotos from '../components/UploadFotos'
 
 const SERVICIOS = [
   { id: 1, nombre: 'WiFi Fibra' },
@@ -214,7 +215,6 @@ export default function Publicar() {
   return (
     <div className="container-main py-8 md:py-12">
       <div className="max-w-2xl mx-auto">
-        {/* Header */}
         <div className="mb-8">
           <nav className="flex items-center gap-2 text-xs text-neutral-400 mb-4">
             <Link to="/" className="hover:text-navy-600 transition-colors">Buscar</Link>
@@ -253,7 +253,6 @@ export default function Publicar() {
         {submitError && <p className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 mb-4 text-sm break-words">{submitError}</p>}
 
         <form onSubmit={handleSubmit} className="card p-6 md:p-8 space-y-5" noValidate>
-          {/* Titulo */}
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Titulo de la publicacion * <span className="text-neutral-400 font-normal">(10-150)</span></label>
             <input
@@ -266,7 +265,6 @@ export default function Publicar() {
             {errors.titulo && <p className="text-xs text-red-600 mt-1">{errors.titulo}</p>}
           </div>
 
-          {/* Descripcion */}
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Descripcion * <span className="text-neutral-400 font-normal">(20-2000)</span></label>
             <textarea
@@ -279,7 +277,6 @@ export default function Publicar() {
             {errors.descripcion && <p className="text-xs text-red-600 mt-1">{errors.descripcion}</p>}
           </div>
 
-          {/* Tipo */}
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Tipo de vivienda *</label>
             <select
@@ -295,7 +292,6 @@ export default function Publicar() {
             </select>
           </div>
 
-          {/* Precio */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-navy-800 mb-1.5">Canon mensual (COP) *</label>
@@ -322,7 +318,6 @@ export default function Publicar() {
             </div>
           </div>
 
-          {/* Zona */}
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Zona / barrio *</label>
             <select
@@ -334,7 +329,6 @@ export default function Publicar() {
             </select>
           </div>
 
-          {/* Direccion */}
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Direccion referencial *</label>
             <input
@@ -347,7 +341,6 @@ export default function Publicar() {
             {errors.direccion_referencial && <p className="text-xs text-red-600 mt-1">{errors.direccion_referencial}</p>}
           </div>
 
-          {/* Reglas */}
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Reglas de convivencia *</label>
             <textarea
@@ -360,7 +353,6 @@ export default function Publicar() {
             {errors.reglas_convivencia && <p className="text-xs text-red-600 mt-1">{errors.reglas_convivencia}</p>}
           </div>
 
-          {/* Coordenadas */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-navy-800 mb-1.5">Latitud <span className="text-neutral-400 font-normal">(opcional)</span></label>
@@ -388,7 +380,6 @@ export default function Publicar() {
             </div>
           </div>
 
-          {/* Servicios */}
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Servicios *</label>
             <div className="flex flex-wrap gap-2 mt-1">
@@ -402,7 +393,6 @@ export default function Publicar() {
             {errors.servicios_ids && <p className="text-xs text-red-600 mt-1">{errors.servicios_ids}</p>}
           </div>
 
-          {/* Campus */}
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Campus asociado *</label>
             <div className="flex flex-wrap gap-2 mt-1">
@@ -417,40 +407,23 @@ export default function Publicar() {
             {errors.campus_ids && <p className="text-xs text-red-600 mt-1">{errors.campus_ids}</p>}
           </div>
 
-          {/* Fotos */}
           <div>
-            <label className="block text-sm font-medium text-navy-800 mb-1.5">Fotos (URLs) * <span className="text-neutral-400 font-normal">(minimo 3, maximo 10)</span></label>
-            {form.fotos.map((url, i) => (
-              <div key={i} className="flex gap-2 mt-1">
-                <input
-                  type="url"
-                  value={url}
-                  onChange={e => {
-                    const a = [...form.fotos]; a[i] = e.target.value; setForm({ ...form, fotos: a })
-                  }}
-                  placeholder={`https://.../foto${i + 1}.jpg`}
-                  className="input-field min-w-0"
-                />
-                {form.fotos.length > 3 && (
-                  <button
-                    type="button"
-                    onClick={() => setForm({ ...form, fotos: form.fotos.filter((_, idx) => idx !== i) })}
-                    className="text-xs px-2 py-1 rounded border border-red-200 text-red-600 hover:bg-red-50 shrink-0"
-                  >
-                    Quitar
-                  </button>
-                )}
-              </div>
-            ))}
-            {form.fotos.length < 10 && (
-              <button type="button" onClick={() => setForm({ ...form, fotos: [...form.fotos, ''] })} className="text-xs text-navy-600 hover:text-navy-700 hover:underline mt-1">
-                + Añadir otra foto
-              </button>
-            )}
+            <label className="block text-sm font-medium text-navy-800 mb-1.5">Fotos * <span className="text-neutral-400 font-normal">(sube archivos o pega URLs)</span></label>
+            <UploadFotos token={token} initialUrls={form.fotos} onUrls={(urls) => setForm(f => ({ ...f, fotos: urls.length ? urls : f.fotos }))} />
             {errors.fotos && <p className="text-xs text-red-600 mt-1">{errors.fotos}</p>}
+            <details className="mt-2">
+              <summary className="text-xs text-neutral-400 cursor-pointer hover:text-navy-600">¿Prefieres pegar URLs? (opcional)</summary>
+              <div className="mt-2 space-y-1">
+                {form.fotos.slice(0, 3).map((url, i) => (
+                  <input key={i} type="url" value={url} onChange={e => {
+                    const a = [...form.fotos]; a[i] = e.target.value; setForm({ ...form, fotos: a })
+                  }} placeholder={`https://.../foto${i + 1}.jpg`} className="input-field text-xs" />
+                ))}
+                <p className="text-xs text-neutral-400">Si subiste fotos arriba, estas URLs se ignoran.</p>
+              </div>
+            </details>
           </div>
 
-          {/* Submit */}
           <div className="pt-2">
             <button type="submit" disabled={submitting} className="btn-accent w-full justify-center">
               {submitting ? 'Enviando...' : 'Enviar a revision'}

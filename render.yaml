@@ -1,0 +1,27 @@
+# Render Blueprint — AlojaU Backend Free ($0)
+# Docs: https://render.com/docs/blueprint-spec
+# Este archivo NO se aplica solo; Render lo usa si haces "Blueprint" desde repo.
+# Alternativa manual: New Web Service → Connect repo → usar mismos valores.
+services:
+  - type: web
+    name: alojau-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    # Render expone $PORT automáticamente, no fijar env PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false # poner en dashboard con valor postgresql+asyncpg://... (Supabase pooler)
+      - key: SECRET_KEY
+        generateValue: true # Render genera 64 chars si no pones uno
+      - key: CORS_ORIGINS
+        value: https://alojau.vercel.app,http://localhost:5173
+      - key: ENV
+        value: prod
+      - key: USE_MOCK_FALLBACK
+        value: False
+      - key: PYTHON_VERSION
+        value: 3.11.0

@@ -21,6 +21,8 @@ from app.schemas.publicacion import PublicacionCreate, PublicacionOut, DesgloseC
 from app.services.haversine import haversine_m
 from app.services.trust import calcular_indice, dias_desde, DISCLAIMER
 from app.core.pagination import paginate_params, build_paginated
+import logging
+logger = logging.getLogger("alojau.publicaciones")
 
 router = APIRouter(prefix="/api/publicaciones", tags=["publicaciones"])
 
@@ -264,11 +266,11 @@ async def list_publicaciones(
     # Intento DB real con fallback mock
     try:
         paginated = await _query_db_lista(db, campus_id, precio_min, precio_max, tipo, servicios_ids, page, size)
-        # Para compatibilidad con frontend viejo que espera array, si page==1 y size==9 y total<=9, devuelve array si no hay paginación explícita?
-        # Ahora siempre devolvemos paginado; frontend nuevo lo maneja, tests viejos actualizados para soportar ambos
         return paginated
     except Exception as e:
-        # Fallback MOCK (no bloquea frontend - NFR disponibilidad)
+        # Log real para diagnóstico en Render (no ocultar excepción)
+        logger.error(f"[DB fallback] _query_db_lista falló: {e!r}", exc_info=True)
+        print(f"[Sprint1 mock fallback] DB no disponible: {e!r}")
         filtradas = [p for p in MOCK_PUBS if p["estado"] == "ACTIVO"]
 
         if campus_id:
@@ -336,8 +338,9 @@ async def get_publicacion(pub_id: int = Path(..., ge=1, le=1000000), db: AsyncSe
                 "indice_confianza": trust["indice"], "indice": trust["indice"], "desglose": trust["desglose"], "nivel": trust["nivel"],
                 "advertencia": trust["advertencia"], "telefono_whatsapp": tel, "whatsapp_url": wa,
             }
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"[DB fallback] get_publicacion {pub_id} falló: {e!r}", exc_info=True)
+        print(f"[DB fallback] get_publicacion {pub_id}: {e!r}")
 
     # Mock fallback
     pub = next((p for p in MOCK_PUBS if p["id"] == pub_id), None)
