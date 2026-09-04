@@ -10,7 +10,7 @@ NFR P95<500ms: query indexada (estado, zona, canon), sin N+1, Haversine en memor
 """
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query, Path, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from sqlalchemy.orm import selectinload
@@ -20,6 +20,7 @@ from app.core.security import get_current_user, require_arrendador
 from app.schemas.publicacion import PublicacionCreate, PublicacionOut, DesgloseConfianza
 from app.services.haversine import haversine_m
 from app.services.trust import calcular_indice, dias_desde, DISCLAIMER
+from app.core.pagination import paginate_params, build_paginated
 
 router = APIRouter(prefix="/api/publicaciones", tags=["publicaciones"])
 
@@ -134,14 +135,18 @@ async def _query_db_lista(
     precio_max: Optional[int],
     tipo: Optional[str],
     servicios: Optional[List[int]],
+    page: int = 1,
+    size: int = 9,
 ):
     """
     Sprint1 real DB: SELECT + JOIN publicacion_campus + cálculo distancia.
     Si campus_id, ordenar por distancia (Haversine precalculado en publicacion_campus.distancia_geodesica_m)
     Filtros combinables (HU-002 C1-3).
+    Paginación: page 1-indexed, size 1-50.
     """
     # Lazy import para evitar ciclo
-    from app.models.publicacion import Publicacion, PublicacionCampus, Usuario
+    from app.models import Publicacion, PublicacionCampus, Usuario
+    from sqlalchemy import func, select as sel
 
     stmt = select(Publicacion).options(selectinload(Publicacion.imagenes), selectinload(Publicacion.servicios)).where(Publicacion.estado == "ACTIVO")
 
@@ -160,7 +165,7 @@ async def _query_db_lista(
 
     # Campus filter: join publicacion_campus
     if campus_id:
-        stmt = stmt.join(PublicacionCampus, PublicacionCampus.pub_id == Publicacion.id).where(PublicacionCampus.campus_id == campus_id).order_by(PublicacionCampus.distancia_geodesica_m)
+        stmt = stmt.join(PublicacionCampus, PublicacionCampus.publicacion_id == Publicacion.id).where(PublicacionCampus.campus_id == campus_id).order_by(PublicacionCampus.distancia_geodesica_m)
 
     result = await db.execute(stmt)
     pubs = result.scalars().unique().all()
@@ -171,7 +176,7 @@ async def _query_db_lista(
         # reportes activos bug fix: COUNT WHERE estado IN ('PENDIENTE','CONFIRMADO')
         # Sprint1 simplificado: query ad-hoc si no eager
         from sqlalchemy import func, select as sel
-        from app.models.publicacion import ReportePublicacion
+        from app.models import ReportePublicacion
         r = await db.execute(sel(func.count()).select_from(ReportePublicacion).where(ReportePublicacion.publicacion_id==p.id, ReportePublicacion.estado.in_(["PENDIENTE","CONFIRMADO"])))
         reportes_activos = r.scalar() or 0
 
@@ -182,7 +187,7 @@ async def _query_db_lista(
         dist = None
         if campus_id:
             # leer distancia precalculada
-            pc = await db.execute(sel(PublicacionCampus).where(PublicacionCampus.pub_id==p.id, PublicacionCampus.campus_id==campus_id))
+            pc = await db.execute(sel(PublicacionCampus).where(PublicacionCampus.publicacion_id==p.id, PublicacionCampus.campus_id==campus_id))
             pc = pc.scalar_one_or_none()
             dist = pc.distancia_geodesica_m if pc else None
 
@@ -193,30 +198,39 @@ async def _query_db_lista(
             direccion_referencial=p.direccion_referencial, servicios_ids=[s.id for s in p.servicios],
             telefono_verificado=tel_ver, num_fotos=len(p.imagenes), dias_vigencia=dias_vig, reportes_activos=reportes_activos
         )
+        # zona nombre via relationship (lazy joined)
+        zona_nombre = p.zona.nombre if hasattr(p, 'zona') and p.zona else None
         # construir out (simplificado)
         out.append({
             "id": p.id, "titulo": p.titulo, "descripcion": p.descripcion,
             "tipo_inmueble": p.tipo_inmueble, "canon_mensual": float(p.canon_mensual), "deposito_requerido": float(p.deposito_requerido),
-            "zona_barrio_id": p.zona_barrio_id, "direccion_referencial": p.direccion_referencial,
+            "zona_barrio_id": p.zona_barrio_id, "zona": zona_nombre, "zona_nombre": zona_nombre, "direccion_referencial": p.direccion_referencial,
             "reglas_convivencia": p.reglas_convivencia, "estado": p.estado,
             "fecha_renovacion": p.fecha_renovacion, "fecha_expiracion": p.fecha_expiracion,
             "servicios": [s.nombre for s in p.servicios], "servicios_ids": [s.id for s in p.servicios],
             "fotos": [im.url for im in p.imagenes], "num_fotos": len(p.imagenes),
-            "distancia_geodesica_m": dist,
+            "distancia_geodesica_m": dist, "dist_m": dist,
             "indice_confianza": trust["indice"], "desglose": trust["desglose"], "nivel_confianza": trust["nivel"],
             "telefono_whatsapp": u.telefono_whatsapp if tel_ver else None,
             "usuario_id": p.usuario_id,
         })
-    return out
+    # Paginación en memoria (para MVP, dataset pequeño; para >100 usar LIMIT/OFFSET en SQL)
+    total = len(out)
+    # si campus_id, ya está ordenado por distancia; si no, mantiene orden por id
+    offset, size_norm = paginate_params(page, size)
+    paginated_items = out[offset:offset+size_norm]
+    return build_paginated(paginated_items, total, page, size_norm)
 
 # --- Endpoints Sprint1 ---
 @router.get("", summary="HU-001 Buscar por sede + HU-002 Filtros combinables")
 async def list_publicaciones(
-    campus_id: Optional[int] = Query(None, description="FK campus_universitarios.id - calcula Haversine y filtra publicaciones asociadas"),
-    precio_min: Optional[int] = Query(None, ge=0, description="COP mínimo"),
-    precio_max: Optional[int] = Query(None, ge=0, description="COP máximo"),
+    campus_id: Optional[int] = Query(None, ge=1, le=1000, description="FK campus_universitarios.id - calcula Haversine y filtra publicaciones asociadas"),
+    precio_min: Optional[int] = Query(None, ge=0, le=10_000_000, description="COP mínimo"),
+    precio_max: Optional[int] = Query(None, ge=0, le=10_000_000, description="COP máximo"),
     tipo: Optional[str] = Query(None, pattern="^(HABITACION_FAMILIAR|HABITACION_INDEPENDIENTE|APARTAESTUDIO|COMPARTIDO)$"),
-    servicios: Optional[str] = Query(None, description="IDs coma separados, ej: 1,3"),
+    servicios: Optional[str] = Query(None, max_length=50, description="IDs coma separados, ej: 1,3"),
+    page: int = Query(1, ge=1, le=1000, description="Página 1-indexed"),
+    size: int = Query(9, ge=1, le=50, description="Tamaño página"),
     db: AsyncSession = Depends(get_session),
 ):
     """
@@ -235,27 +249,30 @@ async def list_publicaciones(
 
     servicios_ids = None
     if servicios:
+        if len(servicios) > 50:
+            raise HTTPException(status_code=400, detail="servicios parámetro demasiado largo")
         try:
             servicios_ids = [int(s.strip()) for s in servicios.split(",") if s.strip()]
+            if len(servicios_ids) > 10:
+                raise HTTPException(status_code=400, detail="máximo 10 servicios")
+            for sid in servicios_ids:
+                if sid < 1 or sid > 1000:
+                    raise HTTPException(status_code=400, detail=f"servicio_id {sid} fuera de rango")
         except ValueError:
             raise HTTPException(status_code=400, detail="servicios debe ser lista de ints coma separada")
 
     # Intento DB real con fallback mock
     try:
-        # Si db es None o ping falla, except -> mock
-        # test rápido: intenta query simple; si timeout -> mock
-        db_items = await _query_db_lista(db, campus_id, precio_min, precio_max, tipo, servicios_ids)
-        # Si DB vacía en dev, también fallback a mock para demo (opcional)
-        # Comentado para producción: if not db_items: return mock filtrado
-        return db_items
+        paginated = await _query_db_lista(db, campus_id, precio_min, precio_max, tipo, servicios_ids, page, size)
+        # Para compatibilidad con frontend viejo que espera array, si page==1 y size==9 y total<=9, devuelve array si no hay paginación explícita?
+        # Ahora siempre devolvemos paginado; frontend nuevo lo maneja, tests viejos actualizados para soportar ambos
+        return paginated
     except Exception as e:
         # Fallback MOCK (no bloquea frontend - NFR disponibilidad)
-        # print(f"[Sprint1 mock fallback] DB no disponible: {e}")
         filtradas = [p for p in MOCK_PUBS if p["estado"] == "ACTIVO"]
 
         if campus_id:
             filtradas = [p for p in filtradas if campus_id in p.get("campus_ids", [])]
-            # ordenar por Haversine (P95 <500ms: cálculo en memoria O(n))
             filtradas.sort(key=lambda p: haversine_m(p["latitud"], p["longitud"], MOCK_CAMPUS[campus_id]["lat"], MOCK_CAMPUS[campus_id]["lng"]) if p.get("latitud") else 999999)
 
         if precio_min is not None:
@@ -267,10 +284,14 @@ async def list_publicaciones(
         if servicios_ids:
             filtradas = [p for p in filtradas if all(s in p.get("servicios_ids", []) for s in servicios_ids)]
 
-        return [_to_out(p, campus_id) for p in filtradas]
+        items = [_to_out(p, campus_id) for p in filtradas]
+        total = len(items)
+        offset, size_norm = paginate_params(page, size)
+        paginated_items = items[offset:offset+size_norm]
+        return build_paginated(paginated_items, total, page, size_norm)
 
 @router.get("/{pub_id}", summary="HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp")
-async def get_publicacion(pub_id: int, db: AsyncSession = Depends(get_session)):
+async def get_publicacion(pub_id: int = Path(..., ge=1, le=1000000), db: AsyncSession = Depends(get_session)):
     """
     HU-003: muestra canon, servicios, fotos, zona, condiciones, vigencia
             No expone datos que no deban ser públicos (email propietario, etc)
@@ -278,7 +299,7 @@ async def get_publicacion(pub_id: int, db: AsyncSession = Depends(get_session)):
     HU-008: telefono_whatsapp solo si verificado + whatsapp_url wa.me
     """
     try:
-        from app.models.publicacion import Publicacion, ReportePublicacion, Usuario
+        from app.models import Publicacion, ReportePublicacion, Usuario
         from sqlalchemy import func, select as sel
         p = await db.get(Publicacion, pub_id, options=[selectinload(Publicacion.imagenes), selectinload(Publicacion.servicios)])
         if p:
@@ -296,14 +317,22 @@ async def get_publicacion(pub_id: int, db: AsyncSession = Depends(get_session)):
             fotos = [im.url for im in p.imagenes]
             tel = u.telefono_whatsapp if tel_ver and u else None
             wa = f"https://wa.me/{tel}?text={__import__('urllib.parse').parse.quote(f'Hola, vi {p.titulo} (ID {p.id}) en AlojaU y me interesa.')}" if tel else None
+            zona_nombre = p.zona.nombre if hasattr(p, 'zona') and p.zona else "Pandiguando"
+            # distancia en detalle: si no hay campus_id, mostrar la más cercana
+            from app.models import PublicacionCampus as PC
+            # buscar distancia mínima si no hay una específica
+            pc_min = await db.execute(sel(PC).where(PC.publicacion_id==p.id).order_by(PC.distancia_geodesica_m))
+            pc_min = pc_min.scalars().first()
+            dist_detalle = pc_min.distancia_geodesica_m if pc_min else None
             return {
                 "id": p.id, "titulo": p.titulo, "descripcion": p.descripcion,
                 "tipo_inmueble": p.tipo_inmueble, "canon_mensual": float(p.canon_mensual), "canon": float(p.canon_mensual),
                 "deposito": float(p.deposito_requerido), "deposito_requerido": float(p.deposito_requerido),
-                "zona_barrio_id": p.zona_barrio_id, "zona": getattr(p, "zona_nombre", None) or "Pandiguando",
+                "zona_barrio_id": p.zona_barrio_id, "zona": zona_nombre, "zona_nombre": zona_nombre,
                 "direccion_referencial": p.direccion_referencial, "reglas": p.reglas_convivencia, "reglas_convivencia": p.reglas_convivencia,
                 "estado": p.estado, "fecha_renovacion": p.fecha_renovacion, "fecha_expiracion": p.fecha_expiracion,
                 "servicios": [s.nombre for s in p.servicios], "fotos": fotos, "num_fotos": len(fotos),
+                "distancia_geodesica_m": dist_detalle, "dist_m": dist_detalle,
                 "indice_confianza": trust["indice"], "indice": trust["indice"], "desglose": trust["desglose"], "nivel": trust["nivel"],
                 "advertencia": trust["advertencia"], "telefono_whatsapp": tel, "whatsapp_url": wa,
             }
@@ -348,7 +377,7 @@ async def crear_publicacion(
 
     # Intentar persistir en DB
     try:
-        from app.models.publicacion import Publicacion, PublicacionCampus, ImagenPublicacion, PublicacionServicio, PublicacionAudit
+        from app.models import Publicacion, PublicacionCampus, ImagenPublicacion, PublicacionServicio, PublicacionesAudit as PublicacionAudit
         # Crear publicación
         nueva = Publicacion(
             usuario_id=user["id"] if isinstance(user["id"], int) else 1,
@@ -375,23 +404,23 @@ async def crear_publicacion(
             if payload.latitud and payload.longitud and cid in MOCK_CAMPUS:
                 c = MOCK_CAMPUS[cid]
                 dist = haversine_m(payload.latitud, payload.longitud, c["lat"], c["lng"])
-            db.add(PublicacionCampus(pub_id=nueva.id, campus_id=cid, distancia_geodesica_m=dist))
+            db.add(PublicacionCampus(publicacion_id=nueva.id, campus_id=cid, distancia_geodesica_m=dist))
 
         for sid in payload.servicios_ids:
-            db.add(PublicacionServicio(pub_id=nueva.id, servicio_id=sid))
+            db.add(PublicacionServicio(publicacion_id=nueva.id, servicio_id=sid))
 
         for idx, url in enumerate(payload.fotos, start=1):
             db.add(ImagenPublicacion(publicacion_id=nueva.id, url=str(url), orden=idx))
 
-        db.add(PublicacionAudit(publicacion_id=nueva.id, actor_id=nueva.usuario_id, evento="CREATED", from_estado=None, to_estado="PENDIENTE"))
+        db.add(PublicacionAudit(publicacion_id=nueva.id, usuario_id=nueva.usuario_id, evento="CREATED", detalle="PENDIENTE"))
 
         await db.commit()
         await db.refresh(nueva)
         return {"id": nueva.id, "estado": "PENDIENTE", "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "mensaje": "Publicación en PENDIENTE, pendiente de moderación"}
 
     except Exception as e:
-        # Mock fallback Sprint1: no hay PG, simular creación
-        mock_id = max(p["id"] for p in MOCK_PUBS) + 1
+        # Mock fallback Sprint1: no hay PG, simular creación (usa id 10000+ para no colisionar con DB ids 1-6)
+        mock_id = max(max(p["id"] for p in MOCK_PUBS), 10000) + 1
         nueva_mock = {
             "id": mock_id, "titulo": payload.titulo, "tipo_inmueble": payload.tipo_inmueble,
             "canon_mensual": float(payload.canon_mensual), "estado": "PENDIENTE",

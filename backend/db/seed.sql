@@ -58,14 +58,20 @@ INSERT INTO publicacion_campus (publicacion_id, campus_id, distancia_geodesica_m
 (6, 2, haversine_m(2.4360000, -76.6065000, 2.4410000, -76.6060000))
 ON CONFLICT DO NOTHING;
 
--- 20 imágenes (4+3 por pub)
+-- 20 imágenes reales (Unsplash + placehold) - siempre cargan, sin 404 (picsum a veces 522)
 INSERT INTO imagenes_publicacion (publicacion_id, url, orden) VALUES
-(1, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub1_01.jpg', 1),(1, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub1_02.jpg', 2),(1, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub1_03.jpg', 3),(1, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub1_04.jpg', 4),
-(2, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub2_01.jpg', 1),(2, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub2_02.jpg', 2),(2, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub2_03.jpg', 3),
-(3, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub3_01.jpg', 1),(3, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub3_02.jpg', 2),(3, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub3_03.jpg', 3),
-(4, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub4_01.jpg', 1),(4, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub4_02.jpg', 2),(4, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub4_03.jpg', 3),(4, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub4_04.jpg', 4),
-(5, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub5_01.jpg', 1),(5, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub5_02.jpg', 2),(5, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub5_03.jpg', 3),
-(6, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub6_01.jpg', 1),(6, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub6_02.jpg', 2),(6, 'https://res.cloudinary.com/demo/image/upload/v1/alojau/pub6_03.jpg', 3)
+-- Pub1 Tulcán: 4 fotos variadas (habitación, baño, cocina, fachada)
+(1, 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600&h=400&fit=crop', 1),(1, 'https://images.unsplash.com/photo-1484154218962-a197022b5858?w=600&h=400&fit=crop', 2),(1, 'https://images.unsplash.com/photo-1493809842364-78817add58d1?w=600&h=400&fit=crop', 3),(1, 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=600&h=400&fit=crop', 4),
+-- Pub2 Centro: apartaestudio
+(2, 'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=600&h=400&fit=crop', 1),(2, 'https://images.unsplash.com/photo-1554995207-c18c203602cb?w=600&h=400&fit=crop', 2),(2, 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600&h=400&fit=crop', 3),
+-- Pub3 Pandiguando: familiar
+(3, 'https://images.unsplash.com/photo-1493809842364-78817add58d1?w=600&h=400&fit=crop', 1),(3, 'https://images.unsplash.com/photo-1484154218962-a197022b5858?w=600&h=400&fit=crop', 2),(3, 'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=600&h=400&fit=crop', 3),
+-- Pub4 Tulcán sur
+(4, 'https://images.unsplash.com/photo-1554995207-c18c203602cb?w=600&h=400&fit=crop', 1),(4, 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600&h=400&fit=crop', 2),(4, 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=600&h=400&fit=crop', 3),(4, 'https://images.unsplash.com/photo-1484154218962-a197022b5858?w=600&h=400&fit=crop', 4),
+-- Pub5 Compartido
+(5, 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600&h=400&fit=crop', 1),(5, 'https://images.unsplash.com/photo-1493809842364-78817add58d1?w=600&h=400&fit=crop', 2),(5, 'https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=600&h=400&fit=crop', 3),
+-- Pub6 Pandiguando moderno
+(6, 'https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=600&h=400&fit=crop', 1),(6, 'https://images.unsplash.com/photo-1554995207-c18c203602cb?w=600&h=400&fit=crop', 2),(6, 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600&h=400&fit=crop', 3)
 ON CONFLICT DO NOTHING;
 
 -- 1 reporte PENDIENTE para probar índice (pub 2 pierde 10pts -> 90 en vez de 100)

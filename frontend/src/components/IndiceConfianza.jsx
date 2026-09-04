@@ -1,61 +1,112 @@
-export default function IndiceConfianza({ indice = 0, desglose = {} }) {
-  const level = indice >= 80 ? 'high' : indice >= 50 ? 'mid' : 'low'
+import { useState } from 'react'
 
-  const config = {
-    high: { label: 'Alto', color: 'text-emerald-700', bg: 'bg-emerald-500', ring: 'ring-emerald-100', bar: 'bg-emerald-500' },
-    mid: { label: 'Medio', color: 'text-gold-700', bg: 'bg-gold-500', ring: 'ring-gold-100', bar: 'bg-gold-500' },
-    low: { label: 'Basico', color: 'text-orange-700', bg: 'bg-orange-500', ring: 'ring-orange-100', bar: 'bg-orange-500' },
+const friendly = (indice) => {
+  if (indice >= 80) return {
+    label: 'Confianza Alta',
+    color: 'text-emerald-700',
+    bg: 'bg-emerald-500',
+    bar: 'bg-emerald-500',
+    light: 'bg-emerald-50 border-emerald-200',
+    emoji: '✅',
+    msg: '¡Se ve bien! Información completa y contacto verificado.',
   }
+  if (indice >= 50) return {
+    label: 'Confianza Media',
+    color: 'text-gold-700',
+    bg: 'bg-gold-500',
+    bar: 'bg-gold-500',
+    light: 'bg-gold-50 border-gold-200',
+    emoji: '⚠️',
+    msg: 'Bastante bien, pero revisa detalles antes de pagar.',
+  }
+  return {
+    label: 'Confianza Básica',
+    color: 'text-orange-700',
+    bg: 'bg-orange-500',
+    bar: 'bg-orange-500',
+    light: 'bg-orange-50 border-orange-200',
+    emoji: '🔍',
+    msg: 'Revisa con calma, faltan datos importantes.',
+  }
+}
 
-  const c = config[level]
+const friendlyDetails = (desglose = {}) => [
+  { key: 'completitud', label: 'Información completa', max: 40, val: desglose.completitud || 0, ok: (desglose.completitud || 0) >= 40, tip: 'Título, descripción, dirección y reglas' },
+  { key: 'telefono', label: 'WhatsApp verificado', max: 20, val: desglose.telefono || 0, ok: (desglose.telefono || 0) >= 20, tip: 'Número validado por el arrendador' },
+  { key: 'fotos', label: 'Fotos suficientes', max: 15, val: desglose.fotos || 0, ok: (desglose.fotos || 0) >= 15, tip: 'Al menos 3 fotos reales' },
+  { key: 'vigencia', label: 'Publicación vigente', max: 15, val: desglose.vigencia || 0, ok: (desglose.vigencia || 0) >= 15, tip: 'Actualizada hace menos de 30 días' },
+  { key: 'reportes', label: 'Sin reportes', max: 10, val: desglose.reportes || 0, ok: (desglose.reportes || 0) >= 10, tip: 'Nadie ha reportado esta publicación' },
+]
 
-  const items = [
-    { label: 'Completitud', value: desglose.completitud || 0, max: 40 },
-    { label: 'Telefono validado', value: desglose.telefono || 0, max: 20 },
-    { label: 'Fotos', value: desglose.fotos || 0, max: 15 },
-    { label: 'Vigencia', value: desglose.vigencia || 0, max: 15 },
-    { label: 'Sin reportes', value: desglose.reportes || 0, max: 10 },
-  ]
+export default function IndiceConfianza({ indice = 0, desglose = {} }) {
+  const [open, setOpen] = useState(false)
+  const f = friendly(indice)
+  const details = friendlyDetails(desglose)
 
   return (
-    <div className="card p-5">
-      <div className="flex items-center gap-3 mb-4">
-        <div className={`relative w-14 h-14 rounded-full ${c.bg} flex items-center justify-center ring-4 ${c.ring}`}>
-          <span className="text-white font-display font-bold text-lg">{indice}</span>
+    <div className={`border rounded-xl p-4 sm:p-5 bg-white min-w-0 overflow-hidden ${f.light}`}>
+      {/* Header amigable */}
+      <div className="flex items-start gap-3 sm:gap-4 min-w-0">
+        <div className={`w-14 h-14 sm:w-16 sm:h-16 rounded-2xl ${f.bg} text-white flex flex-col items-center justify-center shrink-0 shadow-sm`}>
+          <span className="text-lg sm:text-xl font-extrabold leading-none">{indice}</span>
+          <span className="text-[10px] font-medium opacity-90">/100</span>
         </div>
-        <div>
-          <p className={`font-semibold text-sm ${c.color}`}>{c.label}</p>
-          <p className="text-xs text-neutral-400">Indice de confianza</p>
-        </div>
-      </div>
-
-      <div className="space-y-3 mb-5">
-        {items.map((item, i) => (
-          <div key={i}>
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs text-neutral-500">{item.label}</span>
-              <span className="text-xs font-medium text-neutral-600">{item.value}/{item.max}</span>
-            </div>
-            <div className="h-1.5 bg-neutral-100 rounded-full overflow-hidden">
-              <div
-                className={`h-full ${c.bar} rounded-full transition-all duration-500`}
-                style={{ width: `${(item.value / item.max) * 100}%` }}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="p-3 bg-gold-50 border border-gold-200 rounded-md">
-        <div className="flex gap-2">
-          <svg className="w-4 h-4 text-gold-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
-          </svg>
-          <p className="text-xs text-gold-700 leading-relaxed">
-            Informativo, no garantiza seguridad. Verificar antes de pagar.
+        <div className="min-w-0 flex-1">
+          <p className={`font-bold text-sm sm:text-base flex items-center gap-1.5 ${f.color}`}>
+            <span>{f.emoji}</span> {f.label}
           </p>
+          <p className="text-xs sm:text-sm text-neutral-600 mt-1 break-words leading-snug">{f.msg}</p>
+          <p className="text-[11px] text-neutral-400 mt-1">No es garantía. Verifica en persona antes de pagar.</p>
         </div>
       </div>
+
+      {/* Barra visual */}
+      <div className="mt-4">
+        <div className="flex justify-between text-[11px] text-neutral-500 mb-1">
+          <span>0</span><span>50</span><span>100</span>
+        </div>
+        <div className="w-full bg-neutral-200 rounded-full h-2.5 overflow-hidden">
+          <div className={`h-full rounded-full transition-all duration-500 ${f.bar}`} style={{ width: `${Math.max(4, indice)}%` }} />
+        </div>
+        <div className="flex justify-between text-[10px] text-neutral-400 mt-1">
+          <span>Básico</span><span>Medio</span><span>Alto</span>
+        </div>
+      </div>
+
+      {/* Botón desplegable */}
+      <button
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="mt-4 w-full text-xs sm:text-sm font-medium text-navy-600 hover:text-navy-700 bg-neutral-50 border border-neutral-200 hover:border-navy-300 rounded-lg py-2 px-3 flex items-center justify-center gap-1.5 transition"
+      >
+        {open ? 'Ocultar detalles' : 'Ver por qué este puntaje'}
+        <span className={`transition-transform ${open ? 'rotate-180' : ''}`}>▼</span>
+      </button>
+
+      {/* Detalles amigables */}
+      {open && (
+        <div data-testid="detalles" className="mt-4 space-y-2.5 animate-in">
+          {details.map(d => (
+            <div key={d.key} className="flex items-start gap-2.5 text-xs sm:text-sm">
+              <span className={`mt-0.5 shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs ${d.ok ? 'bg-emerald-100 text-emerald-700' : 'bg-neutral-100 text-neutral-400'}`}>
+                {d.ok ? '✓' : '•'}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className={`font-medium truncate ${d.ok ? 'text-neutral-800' : 'text-neutral-500'}`}>{d.label}</p>
+                  <span className="text-[11px] text-neutral-500 shrink-0">{d.val}/{d.max}</span>
+                </div>
+                <p className="text-[11px] text-neutral-500 break-words">{d.tip}</p>
+              </div>
+            </div>
+          ))}
+          <div className="pt-3 border-t border-neutral-100 mt-3">
+            <p className="text-[11px] text-neutral-500 leading-relaxed">
+              Este índice es <b>informativo</b> y se calcula automáticamente (40 info completa +20 WhatsApp +15 fotos +15 vigencia +10 sin reportes). Un puntaje alto no garantiza que la vivienda sea segura. Visita el lugar y verifica identidad.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

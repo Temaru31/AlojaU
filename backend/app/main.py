@@ -3,9 +3,11 @@ AlojaU API - FastAPI + Uvicorn (Tabla14 stack oficial)
 Sprint1: HU-001,002,003,005,007,008
 Responsables: Backend/Arquitectura-BD (Sprint1: Adrian, luego rotación)
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
+from app.core.config import settings
 from app.routers import publicaciones, campus, auth
 
 app = FastAPI(
@@ -14,14 +16,24 @@ app = FastAPI(
     description="MVP vivienda universitaria Popayán - Sprint1: búsqueda por campus, filtros, detalle, publicar PENDIENTE, índice confianza, WhatsApp",
 )
 
-# CORS para Vite (localhost:5173) y Vercel
+# CORS restringido (DoD-5): nunca "*" con credentials
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "*"],
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+# Headers de seguridad básicos (OWASP)
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-XSS-Protection"] = "0"  # deshabilitado, CSP es mejor
+    return response
 
 @app.get("/health", tags=["infra"])
 def health():

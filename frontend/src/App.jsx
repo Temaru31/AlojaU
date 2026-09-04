@@ -4,8 +4,12 @@ import Buscar from './pages/Buscar'
 import Detalle from './pages/Detalle'
 import Publicar from './pages/Publicar'
 import Comparar from './pages/Comparar'
+import { FavoritosProvider, useFavoritos } from './contexts/FavoritosContext'
+import { CompararProvider, useComparar } from './contexts/CompararContext'
 
-function Navbar() {
+function Nav() {
+  const { count: favCount } = useFavoritos()
+  const { count: compCount, max: compMax } = useComparar()
   const [mobileOpen, setMobileOpen] = useState(false)
   const location = useLocation()
   const isActive = (path) => location.pathname === path
@@ -38,11 +42,12 @@ function Navbar() {
                   isActive('/comparar') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
                 }`}
               >
-                Comparar
+                Comparar {compCount > 0 && <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full ml-1">{compCount}/{compMax}</span>}
               </Link>
             </div>
           </div>
           <div className="hidden md:flex items-center gap-3">
+            {favCount > 0 && <span className="text-sm text-neutral-500" aria-label={`${favCount} favoritos`}>♡ {favCount}</span>}
             <Link to="/publicar" className="btn-accent">
               Publicar
             </Link>
@@ -139,18 +144,22 @@ function Footer() {
 function App() {
   return (
     <BrowserRouter>
-      <div className="min-h-screen flex flex-col bg-neutral-50">
-        <Navbar />
-        <main className="flex-1">
-          <Routes>
-            <Route path="/" element={<Buscar />} />
-            <Route path="/publicacion/:id" element={<Detalle />} />
-            <Route path="/comparar" element={<Comparar />} />
-            <Route path="/publicar" element={<Publicar />} />
-          </Routes>
-        </main>
-        <Footer />
-      </div>
+      <FavoritosProvider>
+        <CompararProvider>
+          <div className="min-h-screen flex flex-col bg-neutral-50">
+            <Nav />
+            <main className="flex-1">
+              <Routes>
+                <Route path="/" element={<Buscar />} />
+                <Route path="/publicacion/:id" element={<Detalle />} />
+                <Route path="/comparar" element={<Comparar />} />
+                <Route path="/publicar" element={<Publicar />} />
+              </Routes>
+            </main>
+            <Footer />
+          </div>
+        </CompararProvider>
+      </FavoritosProvider>
     </BrowserRouter>
   )
 }

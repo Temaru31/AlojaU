@@ -20,7 +20,6 @@ class Ciudad(Base):
     nombre: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
     departamento: Mapped[str] = mapped_column(String(100), nullable=False)
     activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     zonas: Mapped[list["ZonaBarrio"]] = relationship(back_populates="ciudad", cascade="all, delete-orphan")
     campuses: Mapped[list["CampusUniversitario"]] = relationship(back_populates="ciudad")
@@ -39,7 +38,6 @@ class ZonaBarrio(Base):
     ciudad_id: Mapped[int] = mapped_column(ForeignKey("ciudades.id", ondelete="CASCADE"), nullable=False)
     nombre: Mapped[str] = mapped_column(String(120), nullable=False)
     estrato: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
-    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     ciudad: Mapped["Ciudad"] = relationship(back_populates="zonas")
 
@@ -62,7 +60,6 @@ class CampusUniversitario(Base):
     latitud: Mapped[float] = mapped_column(Numeric(10,7), nullable=False)
     longitud: Mapped[float] = mapped_column(Numeric(10,7), nullable=False)
     activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     ciudad: Mapped["Ciudad"] = relationship(back_populates="campuses")
 
@@ -86,7 +83,7 @@ class Usuario(Base):
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 # ---------------------------------------------------------------------------
-# Publicaciones (FIX: + latitud, longitud, indice_confianza)
+# Publicaciones (FIX: + latitud, longitud, indice_confianza + relationships)
 # ---------------------------------------------------------------------------
 class Publicacion(Base):
     __tablename__ = "publicaciones"
@@ -126,6 +123,13 @@ class Publicacion(Base):
     fecha_renovacion: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     fecha_expiracion: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sa_text("NOW() + INTERVAL '30 days'"))
 
+    # Relationships para evitar N+1 y permitir selectinload (router espera .servicios y .imagenes)
+    zona: Mapped["ZonaBarrio"] = relationship(lazy="joined")
+    usuario: Mapped["Usuario"] = relationship(lazy="joined")
+    servicios: Mapped[list["ServicioCatalogo"]] = relationship(secondary="publicacion_servicios", lazy="selectin")
+    imagenes: Mapped[list["ImagenPublicacion"]] = relationship(back_populates="publicacion", cascade="all, delete-orphan", lazy="selectin")
+    campus_links: Mapped[list["PublicacionCampus"]] = relationship(back_populates="publicacion", cascade="all, delete-orphan", lazy="selectin")
+
 # ---------------------------------------------------------------------------
 # Servicios Catalogo
 # ---------------------------------------------------------------------------
@@ -137,14 +141,13 @@ class ServicioCatalogo(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     nombre: Mapped[str] = mapped_column(String(80), nullable=False)
     categoria: Mapped[str] = mapped_column(String(50), nullable=False)  # Básico/Comodidad/Convivencia
-    activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 # ---------------------------------------------------------------------------
 # N:M publicacion_servicios
 # ---------------------------------------------------------------------------
 class PublicacionServicio(Base):
     __tablename__ = "publicacion_servicios"
-    pub_id: Mapped[int] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), primary_key=True)
+    publicacion_id: Mapped[int] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), primary_key=True)
     servicio_id: Mapped[int] = mapped_column(ForeignKey("servicios_catalogo.id", ondelete="CASCADE"), primary_key=True)
 
 # ---------------------------------------------------------------------------
@@ -155,12 +158,13 @@ class PublicacionCampus(Base):
     __table_args__ = (
         CheckConstraint("distancia_geodesica_m >= 0", name="chk_distancia"),
         Index("idx_pubcampus_campus_dist", "campus_id", "distancia_geodesica_m"),
-        Index("idx_pubcampus_pub", "pub_id"),
+        Index("idx_pubcampus_pub", "publicacion_id"),
     )
-    pub_id: Mapped[int] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), primary_key=True)
+    publicacion_id: Mapped[int] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), primary_key=True)
     campus_id: Mapped[int] = mapped_column(ForeignKey("campus_universitarios.id", ondelete="CASCADE"), primary_key=True)
     distancia_geodesica_m: Mapped[int] = mapped_column(Integer, nullable=False)
-    actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    publicacion: Mapped["Publicacion"] = relationship(back_populates="campus_links")
 
 # ---------------------------------------------------------------------------
 # Imagenes
@@ -176,7 +180,8 @@ class ImagenPublicacion(Base):
     publicacion_id: Mapped[int] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
     orden: Mapped[int] = mapped_column(SmallInteger, nullable=False)
-    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    publicacion: Mapped["Publicacion"] = relationship(back_populates="imagenes")
 
 # ---------------------------------------------------------------------------
 # Reportes (FIX estado solo PENDIENTE/DESCARTADO/CONFIRMADO)
@@ -197,22 +202,18 @@ class ReportePublicacion(Base):
     fecha_creacion: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 # ---------------------------------------------------------------------------
-# Audit (FIX tabla faltante)
+# Audit (FIX tabla faltante) - alineado a schema.sql
 # ---------------------------------------------------------------------------
 class PublicacionesAudit(Base):
     __tablename__ = "publicaciones_audit"
     __table_args__ = (
         CheckConstraint("evento IN ('CREATED','APPROVED','REJECTED','PAUSED','RESUMED','RENTED','EXPIRED','RENEWED','BLOCKED')", name="chk_evento"),
-        CheckConstraint("indice_previo BETWEEN 0 AND 100", name="chk_idx_prev"),
-        CheckConstraint("indice_nuevo BETWEEN 0 AND 100", name="chk_idx_nuevo"),
         Index("idx_audit_pub", "publicacion_id"),
         Index("idx_audit_evento", "evento"),
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     publicacion_id: Mapped[int] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), nullable=False)
-    user_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
+    usuario_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
     evento: Mapped[str] = mapped_column(String(20), nullable=False)
-    motivo: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    indice_previo: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
-    indice_nuevo: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    detalle: Mapped[str | None] = mapped_column(Text, nullable=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

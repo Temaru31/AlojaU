@@ -1,35 +1,85 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../services/api'
 import Card from '../components/Card'
 import Filtros from '../components/Filtros'
+import Paginacion from '../components/Paginacion'
 
 export default function Buscar() {
   const [campus, setCampus] = useState([])
-  const [campusId, setCampusId] = useState(1)
-  const [filtros, setFiltros] = useState({})
+  const [searchParams, setSearchParams] = useSearchParams()
+  const campusId = Number(searchParams.get('campus_id') || 1)
+  const page = Number(searchParams.get('page') || 1)
+  const [filtros, setFiltros] = useState({
+    min: searchParams.get('precio_min') || '',
+    max: searchParams.get('precio_max') || '',
+    tipo: searchParams.get('tipo') || '',
+    servicios: searchParams.get('servicios') || '',
+  })
   const [pubs, setPubs] = useState([])
+  const [total, setTotal] = useState(0)
+  const [pages, setPages] = useState(1)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const setCampusId = (id) => {
+    const params = new URLSearchParams(searchParams)
+    params.set('campus_id', id)
+    params.set('page', 1)
+    setSearchParams(params)
+  }
+
+  const setPage = (p) => {
+    const params = new URLSearchParams(searchParams)
+    params.set('page', p)
+    setSearchParams(params)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  // debounce filtros -> URL (400ms)
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const params = new URLSearchParams(searchParams)
+      filtros.min ? params.set('precio_min', filtros.min) : params.delete('precio_min')
+      filtros.max ? params.set('precio_max', filtros.max) : params.delete('precio_max')
+      filtros.tipo ? params.set('tipo', filtros.tipo) : params.delete('tipo')
+      filtros.servicios ? params.set('servicios', filtros.servicios) : params.delete('servicios')
+      params.set('page', 1)
+      if (params.toString() !== searchParams.toString()) {
+        setSearchParams(params)
+      }
+    }, 400)
+    return () => clearTimeout(t)
+  }, [filtros.min, filtros.max, filtros.tipo, filtros.servicios])
 
   useEffect(() => {
     api.get('/api/campus')
       .then(r => setCampus(r.data))
-      .catch(() => setCampus([{ id: 1, nombre_sede: 'Campus Tulcan' }]))
+      .catch(() => setCampus([{ id: 1, institucion: 'Universidad del Cauca', nombre_sede: 'Campus Tulcan' }]))
   }, [])
 
   useEffect(() => {
-    setLoading(true)
-    api.get('/api/publicaciones', {
-      params: {
-        campus_id: campusId,
-        precio_min: filtros.min || undefined,
-        precio_max: filtros.max || undefined,
-      },
-    })
-      .then(r => setPubs(r.data))
-      .catch(() => setPubs([]))
+    setLoading(true); setError('')
+    const params = {
+      campus_id: campusId,
+      precio_min: searchParams.get('precio_min') || undefined,
+      precio_max: searchParams.get('precio_max') || undefined,
+      tipo: searchParams.get('tipo') || undefined,
+      servicios: searchParams.get('servicios') || undefined,
+      page, size: 9
+    }
+    api.get('/api/publicaciones', { params })
+      .then(r => {
+        const data = r.data
+        if (Array.isArray(data)) {
+          setPubs(data); setTotal(data.length); setPages(1)
+        } else {
+          setPubs(data.items || []); setTotal(data.total || 0); setPages(data.pages || 1)
+        }
+      })
+      .catch(() => { setError('No se pudo cargar publicaciones. Intenta de nuevo.'); setPubs([]) })
       .finally(() => setLoading(false))
-  }, [campusId, filtros])
+  }, [campusId, page, searchParams])
 
   const currentCampus = campus.find(c => c.id == campusId)
 
@@ -60,7 +110,7 @@ export default function Buscar() {
         </div>
       </section>
 
-      {/* Buscador */}
+      {/* Buscador sticky */}
       <section className="bg-white border-b border-neutral-150 sticky top-16 z-40">
         <div className="container-main py-4">
           <div className="flex flex-col sm:flex-row gap-3">
@@ -78,25 +128,6 @@ export default function Buscar() {
                 ))}
               </select>
             </div>
-            <div className="flex-1 sm:flex-initial">
-              <label className="block text-xs font-medium text-neutral-500 mb-1.5">Rango de precio</label>
-              <div className="flex gap-2">
-                <input
-                  type="number"
-                  placeholder="Min"
-                  className="input-field"
-                  value={filtros.min || ''}
-                  onChange={e => setFiltros({ ...filtros, min: e.target.value })}
-                />
-                <input
-                  type="number"
-                  placeholder="Max"
-                  className="input-field"
-                  value={filtros.max || ''}
-                  onChange={e => setFiltros({ ...filtros, max: e.target.value })}
-                />
-              </div>
-            </div>
           </div>
         </div>
       </section>
@@ -105,7 +136,16 @@ export default function Buscar() {
       <div className="container-main py-6 md:py-8">
         <Filtros filtros={filtros} setFiltros={setFiltros} />
 
-        <div className="flex items-center justify-between mt-6 mb-5">
+        <p className="text-xs text-neutral-400 mt-4" aria-live="polite">
+          {loading ? 'Cargando...' : `${total} publicaciones ACTIVAS · página ${page}/${pages} · distancia geodésica (Haversine, no tiempo a pie)`}
+        </p>
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 rounded-md p-3 text-sm mt-3" role="alert">
+            {error}
+          </div>
+        )}
+
+        <div className="flex items-center justify-between mt-4 mb-5">
           <div>
             <p className="text-sm text-neutral-600">
               <span className="font-semibold text-navy-800">{pubs.length}</span> {pubs.length === 1 ? 'resultado' : 'resultados'}
@@ -115,29 +155,34 @@ export default function Buscar() {
                 </span>
               )}
             </p>
-            <p className="text-xs text-neutral-400 mt-0.5">Distancia geodesica (Haversine)</p>
           </div>
         </div>
 
         {loading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[1, 2, 3].map(i => (
+            {[1, 2, 3, 4, 5, 6].map(i => (
               <div key={i} className="card p-4 animate-pulse">
-                <div className="h-4 bg-neutral-150 rounded w-24 mb-3" />
-                <div className="h-5 bg-neutral-150 rounded w-3/4 mb-2" />
-                <div className="h-4 bg-neutral-150 rounded w-1/2 mb-3" />
-                <div className="h-3 bg-neutral-150 rounded w-full" />
+                <div className="h-36 bg-neutral-100 rounded-t-lg" />
+                <div className="p-4 space-y-2">
+                  <div className="h-4 bg-neutral-150 rounded w-24 mb-3" />
+                  <div className="h-5 bg-neutral-150 rounded w-3/4 mb-2" />
+                  <div className="h-4 bg-neutral-150 rounded w-1/2 mb-3" />
+                  <div className="h-3 bg-neutral-150 rounded w-full" />
+                </div>
               </div>
             ))}
           </div>
         ) : pubs.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {pubs.map(p => (
-              <Link key={p.id} to={`/publicacion/${p.id}`} className="block">
-                <Card pub={p} />
-              </Link>
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {pubs.map(p => (
+                <Link key={p.id} to={`/publicacion/${p.id}`} className="block">
+                  <Card pub={p} />
+                </Link>
+              ))}
+            </div>
+            <Paginacion page={page} pages={pages} total={total} onPage={setPage} />
+          </>
         ) : (
           <div className="card p-12 text-center">
             <div className="w-12 h-12 bg-neutral-100 rounded-full flex items-center justify-center mx-auto mb-4">
