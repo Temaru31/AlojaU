@@ -27,7 +27,7 @@ export default function Card({ pub }) {
   const zona = pub.zona_nombre || pub.zona || 'No informado'
   const dist = pub.distancia_geodesica_m ?? pub.dist_m
   // BUG-08: num_fotos real (??, no valor inventado)
-  const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? 0)
+  const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? (typeof pub.fotos === 'number' ? pub.fotos : 0))
   const cover = Array.isArray(pub.fotos) ? pub.fotos[0] : null
   // BUG-09: fallback local + anti-bucle
   const fallbackCover = '/fallback-foto.svg'

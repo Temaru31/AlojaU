@@ -43,6 +43,6 @@ describe('formatters', ()=>{
   })
   it('formatDistanciaConTiempo combina', ()=>{
     expect(formatDistanciaConTiempo(320)).toBe('320 m • ~4 min a pie')
-    expect(formatDistanciaConTiempo(null)).toBe('—')
+    expect(formatDistanciaConTiempo(null)).toBe('No informado')
   })
 })
