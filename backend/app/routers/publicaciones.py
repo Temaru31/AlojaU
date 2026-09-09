@@ -10,15 +10,22 @@ NFR P95<500ms: query indexada (estado, zona, canon), sin N+1, Haversine en memor
 """
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
+from urllib.parse import quote as urlquote
 from fastapi import APIRouter, Depends, Query, Path, HTTPException, status, Header
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_session
 from app.core.config import settings
-from app.core.security import get_current_user, get_optional_user, require_arrendador
-from app.schemas.publicacion import PublicacionCreate, PublicacionOut, DesgloseConfianza
+from app.core.security import get_optional_user, require_arrendador
+from app.schemas.publicacion import (
+    PublicacionCreate,
+    PublicacionCardOut,
+    PublicacionDetailOut,
+    PublicacionCreatedOut,
+    PaginatedPublicaciones,
+)
 from app.services.haversine import haversine_m
 from app.services.trust import calcular_indice, dias_desde, DISCLAIMER
 from app.core.pagination import paginate_params, build_paginated
@@ -120,10 +127,14 @@ def _to_out(pub: dict, campus_id: Optional[int] = None) -> dict:
         "descripcion": pub.get("descripcion"),
         "tipo_inmueble": pub["tipo_inmueble"],
         "canon_mensual": pub["canon_mensual"],
+        "canon": pub["canon_mensual"],  # F1 alias compat explícito
+        "deposito": pub.get("deposito_requerido", 0),  # F1 alias compat
         "deposito_requerido": pub.get("deposito_requerido", 0),
         "zona_barrio_id": pub["zona_barrio_id"],
+        "zona": pub.get("zona_nombre"),  # F1 alias compat
         "zona_nombre": pub.get("zona_nombre"),
         "direccion_referencial": pub["direccion_referencial"],
+        "reglas": pub.get("reglas_convivencia"),  # F1 alias compat
         "reglas_convivencia": pub.get("reglas_convivencia"),
         "estado": pub["estado"],
         "fecha_publicacion": pub.get("fecha_publicacion"),
@@ -134,10 +145,14 @@ def _to_out(pub: dict, campus_id: Optional[int] = None) -> dict:
         "fotos": fotos,
         "num_fotos": len(fotos),
         "distancia_geodesica_m": dist,
+        "dist_m": dist,  # F1 alias compat
         "campus_distancias": [{"campus_id": cid, "dist_m": haversine_m(pub["latitud"], pub["longitud"], MOCK_CAMPUS[cid]["lat"], MOCK_CAMPUS[cid]["lng"])} for cid in pub.get("campus_ids", []) if cid in MOCK_CAMPUS and pub.get("latitud") is not None] if pub.get("latitud") is not None else None,
         "indice_confianza": trust["indice"],
+        "indice": trust["indice"],  # F1 alias compat
         "desglose": trust["desglose"],
+        "nivel": trust["nivel"],  # F1 alias compat
         "nivel_confianza": trust["nivel"],
+        "advertencia": trust["advertencia"],  # F1 alias compat
         "advertencia_confianza": trust["advertencia"],
         "telefono_whatsapp": tel,
         "whatsapp_url": wa_url,
@@ -315,7 +330,7 @@ async def list_publicaciones(
         paginated_items = items[offset:offset+size_norm]
         return build_paginated(paginated_items, total, page, size_norm)
 
-@router.get("/{pub_id}", summary="HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp")
+@router.get("/{pub_id}", response_model=PublicacionDetailOut, summary="HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp")
 async def get_publicacion(
     pub_id: int = Path(..., ge=1, le=1000000),
     db: AsyncSession = Depends(get_session),
@@ -350,8 +365,8 @@ async def get_publicacion(
             )
             fotos = [im.url for im in p.imagenes]
             tel = u.telefono_whatsapp if tel_ver and u else None
-            wa = f"https://wa.me/{tel}?text={__import__('urllib.parse').parse.quote(f'Hola, vi {p.titulo} (ID {p.id}) en AlojaU y me interesa.')}" if tel else None
-            zona_nombre = p.zona.nombre if hasattr(p, 'zona') and p.zona else "Pandiguando"
+            wa = f"https://wa.me/{tel}?text={urlquote(f'Hola, vi {p.titulo} (ID {p.id}) en AlojaU y me interesa.')}" if tel else None
+            zona_nombre = p.zona.nombre if hasattr(p, 'zona') and p.zona else "No informado"
             # distancia en detalle: si no hay campus_id, mostrar la más cercana
             from app.models import PublicacionCampus as PC
             # buscar distancia mínima si no hay una específica
@@ -365,9 +380,10 @@ async def get_publicacion(
                 "zona_barrio_id": p.zona_barrio_id, "zona": zona_nombre, "zona_nombre": zona_nombre,
                 "direccion_referencial": p.direccion_referencial, "reglas": p.reglas_convivencia, "reglas_convivencia": p.reglas_convivencia,
                 "estado": p.estado, "fecha_renovacion": p.fecha_renovacion, "fecha_expiracion": p.fecha_expiracion,
-                "servicios": [s.nombre for s in p.servicios], "fotos": fotos, "num_fotos": len(fotos),
+                "servicios": [s.nombre for s in p.servicios], "servicios_ids": [s.id for s in p.servicios], "fotos": fotos, "num_fotos": len(fotos),
                 "distancia_geodesica_m": dist_detalle, "dist_m": dist_detalle,
                 "indice_confianza": trust["indice"], "indice": trust["indice"], "desglose": trust["desglose"], "nivel": trust["nivel"],
+                "nivel_confianza": trust["nivel"],
                 "advertencia": trust["advertencia"], "telefono_whatsapp": tel, "whatsapp_url": wa,
             }
     except HTTPException:
@@ -392,7 +408,7 @@ async def get_publicacion(
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
     return _to_out(pub)
 
-@router.post("", status_code=status.HTTP_201_CREATED, summary="HU-005 Publicar oferta estructurada -> PENDIENTE (solo ARRENDADOR)")
+@router.post("", response_model=PublicacionCreatedOut, status_code=status.HTTP_201_CREATED, summary="HU-005 Publicar oferta estructurada -> PENDIENTE (solo ARRENDADOR)")
 async def crear_publicacion(
     payload: PublicacionCreate,
     user: dict = Depends(require_arrendador),
@@ -430,19 +446,26 @@ async def crear_publicacion(
             PublicacionesAudit as PublicacionAudit, ZonaBarrio, CampusUniversitario,
             ServicioCatalogo,
         )
+        # F1: token sin id entero válido -> 401 (nunca suplantar dueño id=1).
+        if not isinstance(user.get("id"), int):
+            raise HTTPException(status_code=401, detail="Token sin propietario válido")
+        # F1: dedup ids (evita PK violation 500 por duplicados).
+        campus_ids = list(dict.fromkeys(payload.campus_ids))
+        servicios_ids = list(dict.fromkeys(payload.servicios_ids))
         # B0-4 FK estricta: 404 si zona/campus/servicio inexistente (antes de flush).
         zona = await db.get(ZonaBarrio, payload.zona_barrio_id)
         if not zona:
             raise HTTPException(status_code=404, detail=f"zona_barrio_id {payload.zona_barrio_id} no existe")
-        for cid in payload.campus_ids:
-            if not await db.get(CampusUniversitario, cid):
-                raise HTTPException(status_code=404, detail=f"campus_id {cid} no existe")
-        for sid in payload.servicios_ids:
+        for cid in campus_ids:
+            campus = await db.get(CampusUniversitario, cid)
+            if not campus or not campus.activo:
+                raise HTTPException(status_code=404, detail=f"campus_id {cid} no existe o inactivo")
+        for sid in servicios_ids:
             if not await db.get(ServicioCatalogo, sid):
                 raise HTTPException(status_code=404, detail=f"servicio_id {sid} no existe")
         # Crear publicación
         nueva = Publicacion(
-            usuario_id=user["id"] if isinstance(user["id"], int) else 1,
+            usuario_id=user["id"],
             zona_barrio_id=payload.zona_barrio_id,
             titulo=payload.titulo,
             descripcion=payload.descripcion,
@@ -461,7 +484,7 @@ async def crear_publicacion(
         await db.flush()  # obtiene id
 
         # Relaciones N:M campus (Haversine real desde DB; B0-5 dist NULL si sin coords)
-        for cid in payload.campus_ids:
+        for cid in campus_ids:
             dist = None
             if payload.latitud is not None and payload.longitud is not None:
                 campus = await db.get(CampusUniversitario, cid)
@@ -469,7 +492,7 @@ async def crear_publicacion(
                     dist = haversine_m(float(payload.latitud), float(payload.longitud), float(campus.latitud), float(campus.longitud))
             db.add(PublicacionCampus(publicacion_id=nueva.id, campus_id=cid, distancia_geodesica_m=dist))
 
-        for sid in payload.servicios_ids:
+        for sid in servicios_ids:
             db.add(PublicacionServicio(publicacion_id=nueva.id, servicio_id=sid))
 
         for idx, url in enumerate(payload.fotos, start=1):
@@ -509,9 +532,9 @@ async def crear_publicacion(
             "direccion_referencial": payload.direccion_referencial, "reglas_convivencia": payload.reglas_convivencia,
             "estado": "PENDIENTE", "fecha_renovacion": datetime.now(timezone.utc),
             "fecha_expiracion": datetime.now(timezone.utc) + timedelta(days=30),
-            "servicios_ids": payload.servicios_ids, "servicios": [],
+            "servicios_ids": servicios_ids, "servicios": [],
             "fotos": [str(u) for u in payload.fotos], "latitud": payload.latitud, "longitud": payload.longitud,
-            "campus_ids": payload.campus_ids, "usuario_id": user["id"] if isinstance(user["id"], int) else 1,
+            "campus_ids": campus_ids, "usuario_id": user["id"],
             "telefono_verificado": bool(user.get("telefono_verificado", False)), "reportes_activos": 0,
         })
         return {"id": mock_id, "estado": "PENDIENTE (MOCK - sin PG)", "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": DISCLAIMER, "detalle_mock": f"DB no disponible ({e}), se usó mock en memoria"}
