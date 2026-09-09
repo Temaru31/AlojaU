@@ -5,6 +5,7 @@ import Detalle from './pages/Detalle'
 import Publicar from './pages/Publicar'
 import Comparar from './pages/Comparar'
 import Perfil from './pages/Perfil'
+import AdminReportes from './pages/AdminReportes'
 import ColdStartBanner from './components/ColdStartBanner'
 import BrandMark from './components/BrandMark'
 import { FavoritosProvider, useFavoritos } from './contexts/FavoritosContext'
@@ -205,6 +206,7 @@ function App() {
                 <Route path="/comparar" element={<Comparar />} />
                 <Route path="/publicar" element={<Publicar />} />
                 <Route path="/perfil" element={<Perfil />} />
+                <Route path="/admin/reportes" element={<AdminReportes />} />
               </Routes>
 
             </main>

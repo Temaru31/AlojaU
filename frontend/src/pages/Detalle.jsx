@@ -4,6 +4,7 @@ import { api } from '../services/api'
 import Indice from '../components/IndiceConfianza'
 import MapaZona from '../components/MapaZona'
 import GaleriaFotos from '../components/GaleriaFotos'
+import ReportarModal from '../components/ReportarModal'
 import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
 import { useFavoritos } from '../contexts/FavoritosContext'
 import { useComparar } from '../contexts/CompararContext'
@@ -12,6 +13,7 @@ export default function Detalle() {
   const { id } = useParams()
   const [pub, setPub] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [reportOpen, setReportOpen] = useState(false)
   const favHook = useFavoritos()
   const compHook = useComparar()
 
@@ -183,6 +185,13 @@ export default function Detalle() {
               dist_m={dist}
               campus={{ lat: 2.443, lng: -76.606 }}
             />
+            <button
+              onClick={() => setReportOpen(true)}
+              className="mt-2 text-xs text-neutral-400 hover:text-red-600 transition-colors"
+              aria-label="Reportar este aviso"
+            >
+              ⚑ Reportar aviso
+            </button>
           </div>
 
           <div className="card p-5">
@@ -228,6 +237,9 @@ export default function Detalle() {
           </div>
         </div>
       </div>
+      {reportOpen && (
+        <ReportarModal publicacionId={pub.id} titulo={pub.titulo} onClose={() => setReportOpen(false)} />
+      )}
     </div>
   )
 }
