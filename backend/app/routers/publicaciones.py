@@ -160,6 +160,21 @@ def _to_out(pub: dict, campus_id: Optional[int] = None) -> dict:
     }
 
 # --- Helpers DB real (si PG disponible) ---
+def _lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servicios):
+    """Filtros HU-001/002 compartidos por COUNT y página (SQLAlchemy portable PG/SQLite)."""
+    conds = [Publicacion.estado == "ACTIVO"]
+    if precio_min is not None:
+        conds.append(Publicacion.canon_mensual >= precio_min)
+    if precio_max is not None:
+        conds.append(Publicacion.canon_mensual <= precio_max)
+    if tipo:
+        conds.append(Publicacion.tipo_inmueble == tipo)
+    if servicios:
+        for sid in servicios:
+            conds.append(Publicacion.servicios.any(id=sid))
+    return conds
+
+
 async def _query_db_lista(
     db: AsyncSession,
     campus_id: Optional[int],
@@ -177,51 +192,80 @@ async def _query_db_lista(
     Paginación: page 1-indexed, size 1-50.
     """
     # Lazy import para evitar ciclo
-    from app.models import Publicacion, PublicacionCampus, Usuario
-    from sqlalchemy import func, select as sel
+    from app.models import Publicacion, PublicacionCampus, Usuario, ReportePublicacion
+    from sqlalchemy import func
 
-    stmt = select(Publicacion).options(selectinload(Publicacion.imagenes), selectinload(Publicacion.servicios)).where(Publicacion.estado == "ACTIVO")
+    conds = _lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servicios)
+    offset, size_norm = paginate_params(page, size)
 
-    if precio_min is not None:
-        stmt = stmt.where(Publicacion.canon_mensual >= precio_min)
-    if precio_max is not None:
-        if precio_min is not None and precio_max < precio_min:
-            raise HTTPException(status_code=400, detail="precio_min no puede superar precio_max (HU-002 C1)")
-        stmt = stmt.where(Publicacion.canon_mensual <= precio_max)
-    if tipo:
-        stmt = stmt.where(Publicacion.tipo_inmueble == tipo)
-    # servicios: AND (debe contener todos los solicitados)
-    if servicios:
-        for sid in servicios:
-            stmt = stmt.where(Publicacion.servicios.any(id=sid))
-
-    # Campus filter: join publicacion_campus
+    # COUNT total en SQL (portable PG/SQLite: COUNT DISTINCT, sin traer filas).
+    count_stmt = select(func.count(func.distinct(Publicacion.id))).where(*conds)
     if campus_id:
-        stmt = stmt.join(PublicacionCampus, PublicacionCampus.publicacion_id == Publicacion.id).where(PublicacionCampus.campus_id == campus_id).order_by(PublicacionCampus.distancia_geodesica_m)
+        count_stmt = count_stmt.join(
+            PublicacionCampus, PublicacionCampus.publicacion_id == Publicacion.id
+        ).where(PublicacionCampus.campus_id == campus_id)
+    total = (await db.execute(count_stmt)).scalar() or 0
+    if total == 0:
+        return build_paginated([], 0, page, size_norm)
 
-    result = await db.execute(stmt)
-    pubs = result.scalars().unique().all()
+    # Página en SQL: LIMIT/OFFSET + orden determinista (distancia NULLS LAST + id).
+    page_stmt = (
+        select(Publicacion)
+        .options(selectinload(Publicacion.imagenes), selectinload(Publicacion.servicios))
+        .where(*conds)
+    )
+    if campus_id:
+        page_stmt = (
+            page_stmt.join(PublicacionCampus, PublicacionCampus.publicacion_id == Publicacion.id)
+            .where(PublicacionCampus.campus_id == campus_id)
+            .order_by(PublicacionCampus.distancia_geodesica_m.asc().nullslast(), Publicacion.id.asc())
+        )
+    else:
+        page_stmt = page_stmt.order_by(Publicacion.id.asc())
+    page_stmt = page_stmt.limit(size_norm).offset(offset)
+    pubs = (await db.execute(page_stmt)).scalars().unique().all()
 
-    # Mapear a dict para Trust (evita N+1 reportes con subquery)
+    # Agregados en lote para la página (3 queries fijas, sin N+1).
+    page_ids = [p.id for p in pubs]
+    rep_rows = (
+        await db.execute(
+            select(ReportePublicacion.publicacion_id, func.count())
+            .where(
+                ReportePublicacion.publicacion_id.in_(page_ids),
+                ReportePublicacion.estado.in_(["PENDIENTE", "CONFIRMADO"]),
+            )
+            .group_by(ReportePublicacion.publicacion_id)
+        )
+    ).all()
+    reportes_map = {pub_id: n for pub_id, n in rep_rows}
+
+    user_ids = {p.usuario_id for p in pubs}
+    users = (
+        (await db.execute(select(Usuario).where(Usuario.id.in_(user_ids)))).scalars().all()
+        if user_ids
+        else []
+    )
+    users_map = {u.id: u for u in users}
+
+    dist_map = {}
+    if campus_id:
+        dist_rows = (
+            await db.execute(
+                select(PublicacionCampus).where(
+                    PublicacionCampus.publicacion_id.in_(page_ids),
+                    PublicacionCampus.campus_id == campus_id,
+                )
+            )
+        ).scalars().all()
+        dist_map = {pc.publicacion_id: pc.distancia_geodesica_m for pc in dist_rows}
+
+    # Mapear a dict para Trust (usa agregados en memoria, sin queries por aviso).
     out = []
     for p in pubs:
-        # reportes activos bug fix: COUNT WHERE estado IN ('PENDIENTE','CONFIRMADO')
-        # Sprint1 simplificado: query ad-hoc si no eager
-        from sqlalchemy import func, select as sel
-        from app.models import ReportePublicacion
-        r = await db.execute(sel(func.count()).select_from(ReportePublicacion).where(ReportePublicacion.publicacion_id==p.id, ReportePublicacion.estado.in_(["PENDIENTE","CONFIRMADO"])))
-        reportes_activos = r.scalar() or 0
-
-        # usuario telefono_verificado
-        u = await db.get(Usuario, p.usuario_id)
+        reportes_activos = reportes_map.get(p.id, 0)
+        u = users_map.get(p.usuario_id)
         tel_ver = bool(u.telefono_verificado) if u else False
-
-        dist = None
-        if campus_id:
-            # leer distancia precalculada
-            pc = await db.execute(sel(PublicacionCampus).where(PublicacionCampus.publicacion_id==p.id, PublicacionCampus.campus_id==campus_id))
-            pc = pc.scalar_one_or_none()
-            dist = pc.distancia_geodesica_m if pc else None
+        dist = dist_map.get(p.id) if campus_id else None
 
         dias_vig = dias_desde(p.fecha_renovacion)
         trust = calcular_indice(
@@ -235,26 +279,21 @@ async def _query_db_lista(
         # construir out (simplificado)
         out.append({
             "id": p.id, "titulo": p.titulo, "descripcion": p.descripcion,
-            "tipo_inmueble": p.tipo_inmueble, "canon_mensual": float(p.canon_mensual), "deposito_requerido": float(p.deposito_requerido),
+            "tipo_inmueble": p.tipo_inmueble, "canon_mensual": float(p.canon_mensual), "canon": float(p.canon_mensual), "deposito_requerido": float(p.deposito_requerido),
             "zona_barrio_id": p.zona_barrio_id, "zona": zona_nombre, "zona_nombre": zona_nombre, "direccion_referencial": p.direccion_referencial,
             "reglas_convivencia": p.reglas_convivencia, "estado": p.estado,
             "fecha_renovacion": p.fecha_renovacion, "fecha_expiracion": p.fecha_expiracion,
             "servicios": [s.nombre for s in p.servicios], "servicios_ids": [s.id for s in p.servicios],
             "fotos": [im.url for im in p.imagenes], "num_fotos": len(p.imagenes),
             "distancia_geodesica_m": dist, "dist_m": dist,
-            "indice_confianza": trust["indice"], "desglose": trust["desglose"], "nivel_confianza": trust["nivel"],
-            "telefono_whatsapp": u.telefono_whatsapp if tel_ver else None,
+            "indice_confianza": trust["indice"], "indice": trust["indice"], "desglose": trust["desglose"], "nivel_confianza": trust["nivel"], "nivel": trust["nivel"],
+            "telefono_whatsapp": u.telefono_whatsapp if tel_ver and u else None,
             "usuario_id": p.usuario_id,
         })
-    # Paginación en memoria (para MVP, dataset pequeño; para >100 usar LIMIT/OFFSET en SQL)
-    total = len(out)
-    # si campus_id, ya está ordenado por distancia; si no, mantiene orden por id
-    offset, size_norm = paginate_params(page, size)
-    paginated_items = out[offset:offset+size_norm]
-    return build_paginated(paginated_items, total, page, size_norm)
+    return build_paginated(out, total, page, size_norm)
 
 # --- Endpoints Sprint1 ---
-@router.get("", summary="HU-001 Buscar por sede + HU-002 Filtros combinables")
+@router.get("", response_model=PaginatedPublicaciones, summary="HU-001 Buscar por sede + HU-002 Filtros combinables")
 async def list_publicaciones(
     campus_id: Optional[int] = Query(None, ge=1, le=1000, description="FK campus_universitarios.id - calcula Haversine y filtra publicaciones asociadas"),
     precio_min: Optional[int] = Query(None, ge=0, le=10_000_000, description="COP mínimo"),
