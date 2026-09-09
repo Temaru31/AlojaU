@@ -1,4 +1,4 @@
-import { getLabelIndice } from '../utils/formatters'
+import { getLabelIndice, formatDistancia } from '../utils/formatters'
 import { formatTiempoCaminando } from '../utils/formatters'
 import { useFavoritos } from '../contexts/FavoritosContext'
 import { useComparar } from '../contexts/CompararContext'
@@ -6,7 +6,9 @@ import { useComparar } from '../contexts/CompararContext'
 export default function Card({ pub }) {
   const favHook = useFavoritos()
   const compHook = useComparar()
-  const level = pub.indice_confianza >= 80 ? 'high' : pub.indice_confianza >= 50 ? 'mid' : 'low'
+  // NUEVO(<=3ln): indice null -> 0 para no mostrar "— Básico"
+  const indice = pub.indice_confianza ?? 0
+  const level = indice >= 80 ? 'high' : indice >= 50 ? 'mid' : 'low'
 
   const badgeStyles = {
     high: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
@@ -21,13 +23,23 @@ export default function Card({ pub }) {
   }
 
   const canon = pub.canon_mensual ?? pub.canon
-  const zona = pub.zona_nombre || pub.zona || '—'
+  // BUG-08: fallback unificado a "No informado"
+  const zona = pub.zona_nombre || pub.zona || 'No informado'
   const dist = pub.distancia_geodesica_m ?? pub.dist_m
-  const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? pub.fotos ?? 0)
+  // BUG-08: num_fotos real (??, no valor inventado)
+  const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? (typeof pub.fotos === 'number' ? pub.fotos : 0))
   const cover = Array.isArray(pub.fotos) ? pub.fotos[0] : null
-  const fallbackCover = `https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600&h=400&fit=crop`
+  // BUG-09: fallback local + anti-bucle
+  const fallbackCover = '/fallback-foto.svg'
+  const handleCoverError = (e) => {
+    if (e.currentTarget.dataset.fbk) return
+    e.currentTarget.dataset.fbk = '1'
+    e.currentTarget.onerror = null
+    e.currentTarget.src = fallbackCover
+  }
   const tiempo = formatTiempoCaminando(dist)
-  const distText = dist != null ? `${typeof dist === 'number' ? dist.toLocaleString('es-CO') : dist}m${tiempo ? ` · ${tiempo}` : ''}` : '—'
+  // BUG-10: usa formatDistancia (null -> "No informado")
+  const distText = dist != null ? `${formatDistancia(dist)}${tiempo ? ` · ${tiempo}` : ''}` : 'No informado'
   const isFav = favHook.isFav(pub.id)
   const isComp = compHook.isSelected(pub.id)
 
@@ -41,7 +53,7 @@ export default function Card({ pub }) {
             alt={pub.titulo}
             className="w-full h-full object-cover group-hover:scale-[1.02] transition"
             loading="lazy"
-            onError={(e) => { e.currentTarget.src = fallbackCover; e.currentTarget.onerror = null }}
+            onError={handleCoverError}
           />
         ) : (
           <div className="absolute inset-0 flex items-center justify-center">
@@ -53,7 +65,7 @@ export default function Card({ pub }) {
         {/* Confidence badge */}
         <div className={`absolute top-3 left-3 badge ${badgeStyles[level]}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${dotStyles[level]}`} />
-          {pub.indice_confianza} — {getLabelIndice(pub.indice_confianza)}
+          {indice} — {getLabelIndice(indice)}
         </div>
         {/* Favorito */}
         <button
