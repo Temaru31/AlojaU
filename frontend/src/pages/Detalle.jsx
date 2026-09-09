@@ -180,7 +180,7 @@ export default function Detalle() {
             <h3 className="text-sm font-semibold text-navy-800 mb-3">Ubicacion referencial</h3>
             <MapaZona
               zona={zona}
-              dist_m={dist ?? 320}
+              dist_m={dist}
               campus={{ lat: 2.443, lng: -76.606 }}
             />
           </div>

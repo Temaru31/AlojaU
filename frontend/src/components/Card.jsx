@@ -1,5 +1,6 @@
 import { getLabelIndice, formatDistancia } from '../utils/formatters'
 import { formatTiempoCaminando } from '../utils/formatters'
+import SmartImage from './SmartImage'
 import { useFavoritos } from '../contexts/FavoritosContext'
 import { useComparar } from '../contexts/CompararContext'
 
@@ -29,14 +30,6 @@ export default function Card({ pub }) {
   // BUG-08: num_fotos real (??, no valor inventado)
   const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? (typeof pub.fotos === 'number' ? pub.fotos : 0))
   const cover = Array.isArray(pub.fotos) ? pub.fotos[0] : null
-  // BUG-09: fallback local + anti-bucle
-  const fallbackCover = '/fallback-foto.svg'
-  const handleCoverError = (e) => {
-    if (e.currentTarget.dataset.fbk) return
-    e.currentTarget.dataset.fbk = '1'
-    e.currentTarget.onerror = null
-    e.currentTarget.src = fallbackCover
-  }
   const tiempo = formatTiempoCaminando(dist)
   // BUG-10: usa formatDistancia (null -> "No informado")
   const distText = dist != null ? `${formatDistancia(dist)}${tiempo ? ` · ${tiempo}` : ''}` : 'No informado'
@@ -48,12 +41,11 @@ export default function Card({ pub }) {
       {/* Image */}
       <div className="h-36 sm:h-40 w-full overflow-hidden bg-gradient-to-br from-navy-50 to-neutral-100 relative">
         {cover ? (
-          <img
+          <SmartImage
             src={cover}
             alt={pub.titulo}
             className="w-full h-full object-cover group-hover:scale-[1.02] transition"
-            loading="lazy"
-            onError={handleCoverError}
+            eager={false}
           />
         ) : (
           <div className="absolute inset-0 flex items-center justify-center">

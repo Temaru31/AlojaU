@@ -6,7 +6,7 @@ import Publicar from './pages/Publicar'
 import Comparar from './pages/Comparar'
 import Perfil from './pages/Perfil'
 import ColdStartBanner from './components/ColdStartBanner'
-
+import BrandMark from './components/BrandMark'
 import { FavoritosProvider, useFavoritos } from './contexts/FavoritosContext'
 import { CompararProvider, useComparar } from './contexts/CompararContext'
 
@@ -37,13 +37,8 @@ function Nav() {
       <div className="container-main">
         <div className="flex items-center justify-between h-16">
           <div className="flex items-center gap-8">
-            <Link to="/" className="flex items-center gap-2.5">
-              <div className="w-8 h-8 bg-navy-800 rounded-md flex items-center justify-center">
-                <span className="text-gold-400 font-display font-bold text-sm">A</span>
-              </div>
-              <span className="font-display font-bold text-lg text-navy-900 tracking-tight">
-                Aloja<span className="text-gold-500">U</span>
-              </span>
+            <Link to="/" className="flex items-center gap-2.5" aria-label="AlojaU inicio">
+              <BrandMark size="md" withText />
             </Link>
             <div className="hidden md:flex items-center gap-1">
               <Link
@@ -164,10 +159,7 @@ function Footer() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           <div>
             <div className="flex items-center gap-2.5 mb-3">
-              <div className="w-7 h-7 bg-navy-800 rounded-md flex items-center justify-center">
-                <span className="text-gold-400 font-display font-bold text-xs">A</span>
-              </div>
-              <span className="font-display font-bold text-navy-900">Aloja<span className="text-gold-500">U</span></span>
+              <BrandMark size="sm" withText />
             </div>
             <p className="text-sm text-neutral-500 leading-relaxed">
               Vivienda universitaria cercana al campus en Popayan. Encuentra tu lugar ideal con confianza.

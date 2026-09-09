@@ -5,7 +5,6 @@ Responsables: Backend/Arquitectura-BD (Sprint1: Adrian, luego rotación)
 """
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from fastapi.staticfiles import StaticFiles
 import os
@@ -16,6 +15,7 @@ app = FastAPI(
     title="AlojaU API",
     version="0.1.0",
     description="MVP vivienda universitaria Popayán - Sprint1: búsqueda por campus, filtros, detalle, publicar PENDIENTE, índice confianza, WhatsApp",
+    docs_url=None,  # F1: /docs custom con favicon AlojaU (ver abajo)
 )
 
 # CORS restringido (DoD-5): nunca "*" con credentials
@@ -46,6 +46,23 @@ def health():
 _upload_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
 os.makedirs(_upload_dir, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=_upload_dir), name="uploads")
+
+# Favicon AlojaU para /docs (F1: reemplaza rayo FastAPI por marca propia)
+_static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "static"))
+os.makedirs(_static_dir, exist_ok=True)
+app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
+
+@app.get("/docs", include_in_schema=False)
+async def custom_docs():
+    """Swagger UI con favicon AlojaU."""
+    from fastapi.openapi.docs import get_swagger_ui_html
+
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title="AlojaU API - Docs",
+        swagger_favicon_url="/static/favicon.svg",
+    )
 
 # Routers Sprint1
 app.include_router(campus.router)
