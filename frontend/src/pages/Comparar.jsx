@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import { useComparar } from '../contexts/CompararContext'
-import { formatTiempoCaminando } from '../utils/formatters'
+import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
 
 function NoInformado() {
   return <span className="text-neutral-400 italic text-xs">No informado</span>
@@ -29,7 +29,7 @@ export default function Comparar() {
     {
       label: 'Depósito', key: 'deposito', render: (p) => {
         const dep = p.deposito_requerido ?? p.deposito
-        if (dep == null || dep === 0) return <span className="text-neutral-500 text-xs">0 (No informado si 0)</span>
+        if (dep == null || dep === 0) return <NoInformado />
         return `$${Number(dep).toLocaleString('es-CO')}`
       }
     },
@@ -38,13 +38,13 @@ export default function Comparar() {
     {
       label: 'Distancia geodésica', key: 'dist', render: (p) => {
         const d = p.distancia_geodesica_m ?? p.dist_m
-        return d != null ? `${d} m` : <NoInformado />
+        return d != null ? formatDistancia(d) : <NoInformado />
       }
     },
     { label: 'Tiempo caminando', key: 'tiempo', render: (p) => formatTiempoCaminando(p.distancia_geodesica_m ?? p.dist_m) || <NoInformado /> },
     { label: 'Índice confianza', key: 'indice', render: (p) => p.indice_confianza != null ? `${p.indice_confianza}/100` : <NoInformado /> },
     { label: 'Servicios', key: 'servicios', render: (p) => p.servicios?.length ? p.servicios.join(' · ') : <NoInformado /> },
-    { label: 'Fotos', key: 'fotos', render: (p) => `${Array.isArray(p.fotos) ? p.fotos.length : (p.num_fotos || 0)} fotos` },
+    { label: 'Fotos', key: 'fotos', render: (p) => `${Array.isArray(p.fotos) ? p.fotos.length : (p.num_fotos ?? 0)} fotos` },
     { label: 'Estado', key: 'estado', render: (p) => p.estado || <NoInformado /> },
     { label: 'Dirección ref.', key: 'direccion', render: (p) => p.direccion_referencial || <NoInformado /> },
   ]
@@ -103,7 +103,7 @@ export default function Comparar() {
                 <table className="min-w-full text-sm">
                   <thead>
                     <tr className="bg-navy-50">
-                      <th className="text-left px-4 py-3 text-xs font-medium text-navy-700 sticky left-0 bg-navy-50">Característica</th>
+                      <th className="text-left px-4 py-3 text-xs font-medium text-navy-700 sticky left-0 z-10 bg-navy-50">Característica</th>
                       {pubs.map(p => (
                         <th key={p.id} className="text-left px-4 py-3 min-w-[180px] max-w-[260px]">
                           <div className="flex flex-col gap-1">
@@ -117,7 +117,7 @@ export default function Comparar() {
                   <tbody>
                     {rows.map(row => (
                       <tr key={row.key} className="border-t border-neutral-100">
-                        <td className="px-4 py-3 font-medium text-xs bg-neutral-50 sticky left-0 text-neutral-600">{row.label}</td>
+                        <td className="px-4 py-3 font-medium text-xs bg-neutral-50 sticky left-0 z-10 text-neutral-600">{row.label}</td>
                         {pubs.map(p => (
                           <td key={p.id} className="px-4 py-3 text-xs sm:text-sm break-words text-neutral-800">{row.render(p)}</td>
                         ))}
