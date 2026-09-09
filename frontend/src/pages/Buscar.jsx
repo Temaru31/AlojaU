@@ -110,8 +110,8 @@ export default function Buscar() {
         </div>
       </section>
 
-      {/* Buscador sticky */}
-      <section className="bg-white border-b border-neutral-150 sticky top-16 z-40">
+      {/* Buscador sticky: z-30 para quedar bajo nav (z-50) y backdrop del menú móvil (z-40) */}
+      <section className="bg-white border-b border-neutral-150 sticky top-16 z-30">
         <div className="container-main py-4">
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="flex-1">

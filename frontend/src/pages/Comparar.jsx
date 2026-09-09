@@ -107,7 +107,7 @@ export default function Comparar() {
                       {pubs.map(p => (
                         <th key={p.id} className="text-left px-4 py-3 min-w-[180px] max-w-[260px]">
                           <div className="flex flex-col gap-1">
-                            <Link to={`/publicacion/${p.id}`} className="text-navy-600 hover:text-navy-800 font-semibold line-clamp-2 break-words text-xs">{p.titulo}</Link>
+                            <Link to={`/publicacion/${p.id}`} className="text-navy-600 hover:text-navy-800 font-semibold line-clamp-2 break-words text-xs">{p.titulo || 'No informado'}</Link>
                             <button onClick={() => toggle(p.id)} className="text-[11px] text-red-500 hover:text-red-600 hover:underline text-left">Quitar</button>
                           </div>
                         </th>

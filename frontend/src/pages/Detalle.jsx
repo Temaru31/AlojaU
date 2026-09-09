@@ -116,7 +116,7 @@ export default function Detalle() {
             </h1>
             <div className="flex items-baseline gap-2">
               <span className="text-2xl font-bold text-navy-800">
-                ${Number(canon ?? 0).toLocaleString('es-CO')}
+                {canon != null ? `$${Number(canon).toLocaleString('es-CO')}` : 'No informado'}
               </span>
               <span className="text-sm text-neutral-400">COP/mes</span>
               {deposito > 0 && (

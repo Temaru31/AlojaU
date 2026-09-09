@@ -6,7 +6,9 @@ import { useComparar } from '../contexts/CompararContext'
 export default function Card({ pub }) {
   const favHook = useFavoritos()
   const compHook = useComparar()
-  const level = pub.indice_confianza >= 80 ? 'high' : pub.indice_confianza >= 50 ? 'mid' : 'low'
+  // NUEVO(<=3ln): indice null -> 0 para no mostrar "— Básico"
+  const indice = pub.indice_confianza ?? 0
+  const level = indice >= 80 ? 'high' : indice >= 50 ? 'mid' : 'low'
 
   const badgeStyles = {
     high: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
@@ -63,7 +65,7 @@ export default function Card({ pub }) {
         {/* Confidence badge */}
         <div className={`absolute top-3 left-3 badge ${badgeStyles[level]}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${dotStyles[level]}`} />
-          {pub.indice_confianza} — {getLabelIndice(pub.indice_confianza)}
+          {indice} — {getLabelIndice(indice)}
         </div>
         {/* Favorito */}
         <button
