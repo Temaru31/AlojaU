@@ -12,7 +12,14 @@ export default function GaleriaFotos({ fotos = [], titulo = '' }) {
   }
 
   const total = fotos.length
-  const fallback = 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600&h=400&fit=crop'
+  // BUG-08/09: fallback local (antes URL remota) + anti-bucle (flag + onerror=null)
+  const fallback = '/fallback-foto.svg'
+  const handleImgError = (e) => {
+    if (e.currentTarget.dataset.fbk) return
+    e.currentTarget.dataset.fbk = '1'
+    e.currentTarget.onerror = null
+    e.currentTarget.src = fallback
+  }
 
   const openAt = (idx) => { setVisorIndex(idx); setVisorOpen(true) }
 
@@ -31,7 +38,7 @@ export default function GaleriaFotos({ fotos = [], titulo = '' }) {
             src={fotos[0]}
             alt={`${titulo} foto 1 de ${total}`}
             className="w-full h-full object-cover hover:scale-[1.02] transition"
-            onError={e=> { e.currentTarget.src=fallback; e.currentTarget.onerror=null }}
+            onError={handleImgError}
           />
           {total > mobileVisible && (
             <button onClick={(e)=>{ e.stopPropagation(); openAt(mobileVisible) }} className="absolute inset-0 bg-black/55 flex flex-col items-center justify-center text-white">
@@ -46,7 +53,7 @@ export default function GaleriaFotos({ fotos = [], titulo = '' }) {
           <div className="grid grid-cols-3 gap-2 mt-2">
             {fotos.slice(1,3).map((url,i)=> (
               <div key={i} className="aspect-square overflow-hidden rounded-lg bg-gray-100 cursor-pointer" onClick={()=> openAt(i+1)}>
-                <img src={url} alt={`${titulo} mini ${i+2}`} className="w-full h-full object-cover" onError={e=> e.currentTarget.src=fallback} />
+                <img src={url} alt={`${titulo} mini ${i+2}`} className="w-full h-full object-cover" onError={handleImgError} />
               </div>
             ))}
           </div>
@@ -64,7 +71,7 @@ export default function GaleriaFotos({ fotos = [], titulo = '' }) {
                 src={url}
                 alt={`${titulo} foto ${idx+1} de ${total}`}
                 className="w-full h-full object-cover group-hover:scale-[1.03] transition"
-                onError={e=> e.currentTarget.src=fallback}
+                onError={handleImgError}
               />
               {showExtra && (
                 <button onClick={(e)=>{ e.stopPropagation(); openAt(desktopVisible) }} className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center text-white hover:bg-black/70 transition">
