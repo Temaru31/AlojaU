@@ -4,6 +4,7 @@ import Buscar from './pages/Buscar'
 import Detalle from './pages/Detalle'
 import Publicar from './pages/Publicar'
 import Comparar from './pages/Comparar'
+import ColdStartBanner from './components/ColdStartBanner'
 import { FavoritosProvider, useFavoritos } from './contexts/FavoritosContext'
 import { CompararProvider, useComparar } from './contexts/CompararContext'
 
@@ -184,6 +185,7 @@ function App() {
         <CompararProvider>
           <div className="min-h-screen flex flex-col bg-neutral-50">
             <Nav />
+            <ColdStartBanner />
             <main className="flex-1">
               <Routes>
                 <Route path="/" element={<Buscar />} />
