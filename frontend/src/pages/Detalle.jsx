@@ -4,7 +4,7 @@ import { api } from '../services/api'
 import Indice from '../components/IndiceConfianza'
 import MapaZona from '../components/MapaZona'
 import GaleriaFotos from '../components/GaleriaFotos'
-import { formatTiempoCaminando } from '../utils/formatters'
+import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
 import { useFavoritos } from '../contexts/FavoritosContext'
 import { useComparar } from '../contexts/CompararContext'
 
@@ -64,10 +64,11 @@ export default function Detalle() {
 
   const canon = pub.canon_mensual ?? pub.canon
   const deposito = pub.deposito_requerido ?? pub.deposito
-  const zona = pub.zona_nombre || pub.zona || 'Pandiguando'
+  // BUG-08: fallbacks unificados a "No informado"; num_fotos real (no 3 inventado)
+  const zona = pub.zona_nombre || pub.zona || 'No informado'
   const dist = pub.distancia_geodesica_m ?? pub.dist_m
   const servicios = pub.servicios || []
-  const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? 3)
+  const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? 0)
   const tiempo = formatTiempoCaminando(dist)
   const isFav = favHook.isFav(pub.id)
   const isComp = compHook.isSelected(pub.id)
@@ -149,17 +150,17 @@ export default function Detalle() {
           <div className="card p-5 space-y-4">
             <div>
               <h3 className="text-sm font-semibold text-navy-800 mb-1.5">Reglas de convivencia</h3>
-              <p className="text-sm text-neutral-600 leading-relaxed">{pub.reglas_convivencia || pub.reglas || 'Sin reglas especificadas'}</p>
+              <p className="text-sm text-neutral-600 leading-relaxed">{pub.reglas_convivencia || pub.reglas || 'No informado'}</p>
             </div>
             <div className="border-t border-neutral-100 pt-4">
               <h3 className="text-sm font-semibold text-navy-800 mb-1.5">Direccion de referencia</h3>
-              <p className="text-sm text-neutral-600">{pub.direccion_referencial}</p>
+              <p className="text-sm text-neutral-600">{pub.direccion_referencial || 'No informado'}</p>
             </div>
             <div className="border-t border-neutral-100 pt-4">
               <div className="flex items-center gap-4">
                 <div>
                   <p className="text-xs text-neutral-400 mb-0.5">Distancia al campus</p>
-                  <p className="text-sm font-semibold text-navy-800">{dist != null ? `${dist} m` : '—'}{tiempo ? ` · ${tiempo}` : ''}</p>
+                   <p className="text-sm font-semibold text-navy-800">{dist != null ? formatDistancia(dist) : 'No informado'}{tiempo ? ` · ${tiempo}` : ''}</p>
                 </div>
                 <div className="w-px h-8 bg-neutral-150" />
                 <div>
