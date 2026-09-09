@@ -195,7 +195,7 @@ function App() {
             <Footer />
           </div>
         </CompararProvider>
-      </BrowserRouter>
+      </FavoritosProvider>
     </BrowserRouter>
   )
 }
