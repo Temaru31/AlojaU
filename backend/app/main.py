@@ -27,7 +27,8 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 
-# Headers de seguridad básicos (OWASP)
+# Headers de seguridad básicos (OWASP).
+# T8: HSTS solo en prod (Render sirve HTTPS; en dev http://localhost HSTS rompería).
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -35,6 +36,8 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["X-XSS-Protection"] = "0"  # deshabilitado, CSP es mejor
+    if settings.ENV == "prod":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
 
 @app.get("/health", tags=["infra"])

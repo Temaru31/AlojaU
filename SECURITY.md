@@ -101,3 +101,39 @@ curl -s -X POST "$API/api/publicaciones" -H "Content-Type: application/json" \
 Si `mock-token-arrendador` da `201/422` en prod => `ENV`/`USE_MOCK_FALLBACK` mal
 configurados en Render. Revisar `render.yaml:22-25` y re-deploy.
 
+## 3) Blindaje T8 — Anti-spam, mocks fuera de prod, HSTS (2026-09-09)
+
+### 3.1 Checklist Render PROD (copiar a Dashboard → Environment)
+```
+ENV=prod
+USE_MOCK_FALLBACK=False
+SECRET_KEY=<openssl rand -hex 32>   # >=32 chars, NUNCA el default del ejemplo
+CORS_ORIGINS=https://aloja-u.vercel.app   # SIN localhost
+DATABASE_URL=postgresql+asyncpg://...@...pooler.supabase.com:5432/postgres?ssl=require
+CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET
+```
+Sin esto: el backend **no arranca** (fail-closed `config.py`) o acepta mocks. Ver test
+`backend/tests/test_prod_rls.py` + `backend/tests/test_t8_blindaje.py`.
+
+### 3.2 Rate limits (memoria por IP, suficiente para demo; Redis si >1 worker)
+| Endpoint | Límite | Código | Dónde |
+|---|---|---|---|
+| `POST /api/auth/login` | 5/min/IP | `auth.py:LOGIN_LIMIT` | anti brute-force (B0-7) |
+| `POST /api/reportes` | 5/min/IP | `reportes.py:REPORT_LIMIT` | anti-spam + protege Trust −10 |
+Decisión C4: reportes se queda en **5/min** (NO 60/min): anónimo + tumba confianza,
+60/min permitiría 60 falsos/min. Test: `test_t8_blindaje.py::test_t8_login_sexto_intento_429`.
+
+### 3.3 Botón mock fuera del bundle prod
+`Publicar.jsx` y `Perfil.jsx` gatean `Usar mock-token-arrendador` con `import.meta.env.DEV`
+(Vite lo elimina en `vite build`). Verificación: `grep -c mock-token frontend/dist/assets/*.js` → `0`.
+Backend además rechaza mocks en prod (`mock_enabled` + fail-closed). Doble capa.
+
+### 3.4 Headers prod
+`main.py:security_headers` añade `Strict-Transport-Security` solo si `ENV=prod`
+(en dev localhost es HTTP y HSTS lo rompería). Test `test_t8_hsts_solo_prod`.
+
+### 3.5 Pendiente (NO en T8, documentado)
+- Token en `localStorage` (XSS lo robaría): migrar a memoria/HttpOnly implica retocar
+  login de todo el equipo → propuesta para T10 con ellos.
+- Rotar `SECRET_KEY` invalida JWTs de 8h: avisar en Slack antes.
+

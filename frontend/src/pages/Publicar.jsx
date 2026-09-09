@@ -196,16 +196,19 @@ export default function Publicar() {
               </button>
             </form>
 
-            <div className="mt-3 text-xs">
-              <button
-                onClick={() => {
-                  const t = 'mock-token-arrendador'; localStorage.setItem('alojau_token', t); setToken(t)
-                }}
-                className="text-navy-600 hover:text-navy-700 hover:underline"
-              >
-                Usar mock-token-arrendador sin password (solo dev)
-              </button>
-            </div>
+            {/* T8: botón mock SOLO dev. Vite lo elimina del bundle prod (import.meta.env.DEV=false). */}
+            {import.meta.env.DEV && (
+              <div className="mt-3 text-xs">
+                <button
+                  onClick={() => {
+                    const t = 'mock-token-arrendador'; localStorage.setItem('alojau_token', t); setToken(t)
+                  }}
+                  className="text-navy-600 hover:text-navy-700 hover:underline"
+                >
+                  Usar mock-token-arrendador sin password (solo dev)
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

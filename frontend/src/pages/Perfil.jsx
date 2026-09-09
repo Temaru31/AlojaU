@@ -174,15 +174,18 @@ export default function Perfil() {
               </button>
             </form>
 
-            <div className="mt-4 pt-4 border-t border-neutral-150 text-center">
-              <button
-                type="button"
-                onClick={handleUsarMock}
-                className="text-xs text-navy-600 hover:text-navy-800 hover:underline font-medium"
-              >
-                Usar mock-token-arrendador sin password (solo dev)
-              </button>
-            </div>
+            {/* T8: botón mock SOLO dev. Vite lo elimina del bundle prod (import.meta.env.DEV=false). */}
+            {import.meta.env.DEV && (
+              <div className="mt-4 pt-4 border-t border-neutral-150 text-center">
+                <button
+                  type="button"
+                  onClick={handleUsarMock}
+                  className="text-xs text-navy-600 hover:text-navy-800 hover:underline font-medium"
+                >
+                  Usar mock-token-arrendador sin password (solo dev)
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
