@@ -211,5 +211,6 @@ curl -s "http://localhost:8000/api/publicaciones?campus_id=1; DROP" | head
 | 2026-09-09 | P1 T1 API reportes (POST anon 201 + 429 + GET/PATCH admin) + seed bcrypt fix | `pytest 85 passed` (11 T1), `vitest 55` |
 | 2026-09-09 | P1 T1 F1/F2 frontend (ReportarModal + botón Detalle + AdminReportes + ruta + 5 tests) | `vitest 60 passed`, `build` OK, commit `73dc8f1` |
 | 2026-09-09 | P1 T1 F3 Cloudinary (Strategy Local/Cloudinary + `storage.py` + refactor `uploads.py` + fix leaks UploadFotos + 7 BE + 6 FE tests) | `pytest 92 passed`, `vitest 66 passed`, `build` OK |
+| 2026-09-09 | Merge `feature/T1-reportes` → `develop` (ff `d68faed`→`a0f0536`, 3 commits, 0 conflictos; resto de ramas sin commits únicos, sin cruce). App `0.1.0`, último release `v0.3.0` en `main`. Cloudinary ya en Render prod | `develop`: `pytest 92 passed`, `vitest 66 passed`, `build` OK; scan sin secretos (solo mocks en tests) |
 
 *Próximo: F4 push `feature/T1-reportes` + QA refactor trust/distancia. Prod `https://aloja-u.vercel.app` + `https://alojau-api.onrender.com` con 6 reales.*
