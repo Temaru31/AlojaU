@@ -86,10 +86,11 @@ CREATE TABLE IF NOT EXISTS publicacion_servicios (
 );
 
 -- 8. Publicacion - Campus (N-N) con distancia Haversine precalculada
+-- B0-5: NULL cuando pub sin coords (no 0). CHECK pasa NULL (solo valida >=0 si no nulo).
 CREATE TABLE IF NOT EXISTS publicacion_campus (
   publicacion_id BIGINT NOT NULL REFERENCES publicaciones(id) ON DELETE CASCADE,
   campus_id BIGINT NOT NULL REFERENCES campus_universitarios(id),
-  distancia_geodesica_m INTEGER NOT NULL CHECK (distancia_geodesica_m >= 0),
+  distancia_geodesica_m INTEGER NULL CHECK (distancia_geodesica_m >= 0),
   PRIMARY KEY (publicacion_id, campus_id)
 );
 CREATE INDEX IF NOT EXISTS idx_pubcampus_campus_dist ON publicacion_campus(campus_id, distancia_geodesica_m);
