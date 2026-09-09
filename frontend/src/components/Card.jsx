@@ -91,8 +91,11 @@ export default function Card({ pub }) {
           </h3>
         </div>
 
+        {/* UX-AUDIT P0: canon null -> "No informado" (Detalle ya lo hace; $0 engaña) */}
         <p className="text-lg font-bold text-navy-800 mb-2">
-          ${Number(canon ?? 0).toLocaleString('es-CO')} <span className="text-xs font-normal text-neutral-400">COP/mes</span>
+          {canon != null
+            ? <>${Number(canon).toLocaleString('es-CO')} <span className="text-xs font-normal text-neutral-400">COP/mes</span></>
+            : <span className="text-sm font-medium text-neutral-400">No informado</span>}
         </p>
 
         <div className="flex items-center gap-3 text-xs text-neutral-500">

@@ -27,7 +27,7 @@ describe('formatters', ()=>{
   it('getLabelIndice', ()=>{
     expect(getLabelIndice(85)).toBe('Alto')
     expect(getLabelIndice(60)).toBe('Medio')
-    expect(getLabelIndice(10)).toBe('Basico')
+    expect(getLabelIndice(10)).toBe('Básico')
   })
   it('no desborda con números grandes', ()=>{
     const s = formatCOP(10000000)

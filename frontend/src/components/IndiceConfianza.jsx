@@ -53,7 +53,7 @@ export default function IndiceConfianza({ indice = 0, desglose = {} }) {
         </div>
         <div className="min-w-0 flex-1">
           <p className={`font-bold text-sm sm:text-base flex items-center gap-1.5 ${f.color}`}>
-            <span>{f.emoji}</span> {f.label}
+            <span aria-hidden="true">{f.emoji}</span> {f.label}
           </p>
           <p className="text-xs sm:text-sm text-neutral-600 mt-1 break-words leading-snug">{f.msg}</p>
           <p className="text-[11px] text-neutral-400 mt-1">No es garantía. Verifica en persona antes de pagar.</p>
@@ -73,19 +73,20 @@ export default function IndiceConfianza({ indice = 0, desglose = {} }) {
         </div>
       </div>
 
-      {/* Botón desplegable */}
+      {/* Botón desplegable (UX-AUDIT: aria-controls enlaza al panel) */}
       <button
         onClick={() => setOpen(!open)}
         aria-expanded={open}
+        aria-controls="indice-detalle"
         className="mt-4 w-full text-xs sm:text-sm font-medium text-navy-600 hover:text-navy-700 bg-neutral-50 border border-neutral-200 hover:border-navy-300 rounded-lg py-2 px-3 flex items-center justify-center gap-1.5 transition"
       >
         {open ? 'Ocultar detalles' : 'Ver por qué este puntaje'}
-        <span className={`transition-transform ${open ? 'rotate-180' : ''}`}>▼</span>
+        <span aria-hidden="true" className={`transition-transform ${open ? 'rotate-180' : ''}`}>▼</span>
       </button>
 
       {/* Detalles amigables */}
       {open && (
-        <div data-testid="detalles" className="mt-4 space-y-2.5 animate-in">
+        <div id="indice-detalle" data-testid="detalles" className="mt-4 space-y-2.5 animate-in">
           {details.map(d => (
             <div key={d.key} className="flex items-start gap-2.5 text-xs sm:text-sm">
               <span className={`mt-0.5 shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs ${d.ok ? 'bg-emerald-100 text-emerald-700' : 'bg-neutral-100 text-neutral-400'}`}>

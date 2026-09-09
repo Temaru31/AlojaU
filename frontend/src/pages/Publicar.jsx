@@ -51,6 +51,20 @@ export default function Publicar() {
       .catch(() => setCampus([{ id: 1, institucion: 'Universidad del Cauca', nombre_sede: 'Campus Tulcán' }]))
   }, [])
 
+  // UX-AUDIT P0: igual que Perfil — el navbar puede cerrar sesión; re-sincroniza
+  // el token local para no mostrar el formulario con un token muerto (401).
+  useEffect(() => {
+    const syncToken = () => {
+      try { setToken(localStorage.getItem('alojau_token') || '') } catch { setToken('') }
+    }
+    window.addEventListener('alojau:auth-change', syncToken)
+    window.addEventListener('storage', syncToken)
+    return () => {
+      window.removeEventListener('alojau:auth-change', syncToken)
+      window.removeEventListener('storage', syncToken)
+    }
+  }, [])
+
   const handleLogin = async (e) => {
     e.preventDefault()
     setLoginError(''); setLoginLoading(true)

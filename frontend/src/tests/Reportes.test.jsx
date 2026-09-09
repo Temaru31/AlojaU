@@ -38,6 +38,14 @@ describe('T1 Reportes frontend', () => {
     expect(await screen.findByText(/Gracias, revisaremos/)).toBeInTheDocument()
   })
 
+  it('modal cierra con tecla Escape (accesibilidad)', async () => {
+    const onClose = vi.fn()
+    render(<ReportarModal publicacionId={1} titulo="Apto test" onClose={onClose} />)
+    expect(screen.getByRole('dialog', { name: 'Reportar aviso' })).toBeInTheDocument()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+  })
+
   it('muestra mensaje anti-spam claro en 429', async () => {
     api.post.mockRejectedValue({ response: { status: 429 } })
     renderModal()

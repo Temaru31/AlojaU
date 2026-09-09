@@ -1,6 +1,6 @@
 // ReportarModal - denuncia anónima de avisos (HU-011).
 // Uso: <ReportarModal publicacionId titulo onClose /> en Detalle. Ej: <ReportarModal publicacionId={1} titulo="Apto" onClose={...} />.
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { api } from '../services/api'
 
 const MOTIVOS = [
@@ -17,6 +17,14 @@ export default function ReportarModal({ publicacionId, titulo = '', onClose }) {
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
   const [done, setDone] = useState(false)
+
+  // UX-AUDIT P1: cerrar con Esc + un solo nombre accesible "Cerrar"
+  // (antes: dos botones "Cerrar"/"Cerrar ventana" en el mismo dialog).
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose?.() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
 
   const enviar = async (e) => {
     e?.preventDefault()
@@ -46,11 +54,12 @@ export default function ReportarModal({ publicacionId, titulo = '', onClose }) {
 
   return (
     <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Reportar aviso">
-      <button aria-label="Cerrar" onClick={onClose} className="absolute inset-0 bg-navy-900/50" tabIndex={-1} />
+      {/* Backdrop solo-ratón (teclado usa Esc o el botón Cerrar) */}
+      <div aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-navy-900/50" />
       <form onSubmit={enviar} className="relative bg-white rounded-xl shadow-xl w-full max-w-md p-5 sm:p-6">
         <div className="flex items-start justify-between gap-3 mb-1">
           <h2 className="font-display font-bold text-lg text-navy-900">Reportar aviso</h2>
-          <button type="button" onClick={onClose} aria-label="Cerrar ventana" className="w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 flex items-center justify-center text-lg leading-none">×</button>
+          <button type="button" onClick={onClose} aria-label="Cerrar" className="w-8 h-8 rounded-full bg-neutral-100 hover:bg-neutral-200 flex items-center justify-center text-lg leading-none">×</button>
         </div>
         <p className="text-xs text-neutral-500 mb-4 truncate" title={titulo}>{titulo || `Publicación #${publicacionId}`}</p>
 
@@ -65,6 +74,7 @@ export default function ReportarModal({ publicacionId, titulo = '', onClose }) {
               id="reporte-motivo"
               value={motivo}
               onChange={(e) => setMotivo(e.target.value)}
+              autoFocus
               className="select-field w-full mb-3"
             >
               {MOTIVOS.map((m) => (

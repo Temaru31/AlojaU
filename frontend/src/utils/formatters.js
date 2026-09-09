@@ -5,7 +5,7 @@ export const formatDistancia = (m) => {
   return num < 1000 ? `${num.toLocaleString('es-CO')} m` : `${(num / 1000).toFixed(1)} km`
 }
 export const getColorIndice = (i) => i >= 80 ? 'emerald' : i >= 50 ? 'orange' : 'red'
-export const getLabelIndice = (i) => i >= 80 ? 'Alto' : i >= 50 ? 'Medio' : 'Basico'
+export const getLabelIndice = (i) => i >= 80 ? 'Alto' : i >= 50 ? 'Medio' : 'Básico'
 export const formatTiempoCaminando = (m) => {
   if (m == null || isNaN(Number(m))) return null
   const num = Number(m)

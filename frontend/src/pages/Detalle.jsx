@@ -18,11 +18,14 @@ export default function Detalle() {
   const compHook = useComparar()
 
   useEffect(() => {
+    let cancelled = false
     setLoading(true)
     api.get(`/api/publicaciones/${id}`)
-      .then(r => setPub(r.data))
-      .catch(() => setPub(null))
-      .finally(() => setLoading(false))
+      .then(r => { if (!cancelled) setPub(r.data) })
+      .catch(() => { if (!cancelled) setPub(null) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    // UX/perf: cambio rápido de aviso no pisa el detalle con respuesta tardía.
+    return () => { cancelled = true }
   }, [id])
 
   // UX: al abrir (o cambiar) una publicación, volver al tope (fotos/título),
@@ -99,7 +102,8 @@ export default function Detalle() {
         <div className="lg:col-span-2 space-y-6">
           {!isActivo && (
             <div className="bg-amber-50 border border-amber-200 text-amber-700 rounded-md p-3 text-sm">
-              No disponible para contacto — Estado: <b>{pub.estado}</b> {pub.estado === 'PENDIENTE' ? '(en moderación)' : ''} — Solo ACTIVO es contactable.
+              {/* UX: copia humana, sin enum de BD (ACTIVO/PENDIENTE es interno) */}
+              No disponible para contacto por ahora{pub.estado === 'PENDIENTE' ? ' — en revisión' : ''}.
             </div>
           )}
 
@@ -177,15 +181,11 @@ export default function Detalle() {
               <p className="text-sm text-neutral-600">{pub.direccion_referencial || 'No informado'}</p>
             </div>
             <div className="border-t border-neutral-100 pt-4">
+              {/* UX: sin columna "Estado" (ACTIVO/PENDIENTE es interno de BD, no del estudiante) */}
               <div className="flex items-center gap-4">
                 <div>
                   <p className="text-xs text-neutral-400 mb-0.5">Distancia al campus</p>
                    <p className="text-sm font-semibold text-navy-800">{dist != null ? formatDistancia(dist) : 'No informado'}{tiempo ? ` · ${tiempo}` : ''}</p>
-                </div>
-                <div className="w-px h-8 bg-neutral-150" />
-                <div>
-                  <p className="text-xs text-neutral-400 mb-0.5">Estado</p>
-                  <p className="text-sm font-semibold text-emerald-600">{pub.estado}</p>
                 </div>
                 <div className="w-px h-8 bg-neutral-150" />
                 <div>
@@ -230,8 +230,9 @@ export default function Detalle() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
                 </svg>
                 <p className="text-xs text-orange-700">
+                  {/* UX: sin enum de BD; el estudiante solo necesita saber que no hay contacto */}
                   {!isActivo
-                    ? `No contactable — Estado ${pub.estado}`
+                    ? 'Este aviso no está disponible por ahora'
                     : 'Sin WhatsApp autorizado — no se muestra boton de contacto'}
                 </p>
               </div>

@@ -22,11 +22,26 @@ export default function GaleriaFotos({ fotos = [], titulo = '' }) {
   const mobileExtra = total - mobileVisible
   const desktopExtra = total - desktopVisible
 
+  // UX-AUDIT P2: celdas clicables también por teclado (antes solo ratón).
+  const keyOpen = (onOpen) => (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onOpen()
+    }
+  }
+
   return (
     <>
       {/* Mobile: 1 grande + badge +N (no tapa la foto) */}
       <div className="block sm:hidden">
-        <div className="relative aspect-[4/3] overflow-hidden rounded-xl bg-neutral-100 cursor-pointer" onClick={()=> openAt(0)}>
+        <div
+          className="relative aspect-[4/3] overflow-hidden rounded-xl bg-neutral-100 cursor-pointer"
+          onClick={()=> openAt(0)}
+          onKeyDown={keyOpen(()=> openAt(0))}
+          role="button"
+          tabIndex={0}
+          aria-label={`Abrir visor: ${titulo} foto 1 de ${total}`}
+        >
           <SmartImage
             src={fotos[0]}
             alt={`${titulo} foto 1 de ${total}`}
@@ -44,7 +59,15 @@ export default function GaleriaFotos({ fotos = [], titulo = '' }) {
         {total>1 && total<=3 && (
           <div className="grid grid-cols-3 gap-2 mt-2">
             {fotos.slice(1,3).map((url,i)=> (
-              <div key={i} className="aspect-square overflow-hidden rounded-lg bg-neutral-100 cursor-pointer" onClick={()=> openAt(i+1)}>
+              <div
+                key={url || i}
+                className="aspect-square overflow-hidden rounded-lg bg-neutral-100 cursor-pointer"
+                onClick={()=> openAt(i+1)}
+                onKeyDown={keyOpen(()=> openAt(i+1))}
+                role="button"
+                tabIndex={0}
+                aria-label={`Abrir visor: ${titulo} mini ${i+2}`}
+              >
                 <SmartImage src={url} alt={`${titulo} mini ${i+2}`} className="w-full h-full object-cover" />
               </div>
             ))}
@@ -58,7 +81,15 @@ export default function GaleriaFotos({ fotos = [], titulo = '' }) {
           const isLastVisible = idx === desktopVisible -1
           const showExtra = isLastVisible && desktopExtra > 0
           return (
-            <div key={idx} className="relative aspect-[4/3] overflow-hidden rounded-xl bg-neutral-100 cursor-pointer group" onClick={()=> openAt(idx)}>
+            <div
+              key={url || idx}
+              className="relative aspect-[4/3] overflow-hidden rounded-xl bg-neutral-100 cursor-pointer group"
+              onClick={()=> openAt(idx)}
+              onKeyDown={keyOpen(()=> openAt(idx))}
+              role="button"
+              tabIndex={0}
+              aria-label={`Abrir visor: ${titulo} foto ${idx+1} de ${total}`}
+            >
               <SmartImage
                 src={url}
                 alt={`${titulo} foto ${idx+1} de ${total}`}

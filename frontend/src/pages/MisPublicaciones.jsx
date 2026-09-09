@@ -7,6 +7,10 @@ import { api } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 import { formatDistancia } from '../utils/formatters'
 
+const ESTADO_LABEL = {
+  ACTIVO: 'Publicada',
+  PENDIENTE: 'En revisión',
+}
 const ESTADO_STYLE = {
   ACTIVO: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   PENDIENTE: 'bg-amber-50 text-amber-700 border-amber-200',
@@ -17,6 +21,7 @@ export default function MisPublicaciones() {
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(!!token)
   const [error, setError] = useState('')
+  const [reloadKey, setReloadKey] = useState(0)
 
   useEffect(() => {
     if (!token) {
@@ -26,18 +31,22 @@ export default function MisPublicaciones() {
     }
     setLoading(true)
     setError('')
+    // Auth: Bearer obligatorio (sin token el backend responde 401).
     api.get('/api/publicaciones/mias', {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then(r => setItems(Array.isArray(r.data) ? r.data : []))
       .catch(err => {
-        setError(err?.response?.status === 401
+        const status = err?.response?.status
+        setError(status === 401
           ? 'Sesión vencida. Inicia sesión de nuevo.'
-          : 'No se pudieron cargar tus publicaciones.')
+          : status === 404 || status === 422
+            ? 'Tu backend está desactualizado (falta GET /mias). Reinicia uvicorn en la rama actual.'
+            : 'No se pudieron cargar tus publicaciones.')
         setItems([])
       })
       .finally(() => setLoading(false))
-  }, [token])
+  }, [token, reloadKey])
 
   if (!token) {
     return (
@@ -58,14 +67,21 @@ export default function MisPublicaciones() {
         <span>›</span>
         <span className="text-neutral-600">Mis publicaciones</span>
       </nav>
-      <div className="flex items-center justify-between gap-3 mb-4">
+      {/* UX: sin botón "+ Publicar" aquí (ya existe en el navbar superior) */}
+      <div className="mb-4">
         <h1 className="font-display text-xl md:text-2xl font-bold text-navy-900">
           Mis publicaciones {items.length > 0 && <span className="text-sm font-normal text-neutral-400">({items.length})</span>}
         </h1>
-        <Link to="/publicar" className="btn-accent text-xs">+ Publicar</Link>
       </div>
 
-      {error && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-3" role="alert">{error}</p>}
+      {error && (
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-3" role="alert">
+          <p className="text-xs text-red-700 flex-1">{error}</p>
+          <button onClick={() => setReloadKey(k => k + 1)} className="text-xs font-semibold text-red-700 hover:text-red-800 underline shrink-0">
+            Reintentar
+          </button>
+        </div>
+      )}
 
       {loading ? (
         <div className="card p-6 animate-pulse space-y-3">
@@ -75,7 +91,7 @@ export default function MisPublicaciones() {
       ) : items.length === 0 && !error ? (
         <div className="card p-12 text-center">
           <p className="text-sm font-medium text-neutral-700 mb-1">Aún no publicas nada</p>
-          <p className="text-xs text-neutral-400 mb-4">Tu primer aviso queda en revisión (PENDIENTE) antes de salir en Buscar.</p>
+          <p className="text-xs text-neutral-400 mb-4">Tu primer aviso queda En revisión antes de salir en Buscar.</p>
           <Link to="/publicar" className="btn-accent text-sm">Publicar mi primera vivienda</Link>
         </div>
       ) : (
@@ -92,7 +108,7 @@ export default function MisPublicaciones() {
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <span className={`text-[11px] font-semibold px-2 py-1 rounded-full border ${ESTADO_STYLE[p.estado] || 'bg-neutral-50 text-neutral-600 border-neutral-200'}`}>
-                  {p.estado === 'PENDIENTE' ? 'En revisión' : p.estado}
+                  {ESTADO_LABEL[p.estado] || p.estado}
                 </span>
                 <Link to={`/publicacion/${p.id}`} className="text-xs font-medium text-navy-600 hover:underline">
                   Ver →

@@ -174,15 +174,9 @@ function Nav() {
               <span>Comparar</span>
               <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${compCount} de ${compMax} para comparar`}>{compCount}/{compMax}</span>
             </Link>
-            <Link
-              to="/"
-              onClick={closeMenu}
-              aria-label={`Favoritos, ${favCount} guardados`}
-              className={mobileLinkCls(false)}
-            >
-              <span>Favoritos</span>
-              <span className="bg-red-50 text-red-600 text-[11px] px-1.5 py-0.5 rounded-full">♡ {favCount}</span>
-            </Link>
+            {/* UX-AUDIT P1: se elimina el item "Favoritos" (apuntaba a "/" = Buscar,
+                enlace muerto). La página /favoritos llega en T3 (BUG-07); el contador
+                ♡ del navbar desktop sigue visible. */}
             <Link
               to="/perfil"
               onClick={closeMenu}

@@ -36,16 +36,16 @@ export default function Comparar() {
     { label: 'Tipo', key: 'tipo', render: (p) => p.tipo_inmueble || <NoInformado /> },
     { label: 'Zona', key: 'zona', render: (p) => p.zona_nombre || p.zona || <NoInformado /> },
     {
-      label: 'Distancia geodésica', key: 'dist', render: (p) => {
+      label: 'Distancia al campus', key: 'dist', render: (p) => {
         const d = p.distancia_geodesica_m ?? p.dist_m
         return d != null ? formatDistancia(d) : <NoInformado />
       }
     },
-    { label: 'Tiempo caminando', key: 'tiempo', render: (p) => formatTiempoCaminando(p.distancia_geodesica_m ?? p.dist_m) || <NoInformado /> },
+    { label: 'Tiempo a pie', key: 'tiempo', render: (p) => formatTiempoCaminando(p.distancia_geodesica_m ?? p.dist_m) || <NoInformado /> },
     { label: 'Índice confianza', key: 'indice', render: (p) => p.indice_confianza != null ? `${p.indice_confianza}/100` : <NoInformado /> },
     { label: 'Servicios', key: 'servicios', render: (p) => p.servicios?.length ? p.servicios.join(' · ') : <NoInformado /> },
     { label: 'Fotos', key: 'fotos', render: (p) => `${Array.isArray(p.fotos) ? p.fotos.length : (p.num_fotos ?? 0)} fotos` },
-    { label: 'Estado', key: 'estado', render: (p) => p.estado || <NoInformado /> },
+    { label: 'Estado', key: 'estado', render: (p) => p.estado === 'PENDIENTE' ? 'En revisión' : p.estado === 'ACTIVO' ? 'Publicada' : (p.estado || <NoInformado />) },
     { label: 'Dirección ref.', key: 'direccion', render: (p) => p.direccion_referencial || <NoInformado /> },
   ]
 
@@ -128,7 +128,7 @@ export default function Comparar() {
               </div>
               <div className="p-4 bg-neutral-50 border-t border-neutral-150">
                 <p className="text-xs text-neutral-400 text-center">
-                  * Distancia geodésica Haversine, no tiempo ruteado. Índice informativo, no garantiza seguridad.
+                  * Distancia estimada a pie desde el campus. Índice informativo, no garantiza seguridad.
                 </p>
               </div>
             </div>

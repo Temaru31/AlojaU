@@ -67,6 +67,12 @@ describe('Card - HU-001/003 y overflow', ()=>{
     expect(h3.className).toContain('break-words')
   })
 
+  it('canon nulo muestra No informado (no $0)', ()=>{
+    render(<Card pub={{...basePub, canon_mensual: null, canon: null}} />)
+    expect(screen.getByText('No informado')).toBeInTheDocument()
+    expect(screen.queryByText(/\$0/)).not.toBeInTheDocument()
+  })
+
   it('badge confianza color según índice', ()=>{
     const { rerender } = render(<Card pub={{...basePub, indice_confianza: 85}} />)
     expect(screen.getByText(/85.*Alto/)).toBeInTheDocument()

@@ -17,6 +17,15 @@ describe('IndiceConfianza - HU-007 amigable', ()=>{
     expect(screen.getByText(/Confianza Básica/)).toBeInTheDocument()
     expect(screen.getByText(/Revisa con calma/)).toBeInTheDocument()
   })
+  it('sin reportes (0 denuncias): 10/10 con check verde', async ()=>{
+    const user = userEvent.setup()
+    render(<Indice indice={100} desglose={{completitud:40, telefono:20, fotos:15, vigencia:15, reportes:10}} />)
+    await user.click(screen.getByRole('button', { name: /Ver por qué/ }))
+    expect(screen.getByText('Sin reportes')).toBeInTheDocument()
+    expect(screen.getByText('10/10')).toBeInTheDocument()
+    // checks verdes: 5 factores ok -> 5 ✓ (más el de la insignia si aplica)
+    expect(screen.getAllByText('✓').length).toBeGreaterThanOrEqual(5)
+  })
   it('barra visual con width proporcional', ()=>{
     const { container } = render(<Indice indice={50} desglose={{completitud:20, telefono:10, fotos:10, vigencia:5, reportes:5}} />)
     // barra es el div con width inline dentro de bg-gray-200

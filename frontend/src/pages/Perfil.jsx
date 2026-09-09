@@ -45,6 +45,20 @@ export default function Perfil() {
     }
   }, [token])
 
+  // UX-AUDIT P0: el navbar puede cerrar sesión (AuthContext.logout); si este
+  // token local queda rancio, la vista mostraría 401. Re-sincroniza con eventos.
+  useEffect(() => {
+    const syncToken = () => {
+      try { setToken(localStorage.getItem('alojau_token') || '') } catch { setToken('') }
+    }
+    window.addEventListener('alojau:auth-change', syncToken)
+    window.addEventListener('storage', syncToken)
+    return () => {
+      window.removeEventListener('alojau:auth-change', syncToken)
+      window.removeEventListener('storage', syncToken)
+    }
+  }, [])
+
   const handleLogin = async (e) => {
     e.preventDefault()
     setLoginLoading(true)
@@ -69,14 +83,7 @@ export default function Perfil() {
     emitAuthChange()
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem('alojau_token')
-    setToken('')
-    setPerfil(null)
-    setSuccessMsg('')
-    setError('')
-    emitAuthChange()
-  }
+  // Nota UX: el cierre de sesión vive en el dropdown del navbar (AuthContext.logout).
 
   const handleGuardarDatos = async (e) => {
     e?.preventDefault()
@@ -210,7 +217,7 @@ export default function Perfil() {
   return (
     <div className="container-main py-6 md:py-10">
       <div className="max-w-3xl mx-auto space-y-6">
-        {/* Breadcrumbs & Header */}
+        {/* Breadcrumbs & Header (UX: cerrar sesión vive en el dropdown del navbar) */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <nav className="flex items-center gap-2 text-xs text-neutral-400 mb-1">
@@ -227,12 +234,6 @@ export default function Perfil() {
               Gestiona tu teléfono de contacto y verifica tu cuenta para maximizar el índice de confianza.
             </p>
           </div>
-          <button
-            onClick={handleLogout}
-            className="self-start sm:self-auto px-3 py-1.5 text-xs text-neutral-600 hover:text-red-600 border border-neutral-200 rounded-md hover:bg-neutral-50 transition"
-          >
-            Cerrar sesión
-          </button>
         </div>
 
         {/* Feedback alerts */}

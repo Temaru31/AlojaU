@@ -34,7 +34,10 @@ describe('MisPublicaciones', () => {
     renderPage('tok')
     expect(await screen.findByText('Habitación Tulcán')).toBeInTheDocument()
     expect(screen.getByText('En revisión')).toBeInTheDocument()
-    expect(screen.getByText('ACTIVO')).toBeInTheDocument()
+    expect(screen.getByText('Publicada')).toBeInTheDocument()
+    // UX: nunca el enum crudo de BD
+    expect(screen.queryByText('ACTIVO')).not.toBeInTheDocument()
+    expect(screen.queryByText('PENDIENTE')).not.toBeInTheDocument()
   })
 
   it('vacío: invita a publicar', async () => {
