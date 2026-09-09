@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
+import { emitAuthChange } from '../contexts/AuthContext'
 
 export default function Perfil() {
   const [token, setToken] = useState(() => localStorage.getItem('alojau_token') || '')
@@ -53,6 +54,7 @@ export default function Perfil() {
       const t = r.data.access_token
       localStorage.setItem('alojau_token', t)
       setToken(t)
+      emitAuthChange() // UX: avisa al navbar para mostrar el avatar al instante
     } catch (err) {
       setError(err?.response?.data?.detail || 'Error al iniciar sesión')
     } finally {
@@ -64,6 +66,7 @@ export default function Perfil() {
     const t = 'mock-token-arrendador'
     localStorage.setItem('alojau_token', t)
     setToken(t)
+    emitAuthChange()
   }
 
   const handleLogout = () => {
@@ -72,6 +75,7 @@ export default function Perfil() {
     setPerfil(null)
     setSuccessMsg('')
     setError('')
+    emitAuthChange()
   }
 
   const handleGuardarDatos = async (e) => {

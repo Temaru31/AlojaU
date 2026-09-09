@@ -12,19 +12,19 @@ const friendly = (indice) => {
   }
   if (indice >= 50) return {
     label: 'Confianza Media',
-    color: 'text-gold-700',
-    bg: 'bg-gold-500',
-    bar: 'bg-gold-500',
-    light: 'bg-gold-50 border-gold-200',
+    color: 'text-orange-700',
+    bg: 'bg-orange-500',
+    bar: 'bg-orange-500',
+    light: 'bg-orange-50 border-orange-200',
     emoji: '⚠️',
     msg: 'Bastante bien, pero revisa detalles antes de pagar.',
   }
   return {
     label: 'Confianza Básica',
-    color: 'text-orange-700',
-    bg: 'bg-orange-500',
-    bar: 'bg-orange-500',
-    light: 'bg-orange-50 border-orange-200',
+    color: 'text-red-700',
+    bg: 'bg-red-500',
+    bar: 'bg-red-500',
+    light: 'bg-red-50 border-red-200',
     emoji: '🔍',
     msg: 'Revisa con calma, faltan datos importantes.',
   }

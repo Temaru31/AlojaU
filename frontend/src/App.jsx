@@ -6,27 +6,36 @@ import Publicar from './pages/Publicar'
 import Comparar from './pages/Comparar'
 import Perfil from './pages/Perfil'
 import AdminReportes from './pages/AdminReportes'
+import MisPublicaciones from './pages/MisPublicaciones'
 import ColdStartBanner from './components/ColdStartBanner'
 import BrandMark from './components/BrandMark'
 import { FavoritosProvider, useFavoritos } from './contexts/FavoritosContext'
 import { CompararProvider, useComparar } from './contexts/CompararContext'
+import { AuthProvider, useAuth, inicialesDe } from './contexts/AuthContext'
 
 function Nav() {
   const { count: favCount } = useFavoritos()
   const { count: compCount, max: compMax } = useComparar()
+  const { token, user, logout } = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [userOpen, setUserOpen] = useState(false)
   const location = useLocation()
   const isActive = (path) => location.pathname === path
 
   const closeMenu = () => setMobileOpen(false)
+  const closeUser = () => setUserOpen(false)
+  const displayName = user?.nombre_completo?.trim() || user?.email?.split('@')[0] || 'Mi cuenta'
 
-  // BUG-12: cierre del menú móvil con Esc
+  // BUG-12: cierre del menú móvil con Esc (+ dropdown de usuario)
   useEffect(() => {
-    if (!mobileOpen) return
-    const onKey = (e) => { if (e.key === 'Escape') closeMenu() }
+    if (!mobileOpen && !userOpen) return
+    const onKey = (e) => { if (e.key === 'Escape') { closeMenu(); closeUser() } }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [mobileOpen])
+  }, [mobileOpen, userOpen])
+
+  // Cierra el dropdown al navegar
+  useEffect(() => { closeUser() }, [location.pathname])
 
   const mobileLinkCls = (active) =>
     `flex items-center justify-between px-3 py-2.5 text-sm font-medium rounded-md transition-colors duration-200 ${
@@ -71,6 +80,51 @@ function Nav() {
 
           <div className="hidden md:flex items-center gap-3">
             {favCount > 0 && <span className="text-sm text-neutral-500" aria-label={`${favCount} favoritos`}>♡ {favCount}</span>}
+            {/* UX: navbar según sesión */}
+            {!token ? (
+              <Link to="/perfil" className="px-3 py-2 text-sm font-medium rounded-md text-neutral-500 hover:text-navy-700 hover:bg-neutral-100 transition-colors">
+                Mi Perfil / Iniciar Sesión
+              </Link>
+            ) : (
+              <div className="relative">
+                <button
+                  onClick={() => setUserOpen(!userOpen)}
+                  aria-label="Menú de usuario"
+                  aria-expanded={userOpen}
+                  aria-haspopup="menu"
+                  className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-full border border-neutral-200 hover:border-navy-300 hover:bg-neutral-50 transition"
+                >
+                  <span aria-hidden="true" className="w-8 h-8 rounded-full bg-navy-800 text-white text-xs font-bold flex items-center justify-center">
+                    {inicialesDe(user)}
+                  </span>
+                  <span className="text-sm font-medium text-navy-800 max-w-28 truncate">{displayName}</span>
+                  <span aria-hidden="true" className={`text-[10px] text-neutral-400 transition-transform ${userOpen ? 'rotate-180' : ''}`}>▼</span>
+                </button>
+                {userOpen && (
+                  <>
+                    <div aria-hidden="true" onClick={closeUser} className="fixed inset-0 z-40" />
+                    <div role="menu" aria-label="Cuenta" className="absolute right-0 top-11 w-56 rounded-xl border border-neutral-150 shadow-xl bg-white p-2 z-50">
+                      <p className="px-3 py-2 text-xs text-neutral-400 truncate border-b border-neutral-100 mb-1" title={user?.email || ''}>
+                        {user?.email || 'Sesión activa'}
+                      </p>
+                      <Link to="/perfil" onClick={closeUser} role="menuitem" className="block px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-100">
+                        Mi Perfil
+                      </Link>
+                      <Link to="/mis-publicaciones" onClick={closeUser} role="menuitem" className="block px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-100">
+                        Mis Publicaciones
+                      </Link>
+                      <button
+                        onClick={() => { logout(); closeUser() }}
+                        role="menuitem"
+                        className="block w-full text-left px-3 py-2 text-sm font-semibold rounded-md text-red-600 hover:bg-red-50 transition-colors"
+                      >
+                        Cerrar sesión
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
             <Link to="/publicar" className="btn-accent">
               Publicar
             </Link>
@@ -135,8 +189,33 @@ function Nav() {
               aria-current={isActive('/perfil') ? 'page' : undefined}
               className={mobileLinkCls(isActive('/perfil'))}
             >
-              Mi Perfil
+              {token ? (
+                <span className="flex items-center gap-2">
+                  <span aria-hidden="true" className="w-6 h-6 rounded-full bg-navy-800 text-white text-[10px] font-bold flex items-center justify-center">
+                    {inicialesDe(user)}
+                  </span>
+                  <span className="truncate max-w-40">{displayName}</span>
+                </span>
+              ) : 'Mi Perfil / Iniciar Sesión'}
             </Link>
+            {token && (
+              <>
+                <Link
+                  to="/mis-publicaciones"
+                  onClick={closeMenu}
+                  aria-current={isActive('/mis-publicaciones') ? 'page' : undefined}
+                  className={mobileLinkCls(isActive('/mis-publicaciones'))}
+                >
+                  Mis Publicaciones
+                </Link>
+                <button
+                  onClick={() => { logout(); closeMenu() }}
+                  className="w-full text-left px-3 py-2.5 text-sm font-semibold rounded-md text-red-600 hover:bg-red-50 transition-colors"
+                >
+                  Cerrar sesión
+                </button>
+              </>
+            )}
             <Link
               to="/publicar"
               onClick={closeMenu}
@@ -177,7 +256,7 @@ function Footer() {
           <div>
             <h4 className="text-sm font-semibold text-navy-800 mb-3">Informacion</h4>
             <p className="text-sm text-neutral-500 leading-relaxed">
-              Popayan, Cauca — Distancia geodesica (Haversine). MVP 2026.
+              Popayan, Cauca — Distancias estimadas a pie desde tu campus. MVP 2026.
             </p>
             <p className="text-xs text-neutral-400 mt-2">Sin pagos ni chat interno.</p>
           </div>
@@ -194,6 +273,7 @@ function Footer() {
 function App() {
   return (
     <BrowserRouter>
+      <AuthProvider>
       <FavoritosProvider>
         <CompararProvider>
           <div className="min-h-screen flex flex-col bg-neutral-50">
@@ -206,6 +286,7 @@ function App() {
                 <Route path="/comparar" element={<Comparar />} />
                 <Route path="/publicar" element={<Publicar />} />
                 <Route path="/perfil" element={<Perfil />} />
+                <Route path="/mis-publicaciones" element={<MisPublicaciones />} />
                 <Route path="/admin/reportes" element={<AdminReportes />} />
               </Routes>
 
@@ -214,6 +295,7 @@ function App() {
           </div>
         </CompararProvider>
       </FavoritosProvider>
+      </AuthProvider>
     </BrowserRouter>
   )
 }

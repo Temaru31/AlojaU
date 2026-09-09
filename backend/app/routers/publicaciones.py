@@ -1,7 +1,8 @@
 """
-routers/publicaciones.py - HU-001,002,003,005,007 (Sprint1)
+routers/publicaciones.py - HU-001,002,003,005,007 (Sprint1) + Mis publicaciones (UX)
 Endpoints:
   GET  /api/publicaciones?campus_id=&precio_min=&precio_max=&tipo=&servicios=  (HU-001+002)
+  GET  /api/publicaciones/mias                                                (UX: dueño, todos los estados)
   GET  /api/publicaciones/{id}                                                (HU-003+007)
   POST /api/publicaciones                                                      (HU-005 -> PENDIENTE, solo ARRENDADOR)
 
@@ -11,16 +12,19 @@ NFR P95<500ms: query indexada (estado, zona, canon), sin N+1, Haversine en memor
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query, Path, HTTPException, status, Header
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.core.config import settings
-from app.core.security import get_optional_user, require_arrendador
+from app.core.security import get_current_user, get_optional_user, require_arrendador
 from app.repositories import publicacion_repo as repo
 from app.services import publicacion_view as view
 from app.schemas.publicacion import (
     PublicacionCreate,
     PublicacionCreatedOut,
+    PublicacionCardOut,
     PublicacionDetailOut,
     PaginatedPublicaciones,
 )
@@ -139,6 +143,50 @@ async def list_publicaciones(
         offset, size_norm = paginate_params(page, size)
         paginated_items = items[offset:offset+size_norm]
         return build_paginated(paginated_items, total, page, size_norm)
+
+@router.get("/mias", response_model=List[PublicacionCardOut], summary="UX Mis publicaciones del dueño (todos los estados)")
+async def mis_publicaciones(
+    db: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Lista las publicaciones del usuario autenticado en TODOS los estados
+    (ACTIVO + PENDIENTE en moderación + otros), más recientes primero.
+    Sin token -> 401. Cada dueño solo ve las suyas (filtro usuario_id).
+    NOTA: declarada ANTES de /{pub_id} para que "mias" no caiga en el path param."""
+    uid = user.get("id")
+    # F1: token sin id entero válido -> 401 (nunca filtrar por dueño ajeno).
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    try:
+        from app.models import Publicacion
+
+        stmt = (
+            select(Publicacion)
+            .options(
+                selectinload(Publicacion.imagenes),
+                selectinload(Publicacion.servicios),
+                selectinload(Publicacion.zona),
+            )
+            .where(Publicacion.usuario_id == uid)
+            .order_by(Publicacion.id.desc())
+        )
+        pubs = (await db.execute(stmt)).scalars().unique().all()
+        if not pubs:
+            return []
+        rep_map, users_map, _ = await repo.fetch_page_aggregates(db, pubs, None)
+        return view.cards_for_page(pubs, rep_map, users_map, {}, None)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[DB fallback] mis_publicaciones {uid} falló: {e!r}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    # Mock fallback solo dev: filtra por dueño (incluye PENDIENTE, es su bandeja).
+    return [view.mock_to_out(p) for p in MOCK_PUBS if p.get("usuario_id") == uid]
 
 @router.get("/{pub_id}", response_model=PublicacionDetailOut, summary="HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp")
 async def get_publicacion(

@@ -25,6 +25,16 @@ export default function Detalle() {
       .finally(() => setLoading(false))
   }, [id])
 
+  // UX: al abrir (o cambiar) una publicación, volver al tope (fotos/título),
+  // no quedarse abajo en el mapa por el scroll heredado del catálogo.
+  useEffect(() => {
+    try {
+      window.scrollTo(0, 0)
+    } catch {
+      // SSR/tests sin scroll: no rompe render
+    }
+  }, [id])
+
   if (loading) {
     return (
       <div className="container-main py-8">
@@ -93,7 +103,7 @@ export default function Detalle() {
             </div>
           )}
 
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button
               onClick={() => favHook.toggle(pub.id)}
               aria-pressed={isFav}
@@ -107,6 +117,14 @@ export default function Detalle() {
               className={`px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition ${isComp ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-neutral-200 hover:bg-neutral-50'}`}
             >
               {isComp ? '✓ En comparar' : '+ Comparar (máx 3)'}
+            </button>
+            {/* UX: reportar visible en cabecera (secundario discreto, no escondido bajo el mapa) */}
+            <button
+              onClick={() => setReportOpen(true)}
+              aria-label="Reportar este aviso"
+              className="px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition bg-white border-neutral-200 text-neutral-500 hover:text-red-600 hover:border-red-200 hover:bg-red-50"
+            >
+              ⚑ Reportar aviso
             </button>
           </div>
 
@@ -185,13 +203,6 @@ export default function Detalle() {
               dist_m={dist}
               campus={{ lat: 2.443, lng: -76.606 }}
             />
-            <button
-              onClick={() => setReportOpen(true)}
-              className="mt-2 text-xs text-neutral-400 hover:text-red-600 transition-colors"
-              aria-label="Reportar este aviso"
-            >
-              ⚑ Reportar aviso
-            </button>
           </div>
 
           <div className="card p-5">
@@ -225,6 +236,13 @@ export default function Detalle() {
                 </p>
               </div>
             )}
+            {/* UX: segunda vía clara para reportar, junto al contacto (texto oscuro legible) */}
+            <button
+              onClick={() => setReportOpen(true)}
+              className="mt-3 w-full inline-flex items-center justify-center gap-1.5 text-xs font-medium text-neutral-600 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-100 rounded-md py-2 transition-colors"
+            >
+              <span aria-hidden="true">🚩</span> ¿Hay algún problema con este anuncio?
+            </button>
           </div>
         </div>
 

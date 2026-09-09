@@ -137,7 +137,7 @@ export default function Buscar() {
         <Filtros filtros={filtros} setFiltros={setFiltros} />
 
         <p className="text-xs text-neutral-400 mt-4" aria-live="polite">
-          {loading ? 'Cargando...' : `${total} publicaciones ACTIVAS · página ${page}/${pages} · distancia geodésica (Haversine, no tiempo a pie)`}
+          {loading ? 'Cargando...' : `${total} publicaciones · página ${page}/${pages}`}
         </p>
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 rounded-md p-3 text-sm mt-3" role="alert">

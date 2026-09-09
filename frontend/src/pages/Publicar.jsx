@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import UploadFotos from '../components/UploadFotos'
+import { emitAuthChange } from '../contexts/AuthContext'
 
 const SERVICIOS = [
   { id: 1, nombre: 'WiFi Fibra' },
@@ -58,6 +59,7 @@ export default function Publicar() {
       const t = r.data.access_token
       localStorage.setItem('alojau_token', t)
       setToken(t)
+      emitAuthChange()
     } catch (err) {
       setLoginError(err.response?.data?.detail || 'Credenciales inválidas (usa arrendador@alojau.com / AlojaU123)')
     } finally { setLoginLoading(false) }
@@ -66,6 +68,7 @@ export default function Publicar() {
   const handleLogout = () => {
     localStorage.removeItem('alojau_token')
     setToken('')
+    emitAuthChange()
   }
 
   const validate = () => {
@@ -199,7 +202,7 @@ export default function Publicar() {
             <div className="mt-3 text-xs">
               <button
                 onClick={() => {
-                  const t = 'mock-token-arrendador'; localStorage.setItem('alojau_token', t); setToken(t)
+                  const t = 'mock-token-arrendador'; localStorage.setItem('alojau_token', t); setToken(t); emitAuthChange()
                 }}
                 className="text-navy-600 hover:text-navy-700 hover:underline"
               >

@@ -19,10 +19,10 @@ describe('formatters', ()=>{
     expect(formatDistancia(1500)).toBe('1.5 km')
     expect(formatDistancia(1000)).toBe('1.0 km')
   })
-  it('getColorIndice escala', ()=>{
+  it('getColorIndice escala (verde/naranja/rojo, sin amarillo corporativo)', ()=>{
     expect(getColorIndice(85)).toBe('emerald')
-    expect(getColorIndice(60)).toBe('gold')
-    expect(getColorIndice(30)).toBe('orange')
+    expect(getColorIndice(60)).toBe('orange')
+    expect(getColorIndice(30)).toBe('red')
   })
   it('getLabelIndice', ()=>{
     expect(getLabelIndice(85)).toBe('Alto')

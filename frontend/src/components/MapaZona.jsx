@@ -1,7 +1,7 @@
 import { MapContainer, TileLayer, Circle, Marker, Popup } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import L from 'leaflet'
-import { formatTiempoCaminando } from '../utils/formatters'
+import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
 // Fix icon
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -37,7 +37,7 @@ export default function MapaZona({ zona = 'No informado', campus = { lat: 2.443,
               <span className="text-xs font-medium">Campus — Zona: {zona}</span>
               <br />
               {hasDist ? (
-                <span className="text-xs text-neutral-500">~{dist_m}m geodesica{tiempo ? ` • ${tiempo}` : ''}</span>
+                <span className="text-xs text-neutral-500">{formatDistancia(dist_m)}{tiempo ? ` • ${tiempo} del campus` : ''}</span>
               ) : (
                 <span className="text-xs text-neutral-500">Distancia no informada</span>
               )}
@@ -45,9 +45,10 @@ export default function MapaZona({ zona = 'No informado', campus = { lat: 2.443,
           </Marker>
         </MapContainer>
       </div>
+      {/* UX: texto limpio para el estudiante (sin jerga "Haversine/geodésica") */}
       <p className="text-xs text-neutral-400 mt-2">
         {hasDist ? (
-          <>Zona referencial: {zona} · {dist_m}m del campus{tiempo ? ` · ${tiempo}` : ''} (Haversine, no tiempo a pie)</>
+          <>Zona referencial: {zona} · {tiempo ? `${tiempo} del campus` : `${formatDistancia(dist_m)} del campus`}</>
         ) : (
           <>Ubicación exacta no informada · mapa referencial del campus (no usar como distancia real)</>
         )}

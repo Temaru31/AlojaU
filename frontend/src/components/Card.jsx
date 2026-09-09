@@ -11,16 +11,17 @@ export default function Card({ pub }) {
   const indice = pub.indice_confianza ?? 0
   const level = indice >= 80 ? 'high' : indice >= 50 ? 'mid' : 'low'
 
+  // UX: semántica visual Alto=verde, Medio=naranja (no amarillo: es el corporativo), Bajo=rojo.
   const badgeStyles = {
     high: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
-    mid: 'bg-gold-50 text-gold-700 border border-gold-200',
-    low: 'bg-orange-50 text-orange-700 border border-orange-200',
+    mid: 'bg-orange-50 text-orange-700 border border-orange-200',
+    low: 'bg-red-50 text-red-700 border border-red-200',
   }
 
   const dotStyles = {
     high: 'bg-emerald-500',
-    mid: 'bg-gold-500',
-    low: 'bg-orange-500',
+    mid: 'bg-orange-500',
+    low: 'bg-red-500',
   }
 
   const canon = pub.canon_mensual ?? pub.canon
@@ -111,10 +112,9 @@ export default function Card({ pub }) {
           </span>
         </div>
 
+        {/* UX: sin etiqueta de estado interno (ACTIVO/PENDIENTE es de BD, no del estudiante) */}
         <div className="flex items-center gap-2 mt-3 pt-3 border-t border-neutral-100">
           <span className="text-xs text-neutral-400">{numFotos} fotos</span>
-          <span className="text-neutral-300">·</span>
-          <span className="text-xs text-emerald-600 font-medium">{pub.estado || 'ACTIVO'}</span>
         </div>
       </div>
     </div>
