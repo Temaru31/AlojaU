@@ -45,7 +45,7 @@ def _is_owner_or_admin(user: dict | None, owner_id: int | None) -> bool:
 # Datos coherentes con main.py legacy + HU-007 desglose + distancia Haversine
 MOCK_CAMPUS = {
     1: {"id": 1, "institucion": "Universidad del Cauca", "nombre_sede": "Campus Tulcán", "lat": 2.443, "lng": -76.606},
-    2: {"id": 2, "institucion": "Unicomfacauca", "nombre_sede": "Claustro", "lat": 2.441, "lng": -76.602},
+    2: {"id": 2, "institucion": "Unicomfacauca", "nombre_sede": "Claustro", "lat": 2.441, "lng": -76.606},
 }
 # Cada mock simula fila Publicacion + relaciones
 MOCK_PUBS = [
@@ -91,7 +91,7 @@ def _to_out(pub: dict, campus_id: Optional[int] = None) -> dict:
     """Convierte dict mock/DB a PublicacionOut payload (incluye Haversine + Trust)"""
     # Haversine si campus_id
     dist = None
-    if campus_id and campus_id in MOCK_CAMPUS and pub.get("latitud") and pub.get("longitud"):
+    if campus_id and campus_id in MOCK_CAMPUS and pub.get("latitud") is not None and pub.get("longitud") is not None:
         c = MOCK_CAMPUS[campus_id]
         dist = haversine_m(pub["latitud"], pub["longitud"], c["lat"], c["lng"])
 
@@ -134,7 +134,7 @@ def _to_out(pub: dict, campus_id: Optional[int] = None) -> dict:
         "fotos": fotos,
         "num_fotos": len(fotos),
         "distancia_geodesica_m": dist,
-        "campus_distancias": [{"campus_id": cid, "dist_m": haversine_m(pub["latitud"], pub["longitud"], MOCK_CAMPUS[cid]["lat"], MOCK_CAMPUS[cid]["lng"])} for cid in pub.get("campus_ids", []) if cid in MOCK_CAMPUS and pub.get("latitud")] if pub.get("latitud") else None,
+        "campus_distancias": [{"campus_id": cid, "dist_m": haversine_m(pub["latitud"], pub["longitud"], MOCK_CAMPUS[cid]["lat"], MOCK_CAMPUS[cid]["lng"])} for cid in pub.get("campus_ids", []) if cid in MOCK_CAMPUS and pub.get("latitud") is not None] if pub.get("latitud") is not None else None,
         "indice_confianza": trust["indice"],
         "desglose": trust["desglose"],
         "nivel_confianza": trust["nivel"],
@@ -298,7 +298,7 @@ async def list_publicaciones(
 
         if campus_id:
             filtradas = [p for p in filtradas if campus_id in p.get("campus_ids", [])]
-            filtradas.sort(key=lambda p: haversine_m(p["latitud"], p["longitud"], MOCK_CAMPUS[campus_id]["lat"], MOCK_CAMPUS[campus_id]["lng"]) if p.get("latitud") else 999999)
+            filtradas.sort(key=lambda p: haversine_m(p["latitud"], p["longitud"], MOCK_CAMPUS[campus_id]["lat"], MOCK_CAMPUS[campus_id]["lng"]) if p.get("latitud") is not None and p.get("longitud") is not None else 999999)
 
         if precio_min is not None:
             filtradas = [p for p in filtradas if p["canon_mensual"] >= precio_min]
