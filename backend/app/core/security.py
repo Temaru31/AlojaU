@@ -1,4 +1,5 @@
-"""JWT HS256 + bcrypt - Tabla16:27"""
+"""JWT HS256 + bcrypt con fail-closed en prod (mock solo dev).
+Uso: Depends(get_current_user/require_arrendador/require_admin) en routers. Ej: headers {"Authorization": "Bearer <jwt>"} -> {"id":1,"rol":"ARRENDADOR"}."""
 from datetime import datetime, timedelta
 from jose import jwt
 from passlib.context import CryptContext
@@ -30,15 +31,31 @@ def get_current_user(authorization: str = Header(None)):
     if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
         raise HTTPException(status_code=401, detail="Formato Bearer token inválido")
     token = parts[1].strip()
-    # Mock solo si está habilitado (DoD-5)
+    # B0-2 fail-closed: mock solo si mock_enabled (flag True + ENV!=prod).
     from .config import settings
-    import os
-    if settings.USE_MOCK_FALLBACK and os.getenv("ENV", "dev") != "prod" and token in MOCK_TOKENS:
+    mock_ok = bool(getattr(settings, "mock_enabled", False))
+    if mock_ok and token in MOCK_TOKENS:
         return MOCK_TOKENS[token]
     return decode_token(token)
+
+def get_optional_user(authorization: str | None = Header(None)):
+    # B0-6: auth opcional para detalle PENDIENTE privado; None si ausente/inválido.
+    if not authorization or not authorization.strip():
+        return None
+    try:
+        return get_current_user(authorization)
+    except Exception:
+        return None
 
 def require_arrendador(authorization: str = Header(None)):
     u = get_current_user(authorization)
     if u.get("rol") != "ARRENDADOR":
         raise HTTPException(status_code=403, detail="Solo ARRENDADOR")
+    return u
+
+def require_admin(authorization: str = Header(None)):
+    # B0-3: guard ADMIN para moderación. 401 sin token, 403 si no ADMIN.
+    u = get_current_user(authorization)
+    if u.get("rol") != "ADMIN":
+        raise HTTPException(status_code=403, detail="Solo ADMIN")
     return u

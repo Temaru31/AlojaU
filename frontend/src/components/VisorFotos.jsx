@@ -1,5 +1,10 @@
 // VisorFotos - lightbox accesible, responsive, iterativo
 import { useState, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
+
+// BUG-08/09: fallback local (sin dependencia de red) + onError con onerror=null (anti-bucle)
+const FALLBACK_LOCAL = '/fallback-foto.svg'
+const handleImgError = (e) => { e.currentTarget.onerror = null; e.currentTarget.src = FALLBACK_LOCAL }
 
 export default function VisorFotos({ fotos, initialIndex = 0, onClose }) {
   const total = fotos.length
@@ -27,10 +32,12 @@ export default function VisorFotos({ fotos, initialIndex = 0, onClose }) {
   if(total===0) return null
   const url = fotos[index]
 
-  return (
-    <div className="fixed inset-0 z-50 bg-black/90 flex flex-col" role="dialog" aria-modal="true" aria-label="Visor de fotos">
+  // BUG-01: portal a document.body + z-[2000] para quedar por encima de
+  // los panes Leaflet (z 400-1000) y del nav sticky (z-50)
+  return createPortal(
+    <div className="fixed inset-0 z-[2000] bg-black/90 flex flex-col" role="dialog" aria-modal="true" aria-label="Visor de fotos">
       {/* Header */}
-      <div className="flex items-center justify-between px-3 sm:px-4 py-3 text-white">
+      <div className="relative z-10 flex items-center justify-between px-3 sm:px-4 py-3 text-white">
         <span className="text-sm font-medium">{index+1} / {total} • {total} fotos • Vigencia 30d</span>
         <div className="flex items-center gap-2">
           <a href={url} target="_blank" rel="noopener" className="text-xs bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-full border border-white/20">Abrir original</a>
@@ -40,18 +47,18 @@ export default function VisorFotos({ fotos, initialIndex = 0, onClose }) {
       </div>
 
       {/* Imagen */}
-      <div className="flex-1 relative flex items-center justify-center p-2 sm:p-4 min-h-0">
+      <div className="relative z-10 flex-1 flex items-center justify-center p-2 sm:p-4 min-h-0">
         <button onClick={goPrev} aria-label="Anterior" className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-black/50 hover:bg-black/70 text-white flex items-center justify-center border border-white/20">‹</button>
-        <img src={url} alt={`Foto ${index+1} de ${total}`} className="max-w-full max-h-[70vh] sm:max-h-[75vh] object-contain rounded-lg shadow-2xl" />
+        <img src={url} alt={`Foto ${index+1} de ${total}`} className="max-w-full max-h-[70vh] sm:max-h-[75vh] object-contain rounded-lg shadow-2xl" onError={handleImgError} />
         <button onClick={goNext} aria-label="Siguiente" className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-black/50 hover:bg-black/70 text-white flex items-center justify-center border border-white/20">›</button>
       </div>
 
       {/* Thumbs */}
-      <div className="px-2 sm:px-4 pb-3 sm:pb-4">
+      <div className="relative z-10 px-2 sm:px-4 pb-3 sm:pb-4">
         <div className="flex gap-2 overflow-x-auto justify-center py-2 scrollbar-thin">
           {fotos.map((f,i)=> (
             <button key={i} onClick={()=> setIndex(i)} className={`shrink-0 w-14 h-14 sm:w-16 sm:h-16 rounded-lg overflow-hidden border-2 ${i===index ? 'border-white' : 'border-transparent opacity-60 hover:opacity-100'}`}>
-              <img src={f} alt={`Thumb ${i+1}`} className="w-full h-full object-cover" />
+              <img src={f} alt={`Thumb ${i+1}`} className="w-full h-full object-cover" onError={handleImgError} />
             </button>
           ))}
         </div>
@@ -59,7 +66,8 @@ export default function VisorFotos({ fotos, initialIndex = 0, onClose }) {
       </div>
 
       {/* Click fuera cierra */}
-      <button aria-label="Cerrar al hacer clic fuera" onClick={onClose} className="absolute inset-0 -z-10" tabIndex={-1} />
-    </div>
+      <button aria-label="Cerrar al hacer clic fuera" onClick={onClose} className="absolute inset-0 z-0" tabIndex={-1} />
+    </div>,
+    document.body
   )
 }

@@ -147,15 +147,21 @@ def test_hu003_c3_pendiente_no_en_catalogo_pero_detalle():
     r2 = client.get("/api/publicaciones", params={"campus_id": 1})
     titulos = [p["titulo"] for p in _items(r2.json())]
     assert titulo_unico not in titulos, "PENDIENTE no debe aparecer en catálogo (HU-003 C3 / HU-005 C3)"
-    # Pero detalle sí debe ser accesible y mostrar estado PENDIENTE
+    # B0-6: detalle PENDIENTE privado -> anónimo 404 (no filtra existencia),
+    # owner 200 con estado PENDIENTE, admin 200. Antes esperaba 200 anónimo (hueco).
     r3 = client.get(f"/api/publicaciones/{new_id}")
-    assert r3.status_code == 200
-    assert r3.json()["estado"].startswith("PENDIENTE")
+    assert r3.status_code == 404
+    r_owner = client.get(f"/api/publicaciones/{new_id}", headers=auth_header())
+    assert r_owner.status_code == 200
+    assert r_owner.json()["estado"].startswith("PENDIENTE")
+    r_admin = client.get(f"/api/publicaciones/{new_id}", headers=auth_header("mock-token-admin"))
+    assert r_admin.status_code == 200
+    assert r_admin.json()["estado"].startswith("PENDIENTE")
     # WhatsApp debe ocultarse para PENDIENTE aunque tenga teléfono
     # (nuestro backend no expone whatsapp para no verificado, pero para PENDIENTE también ocultamos en frontend)
-    # Verifica que detalle tiene indice y desglose
-    assert "indice_confianza" in r3.json()
-    assert "desglose" in r3.json()
+    # Verifica que detalle tiene indice y desglose (en respuesta owner)
+    assert "indice_confianza" in r_owner.json()
+    assert "desglose" in r_owner.json()
 
 # --- HU-005 ---
 def test_hu005_c1_solo_arrendador():

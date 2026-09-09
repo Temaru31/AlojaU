@@ -10,13 +10,14 @@ NFR P95<500ms: query indexada (estado, zona, canon), sin N+1, Haversine en memor
 """
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
-from fastapi import APIRouter, Depends, Query, Path, HTTPException, status
+from fastapi import APIRouter, Depends, Query, Path, HTTPException, status, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from sqlalchemy.orm import selectinload
 
-from app.db.session import get_session, AsyncSession
-from app.core.security import get_current_user, require_arrendador
+from app.db.session import get_session
+from app.core.config import settings
+from app.core.security import get_current_user, get_optional_user, require_arrendador
 from app.schemas.publicacion import PublicacionCreate, PublicacionOut, DesgloseConfianza
 from app.services.haversine import haversine_m
 from app.services.trust import calcular_indice, dias_desde, DISCLAIMER
@@ -26,11 +27,25 @@ logger = logging.getLogger("alojau.publicaciones")
 
 router = APIRouter(prefix="/api/publicaciones", tags=["publicaciones"])
 
+def _mock_enabled() -> bool:
+    # B0-2 fail-closed: mock solo en dev/test con flag True.
+    return bool(getattr(settings, "mock_enabled", False))
+
+def _is_owner_or_admin(user: dict | None, owner_id: int | None) -> bool:
+    if not user:
+        return False
+    if user.get("rol") == "ADMIN":
+        return True
+    try:
+        return int(user.get("id")) == int(owner_id) if owner_id is not None else False
+    except Exception:
+        return False
+
 # --- MOCK Sprint1 (si no hay PG) ---
 # Datos coherentes con main.py legacy + HU-007 desglose + distancia Haversine
 MOCK_CAMPUS = {
     1: {"id": 1, "institucion": "Universidad del Cauca", "nombre_sede": "Campus Tulcán", "lat": 2.443, "lng": -76.606},
-    2: {"id": 2, "institucion": "Unicomfacauca", "nombre_sede": "Claustro", "lat": 2.441, "lng": -76.602},
+    2: {"id": 2, "institucion": "Unicomfacauca", "nombre_sede": "Claustro", "lat": 2.441, "lng": -76.606},
 }
 # Cada mock simula fila Publicacion + relaciones
 MOCK_PUBS = [
@@ -76,7 +91,7 @@ def _to_out(pub: dict, campus_id: Optional[int] = None) -> dict:
     """Convierte dict mock/DB a PublicacionOut payload (incluye Haversine + Trust)"""
     # Haversine si campus_id
     dist = None
-    if campus_id and campus_id in MOCK_CAMPUS and pub.get("latitud") and pub.get("longitud"):
+    if campus_id and campus_id in MOCK_CAMPUS and pub.get("latitud") is not None and pub.get("longitud") is not None:
         c = MOCK_CAMPUS[campus_id]
         dist = haversine_m(pub["latitud"], pub["longitud"], c["lat"], c["lng"])
 
@@ -119,7 +134,7 @@ def _to_out(pub: dict, campus_id: Optional[int] = None) -> dict:
         "fotos": fotos,
         "num_fotos": len(fotos),
         "distancia_geodesica_m": dist,
-        "campus_distancias": [{"campus_id": cid, "dist_m": haversine_m(pub["latitud"], pub["longitud"], MOCK_CAMPUS[cid]["lat"], MOCK_CAMPUS[cid]["lng"])} for cid in pub.get("campus_ids", []) if cid in MOCK_CAMPUS and pub.get("latitud")] if pub.get("latitud") else None,
+        "campus_distancias": [{"campus_id": cid, "dist_m": haversine_m(pub["latitud"], pub["longitud"], MOCK_CAMPUS[cid]["lat"], MOCK_CAMPUS[cid]["lng"])} for cid in pub.get("campus_ids", []) if cid in MOCK_CAMPUS and pub.get("latitud") is not None] if pub.get("latitud") is not None else None,
         "indice_confianza": trust["indice"],
         "desglose": trust["desglose"],
         "nivel_confianza": trust["nivel"],
@@ -263,19 +278,27 @@ async def list_publicaciones(
         except ValueError:
             raise HTTPException(status_code=400, detail="servicios debe ser lista de ints coma separada")
 
-    # Intento DB real con fallback mock
+    # Intento DB real con fallback mock solo en dev (B0-2 fail-closed 503 en prod)
     try:
         paginated = await _query_db_lista(db, campus_id, precio_min, precio_max, tipo, servicios_ids, page, size)
         return paginated
+    except HTTPException:
+        raise
     except Exception as e:
         # Log real para diagnóstico en Render (no ocultar excepción)
         logger.error(f"[DB fallback] _query_db_lista falló: {e!r}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
         print(f"[Sprint1 mock fallback] DB no disponible: {e!r}")
         filtradas = [p for p in MOCK_PUBS if p["estado"] == "ACTIVO"]
 
         if campus_id:
             filtradas = [p for p in filtradas if campus_id in p.get("campus_ids", [])]
-            filtradas.sort(key=lambda p: haversine_m(p["latitud"], p["longitud"], MOCK_CAMPUS[campus_id]["lat"], MOCK_CAMPUS[campus_id]["lng"]) if p.get("latitud") else 999999)
+            filtradas.sort(key=lambda p: haversine_m(p["latitud"], p["longitud"], MOCK_CAMPUS[campus_id]["lat"], MOCK_CAMPUS[campus_id]["lng"]) if p.get("latitud") is not None and p.get("longitud") is not None else 999999)
 
         if precio_min is not None:
             filtradas = [p for p in filtradas if p["canon_mensual"] >= precio_min]
@@ -293,18 +316,27 @@ async def list_publicaciones(
         return build_paginated(paginated_items, total, page, size_norm)
 
 @router.get("/{pub_id}", summary="HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp")
-async def get_publicacion(pub_id: int = Path(..., ge=1, le=1000000), db: AsyncSession = Depends(get_session)):
+async def get_publicacion(
+    pub_id: int = Path(..., ge=1, le=1000000),
+    db: AsyncSession = Depends(get_session),
+    authorization: Optional[str] = Header(None),
+):
     """
     HU-003: muestra canon, servicios, fotos, zona, condiciones, vigencia
             No expone datos que no deban ser públicos (email propietario, etc)
     HU-007: incluye indice_confianza 0-100 + desglose 40+20+15+15+10 + disclaimer
     HU-008: telefono_whatsapp solo si verificado + whatsapp_url wa.me
+    B0-6: PENDIENTE (y no-ACTIVO) privado -> 404 salvo owner/admin.
     """
+    current_user = get_optional_user(authorization)
     try:
         from app.models import Publicacion, ReportePublicacion, Usuario
         from sqlalchemy import func, select as sel
         p = await db.get(Publicacion, pub_id, options=[selectinload(Publicacion.imagenes), selectinload(Publicacion.servicios)])
         if p:
+            # B0-6: detalle no-ACTIVO privado (404 para no filtrar existencia).
+            if p.estado != "ACTIVO" and not _is_owner_or_admin(current_user, p.usuario_id):
+                raise HTTPException(status_code=404, detail="Publicación no encontrada")
             # Trust real
             r = await db.execute(sel(func.count()).select_from(ReportePublicacion).where(ReportePublicacion.publicacion_id==p.id, ReportePublicacion.estado.in_(["PENDIENTE","CONFIRMADO"])))
             reportes_activos = r.scalar() or 0
@@ -338,13 +370,25 @@ async def get_publicacion(pub_id: int = Path(..., ge=1, le=1000000), db: AsyncSe
                 "indice_confianza": trust["indice"], "indice": trust["indice"], "desglose": trust["desglose"], "nivel": trust["nivel"],
                 "advertencia": trust["advertencia"], "telefono_whatsapp": tel, "whatsapp_url": wa,
             }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[DB fallback] get_publicacion {pub_id} falló: {e!r}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
         print(f"[DB fallback] get_publicacion {pub_id}: {e!r}")
 
-    # Mock fallback
+    # Mock fallback solo dev (B0-2). B0-6: no-ACTIVO privado también en mock.
+    if not _mock_enabled():
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
     pub = next((p for p in MOCK_PUBS if p["id"] == pub_id), None)
     if not pub:
+        raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    if pub.get("estado") != "ACTIVO" and not _is_owner_or_admin(current_user, pub.get("usuario_id")):
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
     return _to_out(pub)
 
@@ -362,9 +406,10 @@ async def crear_publicacion(
 
     Sprint1: si no hay DB, retorna mock PENDIENTE + calcula índice inicial (no persiste) para demo frontend.
     Con DB: persiste publicación + publicacion_campus (con Haversine) + imagenes + calcula índice.
+    B0-4: FK estricta zona/campus/servicios -> 404 con rollback. B0-5: dist NULL si sin coords.
     """
     # Validación extra: si lat/lng no provistas, warning pero no bloquea (Sprint1)
-    # Calcular índice inicial (asumiendo teléfono verificado del user)
+    # Calcular índice inicial (B0-6: default telefono_verificado False si ausente).
     trust = calcular_indice(
         canon_mensual=float(payload.canon_mensual),
         deposito_requerido=float(payload.deposito_requerido),
@@ -372,7 +417,7 @@ async def crear_publicacion(
         reglas_convivencia=payload.reglas_convivencia,
         direccion_referencial=payload.direccion_referencial,
         servicios_ids=payload.servicios_ids,
-        telefono_verificado=user.get("telefono_verificado", True),
+        telefono_verificado=bool(user.get("telefono_verificado", False)),
         num_fotos=len(payload.fotos),
         dias_vigencia=0,  # recién creada
         reportes_activos=0,
@@ -380,7 +425,21 @@ async def crear_publicacion(
 
     # Intentar persistir en DB
     try:
-        from app.models import Publicacion, PublicacionCampus, ImagenPublicacion, PublicacionServicio, PublicacionesAudit as PublicacionAudit
+        from app.models import (
+            Publicacion, PublicacionCampus, ImagenPublicacion, PublicacionServicio,
+            PublicacionesAudit as PublicacionAudit, ZonaBarrio, CampusUniversitario,
+            ServicioCatalogo,
+        )
+        # B0-4 FK estricta: 404 si zona/campus/servicio inexistente (antes de flush).
+        zona = await db.get(ZonaBarrio, payload.zona_barrio_id)
+        if not zona:
+            raise HTTPException(status_code=404, detail=f"zona_barrio_id {payload.zona_barrio_id} no existe")
+        for cid in payload.campus_ids:
+            if not await db.get(CampusUniversitario, cid):
+                raise HTTPException(status_code=404, detail=f"campus_id {cid} no existe")
+        for sid in payload.servicios_ids:
+            if not await db.get(ServicioCatalogo, sid):
+                raise HTTPException(status_code=404, detail=f"servicio_id {sid} no existe")
         # Crear publicación
         nueva = Publicacion(
             usuario_id=user["id"] if isinstance(user["id"], int) else 1,
@@ -401,12 +460,13 @@ async def crear_publicacion(
         db.add(nueva)
         await db.flush()  # obtiene id
 
-        # Relaciones N:M campus (con Haversine)
+        # Relaciones N:M campus (Haversine real desde DB; B0-5 dist NULL si sin coords)
         for cid in payload.campus_ids:
-            dist = 0
-            if payload.latitud and payload.longitud and cid in MOCK_CAMPUS:
-                c = MOCK_CAMPUS[cid]
-                dist = haversine_m(payload.latitud, payload.longitud, c["lat"], c["lng"])
+            dist = None
+            if payload.latitud is not None and payload.longitud is not None:
+                campus = await db.get(CampusUniversitario, cid)
+                if campus is not None and campus.latitud is not None and campus.longitud is not None:
+                    dist = haversine_m(float(payload.latitud), float(payload.longitud), float(campus.latitud), float(campus.longitud))
             db.add(PublicacionCampus(publicacion_id=nueva.id, campus_id=cid, distancia_geodesica_m=dist))
 
         for sid in payload.servicios_ids:
@@ -421,8 +481,21 @@ async def crear_publicacion(
         await db.refresh(nueva)
         return {"id": nueva.id, "estado": "PENDIENTE", "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "mensaje": "Publicación en PENDIENTE, pendiente de moderación"}
 
+    except HTTPException:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        raise
     except Exception as e:
-        # Mock fallback Sprint1: no hay PG, simular creación (usa id 10000+ para no colisionar con DB ids 1-6)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[DB crear] falló: {e!r}", exc_info=True)
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+        # Mock fallback Sprint1 solo dev: no hay PG, simular creación (usa id 10000+ para no colisionar con DB ids 1-6)
         mock_id = max(max(p["id"] for p in MOCK_PUBS), 10000) + 1
         nueva_mock = {
             "id": mock_id, "titulo": payload.titulo, "tipo_inmueble": payload.tipo_inmueble,
@@ -439,6 +512,6 @@ async def crear_publicacion(
             "servicios_ids": payload.servicios_ids, "servicios": [],
             "fotos": [str(u) for u in payload.fotos], "latitud": payload.latitud, "longitud": payload.longitud,
             "campus_ids": payload.campus_ids, "usuario_id": user["id"] if isinstance(user["id"], int) else 1,
-            "telefono_verificado": user.get("telefono_verificado", True), "reportes_activos": 0,
+            "telefono_verificado": bool(user.get("telefono_verificado", False)), "reportes_activos": 0,
         })
         return {"id": mock_id, "estado": "PENDIENTE (MOCK - sin PG)", "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": DISCLAIMER, "detalle_mock": f"DB no disponible ({e}), se usó mock en memoria"}

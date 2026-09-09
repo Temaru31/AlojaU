@@ -1,9 +1,10 @@
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Buscar from './pages/Buscar'
 import Detalle from './pages/Detalle'
 import Publicar from './pages/Publicar'
 import Comparar from './pages/Comparar'
+import ColdStartBanner from './components/ColdStartBanner'
 import { FavoritosProvider, useFavoritos } from './contexts/FavoritosContext'
 import { CompararProvider, useComparar } from './contexts/CompararContext'
 
@@ -13,6 +14,21 @@ function Nav() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const location = useLocation()
   const isActive = (path) => location.pathname === path
+
+  const closeMenu = () => setMobileOpen(false)
+
+  // BUG-12: cierre del menú móvil con Esc
+  useEffect(() => {
+    if (!mobileOpen) return
+    const onKey = (e) => { if (e.key === 'Escape') closeMenu() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [mobileOpen])
+
+  const mobileLinkCls = (active) =>
+    `flex items-center justify-between px-3 py-2.5 text-sm font-medium rounded-md transition-colors duration-200 ${
+      active ? 'text-navy-800 bg-navy-50' : 'text-neutral-600 hover:bg-neutral-100'
+    }`
 
   return (
     <nav className="bg-white border-b border-neutral-150 sticky top-0 z-50">
@@ -54,7 +70,10 @@ function Nav() {
           </div>
           <button
             onClick={() => setMobileOpen(!mobileOpen)}
-            className="md:hidden p-2 text-neutral-500 hover:text-navy-700"
+            aria-label={mobileOpen ? 'Cerrar menú' : 'Abrir menú'}
+            aria-expanded={mobileOpen}
+            aria-controls="mobile-menu"
+            className="md:hidden p-2 text-neutral-500 hover:text-navy-700 rounded-md transition-colors duration-200"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               {mobileOpen
@@ -65,36 +84,54 @@ function Nav() {
           </button>
         </div>
       </div>
+      {/* BUG-12: dropdown flotante (no empuja contenido, no obliga scroll) + backdrop */}
       {mobileOpen && (
-        <div className="md:hidden border-t border-neutral-150 bg-white">
-          <div className="container-main py-3 space-y-1">
+        <>
+          <div
+            aria-hidden="true"
+            onClick={closeMenu}
+            className="md:hidden fixed inset-0 bg-navy-900/30 z-40 transition-opacity duration-200"
+          />
+          <div
+            id="mobile-menu"
+            className="md:hidden absolute inset-x-3 top-[68px] rounded-xl border border-neutral-150 shadow-xl bg-white p-2 z-50 transition-all duration-200"
+          >
             <Link
               to="/"
-              onClick={() => setMobileOpen(false)}
-              className={`block px-3 py-2.5 text-sm font-medium rounded-md ${
-                isActive('/') ? 'text-navy-800 bg-navy-50' : 'text-neutral-600 hover:bg-neutral-100'
-              }`}
+              onClick={closeMenu}
+              aria-current={isActive('/') ? 'page' : undefined}
+              className={mobileLinkCls(isActive('/'))}
             >
               Buscar vivienda
             </Link>
             <Link
               to="/comparar"
-              onClick={() => setMobileOpen(false)}
-              className={`block px-3 py-2.5 text-sm font-medium rounded-md ${
-                isActive('/comparar') ? 'text-navy-800 bg-navy-50' : 'text-neutral-600 hover:bg-neutral-100'
-              }`}
+              onClick={closeMenu}
+              aria-current={isActive('/comparar') ? 'page' : undefined}
+              className={mobileLinkCls(isActive('/comparar'))}
             >
-              Comparar
+              <span>Comparar</span>
+              <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${compCount} de ${compMax} para comparar`}>{compCount}/{compMax}</span>
+            </Link>
+            <Link
+              to="/"
+              onClick={closeMenu}
+              aria-label={`Favoritos, ${favCount} guardados`}
+              className={mobileLinkCls(false)}
+            >
+              <span>Favoritos</span>
+              <span className="bg-red-50 text-red-600 text-[11px] px-1.5 py-0.5 rounded-full">♡ {favCount}</span>
             </Link>
             <Link
               to="/publicar"
-              onClick={() => setMobileOpen(false)}
-              className="block px-3 py-2.5 text-sm font-semibold text-navy-900 bg-gold-400 rounded-md text-center mt-2"
+              onClick={closeMenu}
+              aria-current={isActive('/publicar') ? 'page' : undefined}
+              className="block w-full px-3 py-2.5 text-sm font-semibold text-navy-900 bg-gold-400 rounded-md text-center mt-1 transition-colors duration-200 hover:bg-gold-500"
             >
               Publicar vivienda
             </Link>
           </div>
-        </div>
+        </>
       )}
     </nav>
   )
@@ -148,6 +185,7 @@ function App() {
         <CompararProvider>
           <div className="min-h-screen flex flex-col bg-neutral-50">
             <Nav />
+            <ColdStartBanner />
             <main className="flex-1">
               <Routes>
                 <Route path="/" element={<Buscar />} />
