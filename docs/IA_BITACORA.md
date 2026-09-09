@@ -12,3 +12,4 @@
 | 2026-09-09 | P1 T1 F3 Cloudinary (storage Strategy Local/Cloudinary + fix leaks UploadFotos + tests) | Muse Spark | pytest 92 passed (7 F3), vitest 66 passed (6 F3), build OK |
 | 2026-09-09 | Merge T1-reportes → develop (ff, 0 conflictos) + push develop OK + revisión pre-main sin bugs bloqueantes | Muse Spark | develop: pytest 92, vitest 66, build OK; main queda para PR con review |
 | 2026-09-09 | UX integral (scroll Detalle, reportar x2, colores confianza, /mias + AuthContext + navbar avatar, limpieza textos) rama feature/UX-mejoras | Muse Spark | pytest 96 passed (4 mias), vitest 76 passed (10 UX), build OK |
+| 2026-09-09 | Fix 5 errores + auditoría UX subagente (sin screenshots, código+curl) + merge UX a main + check Vercel | Muse Spark | pytest 96, vitest 79, build OK, prod verificada |
