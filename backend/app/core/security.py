@@ -1,6 +1,6 @@
 """JWT HS256 + bcrypt con fail-closed en prod (mock solo dev).
 Uso: Depends(get_current_user/require_arrendador/require_admin) en routers. Ej: headers {"Authorization": "Bearer <jwt>"} -> {"id":1,"rol":"ARRENDADOR"}."""
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from jose import jwt
 from passlib.context import CryptContext
 from fastapi import HTTPException, Header
@@ -10,7 +10,7 @@ pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 def hash_password(p): return pwd_ctx.hash(p)
 def verify_password(p, h): return pwd_ctx.verify(p, h)
 def create_token(data: dict):
-    exp = datetime.utcnow() + timedelta(hours=settings.ACCESS_TOKEN_EXPIRE_HOURS)
+    exp = datetime.now(timezone.utc) + timedelta(hours=settings.ACCESS_TOKEN_EXPIRE_HOURS)
     return jwt.encode({**data, "exp": exp}, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 def decode_token(token: str):
     try:
@@ -39,13 +39,15 @@ def get_current_user(authorization: str = Header(None)):
     return decode_token(token)
 
 def get_optional_user(authorization: str | None = Header(None)):
-    # B0-6: auth opcional para detalle PENDIENTE privado; None si ausente/inválido.
+    # Auth opcional: ausente/inválido (401) -> None; otro error se propaga.
     if not authorization or not authorization.strip():
         return None
     try:
         return get_current_user(authorization)
-    except Exception:
-        return None
+    except HTTPException as e:
+        if e.status_code == 401:
+            return None
+        raise
 
 def require_arrendador(authorization: str = Header(None)):
     u = get_current_user(authorization)
