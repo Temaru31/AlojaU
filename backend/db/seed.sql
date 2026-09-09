@@ -22,8 +22,8 @@ ON CONFLICT DO NOTHING;
 
 -- 2 usuarios (password: hash bcrypt para AlojaU123)
 INSERT INTO usuarios (id, nombre_completo, email, password_hash, telefono_whatsapp, rol, telefono_verificado) VALUES
-(1, 'Arrendador Demo', 'arrendador@alojau.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewKyNiLXCWuP4Ypi', '573001234567', 'ARRENDADOR', TRUE),
-(2, 'Admin AlojaU', 'admin@alojau.com', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewKyNiLXCWuP4Ypi', '573009999999', 'ADMIN', TRUE)
+(1, 'Arrendador Demo', 'arrendador@alojau.com', '$2b$12$gZHimVL/y.aw6u8ph/sG1u1ezGk1rwaxHPeO813dn8bWYnSgM5B7W', '573001234567', 'ARRENDADOR', TRUE),
+(2, 'Admin AlojaU', 'admin@alojau.com', '$2b$12$Bo4Jf9AAmUjfAjty1P3mdOWxERkBpgp43NwPxK71qSvzUJHsPpaNW', '573009999999', 'ADMIN', TRUE)
 ON CONFLICT (email) DO NOTHING;
 
 -- 6 publicaciones ACTIVO variadas (lat/lng cerca campus)
