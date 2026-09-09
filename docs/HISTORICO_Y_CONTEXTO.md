@@ -208,5 +208,8 @@ curl -s "http://localhost:8000/api/publicaciones?campus_id=1; DROP" | head
 | 2026-08-31 08:50 | Favoritos/Comparar localStorage (validados, max 50/3, sin PII) + Card/Detalle/Comparar UI | MCP Firefox: Buscar, Detalle Leaflet, Comparar 2/3 tabla, nav badges |
 | 2026-09-02 01:00 | Deploy $0 (Vercel+Render+Supabase) + fix bcrypt 4.0.1 + pgbouncer/ssl | Prod 6 reales, `curl` health 200, CORS ok |
 | 2026-09-02 01:30 | **Upload real 3-10** (`uploads.py` + `UploadFotos` drag-drop) + **Galería +10/+3** + **Visor** (ESC/←→, counter, thumbs) | `curl` upload 3→200, 2→422, txt→400, >5MB→413; `pytest 47` `vitest 38` `build 492kB`; MCP: `Detalle/1` 4 desktop/mobile, `Detalle/51` 10 `+6`/`+9` + visor `2/10`, `Publicar` drop zone |
+| 2026-09-09 | P1 T1 API reportes (POST anon 201 + 429 + GET/PATCH admin) + seed bcrypt fix | `pytest 85 passed` (11 T1), `vitest 55` |
+| 2026-09-09 | P1 T1 F1/F2 frontend (ReportarModal + botón Detalle + AdminReportes + ruta + 5 tests) | `vitest 60 passed`, `build` OK, commit `73dc8f1` |
+| 2026-09-09 | P1 T1 F3 Cloudinary (Strategy Local/Cloudinary + `storage.py` + refactor `uploads.py` + fix leaks UploadFotos + 7 BE + 6 FE tests) | `pytest 92 passed`, `vitest 66 passed`, `build` OK |
 
-*Próximo: tests upload + persistencia Cloudinary/Supabase Storage + refactor trust/distancia. Repo en `feed76b` pusheado a `origin/main`, prod `https://aloja-u.vercel.app` + `https://alojau-api.onrender.com` con 6 reales.*
+*Próximo: F4 push `feature/T1-reportes` + QA refactor trust/distancia. Prod `https://aloja-u.vercel.app` + `https://alojau-api.onrender.com` con 6 reales.*

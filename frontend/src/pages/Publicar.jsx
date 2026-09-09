@@ -409,13 +409,14 @@ export default function Publicar() {
 
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Fotos * <span className="text-neutral-400 font-normal">(sube archivos o pega URLs)</span></label>
-            <UploadFotos token={token} initialUrls={form.fotos} onUrls={(urls) => setForm(f => ({ ...f, fotos: urls.length ? urls : f.fotos }))} />
+            {/* BUG-F3-03 (fix): respetar vaciado. Antes `urls.length ? urls : f.fotos` ignoraba Limpiar. */}
+            <UploadFotos token={token} initialUrls={form.fotos} onUrls={(urls) => setForm(f => ({ ...f, fotos: urls }))} />
             {errors.fotos && <p className="text-xs text-red-600 mt-1">{errors.fotos}</p>}
             <details className="mt-2">
               <summary className="text-xs text-neutral-400 cursor-pointer hover:text-navy-600">¿Prefieres pegar URLs? (opcional)</summary>
               <div className="mt-2 space-y-1">
-                {form.fotos.slice(0, 3).map((url, i) => (
-                  <input key={i} type="url" value={url} onChange={e => {
+                {[0, 1, 2].map((i) => (
+                  <input key={i} type="url" value={form.fotos[i] || ''} onChange={e => {
                     const a = [...form.fotos]; a[i] = e.target.value; setForm({ ...form, fotos: a })
                   }} placeholder={`https://.../foto${i + 1}.jpg`} className="input-field text-xs" />
                 ))}

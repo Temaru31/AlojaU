@@ -1,7 +1,10 @@
 """
-routers/uploads.py - HU-005 Subida real fotos 3-10
+routers/uploads.py - HU-005 Subida real fotos 3-10 + F3 Cloudinary
 POST /api/publicaciones/upload -> {"urls": ["https://.../uploads/uuid.jpg", ...]}
 Seguridad: solo ARRENDADOR, valida 3-10 archivos, 5MB c/u, image/*, nombre seguro uuid
+Persistencia (Strategy via services/storage.py):
+- Dev/test sin CLOUDINARY_*: disco local `backend/uploads/` (efímero en Render).
+- Prod con CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET: Cloudinary `secure_url` persistente.
 """
 import os
 import uuid
@@ -10,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
 from pydantic import BaseModel
 
 from app.core.security import require_arrendador
+from app.services.storage import get_storage_backend
 
 router = APIRouter(prefix="/api/publicaciones/upload", tags=["uploads"])
 
@@ -72,42 +76,38 @@ async def upload_fotos(
     if len(files) > MAX_FILES:
         raise HTTPException(status_code=422, detail=f"Máximo {MAX_FILES} fotos, recibidas {len(files)}")
 
+    # F3: Factory elige Local (dev) o Cloudinary (prod con CLOUDINARY_*).
+    base = str(request.base_url).rstrip("/")
+    backend = get_storage_backend(base_url=base)
+
     urls = []
     for file in files:
         ext = _validate_mime_ext(file)
+        mime = (file.content_type or "").lower()
 
-        # nombre seguro uuid
-        filename = f"{uuid.uuid4().hex}{ext}"
-        dest = os.path.join(UPLOAD_DIR, filename)
-        # evita path traversal (ya usamos uuid, pero verificar)
-        if not os.path.abspath(dest).startswith(UPLOAD_DIR):
-            raise HTTPException(status_code=400, detail="Nombre de archivo inválido")
-
-        # Escritura por chunks con tope 5MB (sin cargar todo en RAM) + magic check.
+        # Lectura por chunks con tope 5MB (sin cargar de más en RAM) + magic check.
+        # Se acumula en memoria (máx 5MB) para delegar al backend (disco o Cloudinary).
         size = 0
+        chunks: list[bytes] = []
         first = True
-        with open(dest, "wb") as f:
-            while True:
-                chunk = await file.read(CHUNK_SIZE)
-                if not chunk:
-                    break
-                if first:
-                    _check_magic((file.content_type or "").lower(), chunk)
-                    first = False
-                size += len(chunk)
-                if size > MAX_SIZE:
-                    break
-                f.write(chunk)
+        while True:
+            chunk = await file.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            if first:
+                _check_magic(mime, chunk)
+                first = False
+            size += len(chunk)
             if size > MAX_SIZE:
-                os.remove(dest)
                 raise HTTPException(status_code=413, detail=f"Archivo {file.filename} excede 5MB")
+            chunks.append(chunk)
         if size == 0:
-            os.remove(dest)
             raise HTTPException(status_code=400, detail=f"Archivo {file.filename} vacío")
+        content = b"".join(chunks)
 
-        # URL absoluta basada en request base (funciona local y Render)
-        base = str(request.base_url).rstrip("/")
-        url = f"{base}/uploads/{filename}"
+        # Nombre seguro uuid (evita path traversal y colisiones).
+        filename = f"{uuid.uuid4().hex}{ext}"
+        url = backend.save(content, filename, mime)
         urls.append(url)
 
     return {"urls": urls, "count": len(urls)}
