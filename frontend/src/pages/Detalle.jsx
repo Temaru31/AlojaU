@@ -129,7 +129,7 @@ export default function Detalle() {
 
           <div className="flex flex-wrap gap-2">
             <span className="badge bg-navy-50 text-navy-700 border border-navy-100">
-              {pub.tipo_inmueble}
+              {pub.tipo_inmueble || 'No informado'}
             </span>
             <span className="badge bg-neutral-50 text-neutral-600 border border-neutral-200">
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>

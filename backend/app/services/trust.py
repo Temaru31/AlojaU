@@ -3,6 +3,7 @@ Uso: routers/publicaciones.py::crear/list/detalle. Ej: calcular_indice(..., tele
 
 from datetime import datetime, timezone
 from typing import Optional
+from app.core.config import settings
 
 DISCLAIMER = "Informativo, no garantiza seguridad. Verificar antes de pagar."
 
@@ -31,35 +32,34 @@ def calcular_indice(
     """
     desglose: dict[str, int] = {}
 
+    w_completitud = getattr(settings, "TRUST_WEIGHT_COMPLETITUD", 40)
+    w_telefono = getattr(settings, "TRUST_WEIGHT_TELEFONO", 20)
+    w_fotos = getattr(settings, "TRUST_WEIGHT_FOTOS", 15)
+    w_vigencia = getattr(settings, "TRUST_WEIGHT_VIGENCIA", 15)
+    w_reportes = getattr(settings, "TRUST_WEIGHT_REPORTES", 10)
+
     # ---- Factor1: Completitud 40 (desglose fino Tabla16) ----
-    # Si Sprint1 simplifica, al menos exigir canon>0, tipo, dirección, reglas y servicios.
-    # Para DoD Sprint1 adoptamos criterio estricto:
     c_canon = 10 if canon_mensual is not None and canon_mensual > 0 else 0
     c_deposito = 5 if deposito_requerido is not None else 0  # 0 explícito cuenta
     c_tipo = 5 if tipo_inmueble in ("HABITACION_FAMILIAR","HABITACION_INDEPENDIENTE","APARTAESTUDIO","COMPARTIDO") else 0
     c_reglas = 5 if reglas_convivencia and len(reglas_convivencia.strip()) >= 10 else 0
     c_direccion = 5 if direccion_referencial and len(direccion_referencial.strip()) >= 10 else 0
     c_servicios = 10 if servicios_ids and len(servicios_ids) >= 1 else 0
-    # Suma 40 si todo ok, 0 si incompleto? Sprint1 puntúa proporcional para feedback:
-    # Para cumplir spec "todo o nada" del PDF, si HU-005 exige campos obligatorios, aquí 40 si suma==40 else proporcional.
-    # Decisión Sprint1: proporcional (más útil para índice progresivo) pero documentado.
-    completitud = c_canon + c_deposito + c_tipo + c_reglas + c_direccion + c_servicios
-    desglose["completitud"] = completitud  # 0-40
+    raw_completitud = c_canon + c_deposito + c_tipo + c_reglas + c_direccion + c_servicios
+    desglose["completitud"] = int(round((raw_completitud / 40.0) * w_completitud)) if w_completitud != 40 else raw_completitud
 
-    # ---- Factor2: Teléfono validado 20 ----
-    desglose["telefono"] = 20 if telefono_verificado else 0
+    # ---- Factor2: Teléfono validado ----
+    desglose["telefono"] = w_telefono if telefono_verificado else 0
 
-    # ---- Factor3: Fotos >=3  15 ----
-    desglose["fotos"] = 15 if num_fotos >= 3 else 0
+    # ---- Factor3: Fotos >=3 ----
+    desglose["fotos"] = w_fotos if num_fotos >= 3 else 0
 
-    # ---- Factor4: Vigencia confirmada <=30d  15 ----
-    # dias_vigencia = (hoy - fecha_renovacion).days
-    desglose["vigencia"] = 15 if dias_vigencia <= 30 else 0
+    # ---- Factor4: Vigencia confirmada <=30d ----
+    desglose["vigencia"] = w_vigencia if dias_vigencia <= 30 else 0
 
-    # ---- Factor5: Ausencia reportes 10 (BUG FIX) ----
-    # Correcto: reportes_activos == count WHERE estado IN ('PENDIENTE','CONFIRMADO')
-    # Incorrecto legacy: WHERE estado='ACTIVO' (no existe, siempre 0 => 10 pts regalados)
-    desglose["reportes"] = 10 if reportes_activos == 0 else 0
+    # ---- Factor5: Ausencia reportes ----
+    desglose["reportes"] = w_reportes if reportes_activos == 0 else 0
+
 
     score = sum(desglose.values())  # 0-100
     score = max(0, min(100, score))

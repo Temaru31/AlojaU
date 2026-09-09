@@ -4,7 +4,9 @@ import Buscar from './pages/Buscar'
 import Detalle from './pages/Detalle'
 import Publicar from './pages/Publicar'
 import Comparar from './pages/Comparar'
+import Perfil from './pages/Perfil'
 import ColdStartBanner from './components/ColdStartBanner'
+
 import { FavoritosProvider, useFavoritos } from './contexts/FavoritosContext'
 import { CompararProvider, useComparar } from './contexts/CompararContext'
 
@@ -60,8 +62,17 @@ function Nav() {
               >
                 Comparar {compCount > 0 && <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full ml-1">{compCount}/{compMax}</span>}
               </Link>
+              <Link
+                to="/perfil"
+                className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${
+                  isActive('/perfil') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
+                }`}
+              >
+                Mi Perfil
+              </Link>
             </div>
           </div>
+
           <div className="hidden md:flex items-center gap-3">
             {favCount > 0 && <span className="text-sm text-neutral-500" aria-label={`${favCount} favoritos`}>♡ {favCount}</span>}
             <Link to="/publicar" className="btn-accent">
@@ -123,6 +134,14 @@ function Nav() {
               <span className="bg-red-50 text-red-600 text-[11px] px-1.5 py-0.5 rounded-full">♡ {favCount}</span>
             </Link>
             <Link
+              to="/perfil"
+              onClick={closeMenu}
+              aria-current={isActive('/perfil') ? 'page' : undefined}
+              className={mobileLinkCls(isActive('/perfil'))}
+            >
+              Mi Perfil
+            </Link>
+            <Link
               to="/publicar"
               onClick={closeMenu}
               aria-current={isActive('/publicar') ? 'page' : undefined}
@@ -130,6 +149,7 @@ function Nav() {
             >
               Publicar vivienda
             </Link>
+
           </div>
         </>
       )}
@@ -192,7 +212,9 @@ function App() {
                 <Route path="/publicacion/:id" element={<Detalle />} />
                 <Route path="/comparar" element={<Comparar />} />
                 <Route path="/publicar" element={<Publicar />} />
+                <Route path="/perfil" element={<Perfil />} />
               </Routes>
+
             </main>
             <Footer />
           </div>
