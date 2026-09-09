@@ -11,3 +11,4 @@
 | 2026-09-09 | P1 T1 Fase1 frontend (ReportarModal + botón Detalle + AdminReportes + ruta) | Muse Spark | vitest 60, build OK, sin regresiones |
 | 2026-09-09 | P1 T1 F3 Cloudinary (storage Strategy Local/Cloudinary + fix leaks UploadFotos + tests) | Muse Spark | pytest 92 passed (7 F3), vitest 66 passed (6 F3), build OK |
 | 2026-09-09 | Merge T1-reportes → develop (ff, 0 conflictos) + push develop OK + revisión pre-main sin bugs bloqueantes | Muse Spark | develop: pytest 92, vitest 66, build OK; main queda para PR con review |
+| 2026-09-09 | T8 blindaje (HSTS prod, mock solo dev, tests 429/401, SECURITY §3) rama feature/T8-blindaje | Muse Spark | pytest 95 passed (3 T8), vitest 66, build OK, bundle prod 0 mock |
