@@ -16,6 +16,14 @@ class Settings(BaseSettings):
     # CORS restringido por env (DoD-5) - prod solo Vercel
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
 
+    # Pesos de confianza (40+20+15+15+10) configurables por .env sin tocar código
+    TRUST_WEIGHT_COMPLETITUD: int = 40
+    TRUST_WEIGHT_TELEFONO: int = 20
+    TRUST_WEIGHT_FOTOS: int = 15
+    TRUST_WEIGHT_VIGENCIA: int = 15
+    TRUST_WEIGHT_REPORTES: int = 10
+
+
     @field_validator("ENV")
     @classmethod
     def check_env(cls, v: str) -> str:
