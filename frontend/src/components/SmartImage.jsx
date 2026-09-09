@@ -1,9 +1,10 @@
 // SmartImage - imagen con reintentos, fallback local y aspect estable.
-// Uso: <SmartImage src alt className eager /> en Card/Galeria/Visor. Ej: <SmartImage src={url} alt="Foto 1" />.
+// Uso: <SmartImage src alt className eager tone /> en Card/Galeria/Visor. Ej: <SmartImage src={url} alt="Foto 1" />.
 import { useState } from 'react'
 
 export const FALLBACK_IMG = '/fallback-foto.svg'
 const MAX_ATTEMPTS = 3
+const TONES = { light: 'bg-neutral-100', dark: 'bg-neutral-800' }
 
 export function normalizeImgUrl(url) {
   // Unsplash sin auto=format falla en burst: añade params estándar una sola vez.
@@ -12,14 +13,15 @@ export function normalizeImgUrl(url) {
   return url.includes('?') ? `${url}&auto=format&q=80` : `${url}?auto=format&q=80`
 }
 
-export default function SmartImage({ src, alt = '', className = '', eager = false, onClick }) {
+export default function SmartImage({ src, alt = '', className = '', eager = false, tone = 'light', onClick }) {
   const [attempt, setAttempt] = useState(0)
   const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
+  const base = TONES[tone] ?? TONES.light
 
   if (!src || failed) {
     return (
-      <div className={`bg-neutral-100 flex items-center justify-center ${className}`} role="img" aria-label={alt || 'Sin foto'}>
+      <div className={`${base} flex items-center justify-center ${className}`} role="img" aria-label={alt || 'Sin foto'}>
         <img src={FALLBACK_IMG} alt="" aria-hidden="true" className="w-1/2 h-1/2 object-contain opacity-70" loading="lazy" decoding="async" />
       </div>
     )
@@ -31,7 +33,7 @@ export default function SmartImage({ src, alt = '', className = '', eager = fals
     <img
       src={currentSrc}
       alt={alt}
-      className={`${className} bg-neutral-100 transition-opacity duration-200 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+      className={`${className} ${base} transition-opacity duration-200 ${loaded ? 'opacity-100' : 'opacity-0'}`}
       loading={eager ? 'eager' : 'lazy'}
       decoding="async"
       referrerPolicy="no-referrer"

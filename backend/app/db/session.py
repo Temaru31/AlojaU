@@ -50,13 +50,3 @@ AsyncSession = async_sessionmaker(engine, expire_on_commit=False)
 async def get_session():
     async with AsyncSession() as s:
         yield s
-
-# Helper para routers: intenta DB, si falla retorna None (mock)
-async def try_get_session():
-    try:
-        async with AsyncSession() as s:
-            # ping rápido
-            await s.execute(__import__("sqlalchemy").text("SELECT 1"))
-            yield s
-    except Exception:
-        yield None

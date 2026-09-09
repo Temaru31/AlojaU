@@ -34,4 +34,9 @@ describe('SmartImage F0', () => {
     render(<SmartImage src={null} alt="Sin foto" />)
     expect(screen.getByRole('img', { name: 'Sin foto' })).toBeInTheDocument()
   })
+
+  it('tono dark usa fondo oscuro (visor)', () => {
+    render(<SmartImage src={null} alt="Noche" tone="dark" />)
+    expect(screen.getByRole('img', { name: 'Noche' }).className).toContain('bg-neutral-800')
+  })
 })

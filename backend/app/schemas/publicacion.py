@@ -61,6 +61,7 @@ class PublicacionOut(BaseModel):
 
 # --- F1 DTOs estrictos (OpenAPI explícito, alias documentados, sin extra="allow") ---
 class DesgloseOut(BaseModel):
+    """Desglose índice 40+20+15+15+10 (usado en Card/Detail DTOs)."""
     completitud: int
     telefono: int
     fotos: int
@@ -69,6 +70,7 @@ class DesgloseOut(BaseModel):
 
 
 class CampusOut(BaseModel):
+    """Campus para GET /api/campus. Ej: {"id": 1, "nombre_sede": "Campus Tulcán", ...}."""
     id: int
     institucion: str
     nombre_sede: str
@@ -154,6 +156,7 @@ class PublicacionDetailOut(BaseModel):
 
 
 class PublicacionCreatedOut(BaseModel):
+    """Respuesta POST /api/publicaciones (siempre PENDIENTE)."""
     id: int
     estado: str
     indice_confianza: int

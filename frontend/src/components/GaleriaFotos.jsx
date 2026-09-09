@@ -9,7 +9,7 @@ export default function GaleriaFotos({ fotos = [], titulo = '' }) {
   const [visorIndex, setVisorIndex] = useState(0)
 
   if (!fotos || fotos.length === 0) {
-    return <div className="bg-neutral-100 rounded-xl aspect-[4/3] flex items-center justify-center text-gray-400 text-sm">Sin fotos</div>
+    return <div className="bg-neutral-100 rounded-xl aspect-[4/3] flex items-center justify-center text-neutral-400 text-sm">Sin fotos</div>
   }
 
   const total = fotos.length
@@ -77,7 +77,7 @@ export default function GaleriaFotos({ fotos = [], titulo = '' }) {
 
       {/* Contador discreto desktop si total no es 4 */}
       {total !== 4 && (
-        <p className="hidden sm:block text-xs text-gray-400 mt-1">{total} fotos • Haz clic para abrir visor • {total>desktopVisible ? `+${desktopExtra} ocultas en grid, visibles en visor` : 'todas visibles'}</p>
+        <p className="hidden sm:block text-xs text-neutral-400 mt-1">{total} fotos • Haz clic para abrir visor • {total>desktopVisible ? `+${desktopExtra} ocultas en grid, visibles en visor` : 'todas visibles'}</p>
       )}
 
       {visorOpen && <VisorFotos fotos={fotos} initialIndex={visorIndex} onClose={()=> setVisorOpen(false)} />}

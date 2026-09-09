@@ -7,7 +7,6 @@ export default function VisorFotos({ fotos, initialIndex = 0, onClose }) {
   const total = fotos.length
   const [index, setIndex] = useState(initialIndex)
 
-  // import useState aqui
   const goPrev = useCallback(()=> setIndex(i=> (i-1+total)%total), [total])
   const goNext = useCallback(()=> setIndex(i=> (i+1)%total), [total])
 
@@ -46,7 +45,7 @@ export default function VisorFotos({ fotos, initialIndex = 0, onClose }) {
       {/* Imagen */}
       <div className="relative z-10 flex-1 flex items-center justify-center p-2 sm:p-4 min-h-0">
         <button onClick={goPrev} aria-label="Anterior" className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-black/50 hover:bg-black/70 text-white flex items-center justify-center border border-white/20">‹</button>
-        <SmartImage key={url} src={url} alt={`Foto ${index+1} de ${total}`} className="max-w-full max-h-[70vh] sm:max-h-[75vh] object-contain rounded-lg shadow-2xl bg-transparent" eager />
+        <SmartImage key={url} src={url} alt={`Foto ${index+1} de ${total}`} className="max-w-full max-h-[70vh] sm:max-h-[75vh] object-contain rounded-lg shadow-2xl" eager tone="dark" />
         <button onClick={goNext} aria-label="Siguiente" className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-black/50 hover:bg-black/70 text-white flex items-center justify-center border border-white/20">›</button>
       </div>
 
@@ -55,7 +54,7 @@ export default function VisorFotos({ fotos, initialIndex = 0, onClose }) {
         <div className="flex gap-2 overflow-x-auto justify-center py-2 scrollbar-thin">
           {fotos.map((f,i)=> (
             <button key={i} onClick={()=> setIndex(i)} aria-label={`Ver foto ${i+1}`} className={`shrink-0 w-14 h-14 sm:w-16 sm:h-16 rounded-lg overflow-hidden border-2 bg-neutral-800 ${i===index ? 'border-white' : 'border-transparent opacity-60 hover:opacity-100'}`}>
-              <SmartImage src={f} alt={`Thumb ${i+1}`} className="w-full h-full object-cover" />
+              <SmartImage src={f} alt={`Thumb ${i+1}`} className="w-full h-full object-cover" tone="dark" />
             </button>
           ))}
         </div>
