@@ -14,7 +14,8 @@ export default function MapaZona({ zona = 'Pandiguando', campus = { lat: 2.443, 
   const tiempo = formatTiempoCaminando(dist_m)
   return (
     <div className="w-full min-w-0">
-      <div className="rounded-xl overflow-hidden border border-neutral-200">
+      {/* BUG-01: stacking context propio para que los panes Leaflet (z 400-1000) queden debajo del nav (z-50) y del visor (z-[2000]) */}
+      <div className="relative z-0 isolate rounded-xl overflow-hidden border border-neutral-200">
         <MapContainer
           center={[campus.lat, campus.lng]}
           zoom={14}
