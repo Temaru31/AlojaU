@@ -7,7 +7,6 @@ import os
 import uuid
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.core.security import require_arrendador

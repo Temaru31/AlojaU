@@ -20,6 +20,7 @@ DECLARE
     c DOUBLE PRECISION;
 BEGIN
     a := sin(dlat/2)^2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon/2)^2;
+    a := LEAST(1, GREATEST(0, a)); -- clamp canónico (igual que schema.sql)
     c := 2 * asin(sqrt(a));
     RETURN (R * c)::INTEGER;
 END;
@@ -35,16 +36,15 @@ SELECT haversine_m(2.4415, -76.6055, 2.441, -76.606) AS pub3_a_centro;  -- esper
 --    (útil tras seed o si corriges coordenadas)
 --    Ejecuta este bloque después de cambiar lat/lon:
 UPDATE publicacion_campus pc
-SET distancia_geodesica_m = haversine_m(p.latitud, p.longitud, c.latitud, c.longitud),
-    actualizado_en = NOW()
+SET distancia_geodesica_m = haversine_m(p.latitud, p.longitud, c.latitud, c.longitud)
 FROM publicaciones p, campus_universitarios c
-WHERE pc.pub_id = p.id
+WHERE pc.publicacion_id = p.id
   AND pc.campus_id = c.id
   AND p.latitud IS NOT NULL AND p.longitud IS NOT NULL;
 
 -- 4. Insertar distancia al crear publicación (ejemplo en INSERT)
 --    INSERT INTO publicaciones (...) VALUES (...) RETURNING id INTO new_id;
---    INSERT INTO publicacion_campus (pub_id, campus_id, distancia_geodesica_m)
+--    INSERT INTO publicacion_campus (publicacion_id, campus_id, distancia_geodesica_m)
 --    SELECT new_id, c.id, haversine_m(new_lat, new_lon, c.latitud, c.longitud)
 --    FROM campus_universitarios c WHERE c.activo = TRUE;
 
@@ -58,7 +58,7 @@ SELECT
     p.latitud, p.longitud
 FROM publicaciones p
 JOIN zonas_barrios zb ON zb.id = p.zona_barrio_id
-JOIN publicacion_campus pc ON pc.pub_id = p.id AND pc.campus_id = :campus_id
+JOIN publicacion_campus pc ON pc.publicacion_id = p.id AND pc.campus_id = :campus_id
 WHERE p.estado = 'ACTIVO'
   AND (:precio_min IS NULL OR p.canon_mensual >= :precio_min)
   AND (:precio_max IS NULL OR p.canon_mensual <= :precio_max)
@@ -68,7 +68,7 @@ WHERE p.estado = 'ACTIVO'
     :servicios IS NULL
     OR NOT EXISTS (
         SELECT 1 FROM unnest(:servicios::bigint[]) s(sid)
-        WHERE NOT EXISTS (SELECT 1 FROM publicacion_servicios ps WHERE ps.pub_id=p.id AND ps.servicio_id=s.sid)
+        WHERE NOT EXISTS (SELECT 1 FROM publicacion_servicios ps WHERE ps.publicacion_id=p.id AND ps.servicio_id=s.sid)
     )
   )
 ORDER BY pc.distancia_geodesica_m ASC, p.indice_confianza DESC, p.canon_mensual ASC
@@ -76,7 +76,7 @@ LIMIT 20;
 
 -- 6. Verificar que trigger mantiene coherencia tras UPDATE lat/lon
 --    UPDATE publicaciones SET latitud=2.4445, longitud=-76.6050 WHERE id=1;
---    SELECT * FROM publicacion_campus WHERE pub_id=1;
+--    SELECT * FROM publicacion_campus WHERE publicacion_id=1;
 
 -- 7. Vista desglose índice confianza en vivo (corrige bug Factor5)
 --    SELECT * FROM v_publicaciones_indice WHERE id IN (1,2,4);

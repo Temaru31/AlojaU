@@ -5,7 +5,6 @@ Responsables: Backend/Arquitectura-BD (Sprint1: Adrian, luego rotación)
 """
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 
 from fastapi.staticfiles import StaticFiles
 import os

@@ -4,16 +4,12 @@ from sqlalchemy import select
 from ..db.session import get_session
 from ..core.config import settings
 from app.schemas.publicacion import CampusOut
+from app.fixtures.demo import MOCK_CAMPUS_LIST as MOCK_CAMPUS
 from typing import List
 import logging
 logger = logging.getLogger("alojau.campus")
 
 router = APIRouter(prefix="/api/campus", tags=["campus"])
-
-MOCK_CAMPUS = [
-    {"id": 1, "ciudad_id": 1, "institucion": "Universidad del Cauca", "nombre_sede": "Campus Tulcán", "direccion": "Calle 5 # 4-70", "latitud": 2.4430000, "longitud": -76.6060000, "activo": True},
-    {"id": 2, "ciudad_id": 1, "institucion": "Unicomfacauca", "nombre_sede": "Claustro Centro", "direccion": "Calle 4 # 8-30", "latitud": 2.4410000, "longitud": -76.6060000, "activo": True},
-]
 
 @router.get("", response_model=List[CampusOut], summary="HU-001 - Listar campus activos")
 async def list_campus(db: AsyncSession = Depends(get_session)):

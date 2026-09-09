@@ -100,21 +100,21 @@ export default function UploadFotos({ token, onUrls, initialUrls = [] }) {
 
   return (
     <div className="space-y-3">
-      <label className="text-sm font-medium">Fotos reales * <span className="text-gray-400 font-normal">(3-10, cada una max 5MB, image/*)</span></label>
+      <label className="text-sm font-medium">Fotos reales * <span className="text-neutral-400 font-normal">(3-10, cada una max 5MB, image/*)</span></label>
 
       {/* Drop zone */}
       <div
         onDragOver={e=> e.preventDefault()}
         onDrop={onDrop}
         onClick={()=> inputRef.current?.click()}
-        className="border-2 border-dashed border-gray-200 rounded-xl p-4 sm:p-6 bg-gray-50 hover:bg-white hover:border-indigo-300 cursor-pointer text-center transition"
+        className="border-2 border-dashed border-neutral-200 rounded-xl p-4 sm:p-6 bg-neutral-50 hover:bg-white hover:border-indigo-300 cursor-pointer text-center transition"
         role="button"
         tabIndex={0}
         aria-label="Seleccionar fotos"
       >
         <input ref={inputRef} type="file" multiple accept="image/*" className="hidden" onChange={onInputChange} />
-        <p className="text-sm font-medium text-gray-700">Arrastra fotos aquí o haz clic para seleccionar</p>
-        <p className="text-xs text-gray-400 mt-1">{total}/{MAX_FILES} fotos • {total>=MIN_FILES ? '✓ mínimo alcanzado' : `faltan ${MIN_FILES-total} para mínimo`}</p>
+        <p className="text-sm font-medium text-neutral-700">Arrastra fotos aquí o haz clic para seleccionar</p>
+        <p className="text-xs text-neutral-400 mt-1">{total}/{MAX_FILES} fotos • {total>=MIN_FILES ? '✓ mínimo alcanzado' : `faltan ${MIN_FILES-total} para mínimo`}</p>
       </div>
 
       {/* Previews */}
@@ -149,9 +149,9 @@ export default function UploadFotos({ token, onUrls, initialUrls = [] }) {
         {files.length>0 && <button type="button" onClick={()=>{
           previews.forEach(p=> URL.revokeObjectURL(p.url))
           setFiles([]); setPreviews([]); setUploadedUrls([]); onUrls([]); setError('')
-        }} className="px-4 py-2.5 rounded-xl border border-gray-200 text-sm hover:bg-gray-50">Limpiar</button>}
+        }} className="px-4 py-2.5 rounded-xl border border-neutral-200 text-sm hover:bg-neutral-50">Limpiar</button>}
       </div>
-      <p className="text-xs text-gray-400">Las URLs se usarán automáticamente al “Enviar a PENDIENTE”. En Render Free los archivos son efímeros (se borran al redeploy), para prod usar Cloudinary/Supabase Storage.</p>
+      <p className="text-xs text-neutral-400">Las URLs se usarán automáticamente al “Enviar a PENDIENTE”. En Render Free los archivos son efímeros (se borran al redeploy), para prod usar Cloudinary/Supabase Storage.</p>
     </div>
   )
 }
