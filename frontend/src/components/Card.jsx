@@ -44,7 +44,7 @@ export default function Card({ pub }) {
   const isComp = compHook.isSelected(pub.id)
 
   return (
-    <div className="card-hover group p-0 overflow-hidden">
+    <div className="card-hover group p-0 overflow-hidden min-w-0">
       {/* Image */}
       <div className="h-36 sm:h-40 w-full overflow-hidden bg-gradient-to-br from-navy-50 to-neutral-100 relative">
         {cover ? (
@@ -93,7 +93,7 @@ export default function Card({ pub }) {
 
       <div className="p-4">
         <div className="flex items-start justify-between gap-2 mb-1.5">
-          <h3 className="font-display font-semibold text-navy-900 text-sm leading-snug line-clamp-2 group-hover:text-navy-600 transition-colors">
+          <h3 className="font-display font-semibold text-navy-900 text-sm leading-snug line-clamp-2 break-words group-hover:text-navy-600 transition-colors">
             {pub.titulo}
           </h3>
         </div>

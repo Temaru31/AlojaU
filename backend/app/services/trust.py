@@ -1,13 +1,5 @@
-"""
-services/trust.py - TrustScoreEngine HU-007 (Tabla16 p20)
-Cálculo reproducible 0-100: 40+20+15+15+10 (Sprint1)
-
-IMPORTANTE (bug fix p18/20):
-  Factor 5 "Ausencia de reportes" debe consultar reportes con estado IN ('PENDIENTE','CONFIRMADO'),
-  NO 'ACTIVO' (estado inexistente en diccionario Tabla24). El código legacy usaba ACTIVO y nunca descontaba.
-
-Escala visual: 0-49 básico (naranja), 50-79 medio (amarillo), 80-100 alto (verde) + disclaimer obligatorio.
-"""
+"""Calcula índice confianza 0-100 (40+20+15+15+10) con desglose y nivel.
+Uso: routers/publicaciones.py::crear/list/detalle. Ej: calcular_indice(..., telefono_verificado=True, num_fotos=4, dias_vigencia=5, reportes_activos=0) -> {"indice": 95, ...}."""
 
 from datetime import datetime, timezone
 from typing import Optional
@@ -95,9 +87,4 @@ def dias_desde(fecha_renovacion: datetime, ahora: Optional[datetime] = None) -> 
         fecha_renovacion = fecha_renovacion.replace(tzinfo=timezone.utc)
     return (ahora - fecha_renovacion).days
 
-# DÓNDE SE LLAMA (Sprint1):
-# 1. POST /api/publicaciones (routers/publicaciones.py::crear_publicacion) -> calcula índice inicial y lo persiste en publicaciones.indice_confianza
-# 2. GET /api/publicaciones y GET /api/publicaciones/{id} -> si hay DB, recalcula o lee indice_confianza + desglose para PublicacionOut
-# 3. PATCH /api/publicaciones/{id}/renovar (HU-006 Sprint2) -> recalcula (vigencia vuelve a 15)
-# 4. Job nocturno expiración (Sprint2) -> no recalcula, solo cambia estado a EXPIRADO
-# Tests: tests/test_trust.py debe validar bug fix reportes PENDIENTE/CONFIRMADO
+# Llamado en: POST/GET publicaciones y PATCH renovar. Detalle ver docs/ARQUITECTURA.md.

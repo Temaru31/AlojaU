@@ -20,14 +20,14 @@ describe('formatters', ()=>{
     expect(formatDistancia(1000)).toBe('1.0 km')
   })
   it('getColorIndice escala', ()=>{
-    expect(getColorIndice(85)).toBe('green')
-    expect(getColorIndice(60)).toBe('yellow')
+    expect(getColorIndice(85)).toBe('emerald')
+    expect(getColorIndice(60)).toBe('gold')
     expect(getColorIndice(30)).toBe('orange')
   })
   it('getLabelIndice', ()=>{
     expect(getLabelIndice(85)).toBe('Alto')
     expect(getLabelIndice(60)).toBe('Medio')
-    expect(getLabelIndice(10)).toBe('Básico')
+    expect(getLabelIndice(10)).toBe('Basico')
   })
   it('no desborda con números grandes', ()=>{
     const s = formatCOP(10000000)

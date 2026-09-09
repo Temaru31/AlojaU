@@ -1,4 +1,5 @@
-"""JWT HS256 + bcrypt - Tabla16:27"""
+"""JWT HS256 + bcrypt con fail-closed en prod (mock solo dev).
+Uso: Depends(get_current_user/require_arrendador/require_admin) en routers. Ej: headers {"Authorization": "Bearer <jwt>"} -> {"id":1,"rol":"ARRENDADOR"}."""
 from datetime import datetime, timedelta
 from jose import jwt
 from passlib.context import CryptContext
