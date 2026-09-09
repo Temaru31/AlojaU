@@ -31,6 +31,21 @@ class LoginIn(BaseModel):
     email: EmailStr
     password: str
 
+
+class RegisterOut(BaseModel):
+    id: int
+    email: EmailStr
+    rol: str
+    mock: bool = False
+
+
+class LoginOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in_hours: int = 8
+    rol: str
+    mock: bool = False
+
 # B0-7 rate-limit simple en memoria: 5 intentos/min por IP en /login -> 429.
 _LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 LOGIN_LIMIT = 5
@@ -46,7 +61,7 @@ def _check_login_rate_limit(request: Request):
     hist.append(now)
     _LOGIN_ATTEMPTS[ip] = hist
 
-@router.post("/register", summary="Registro arrendador")
+@router.post("/register", response_model=RegisterOut, summary="Registro arrendador")
 async def register(data: RegisterIn, db: AsyncSession = Depends(get_session)):
     # B0-1: intenta DB real; fallback mock solo dev.
     try:
@@ -80,7 +95,7 @@ async def register(data: RegisterIn, db: AsyncSession = Depends(get_session)):
             raise HTTPException(status_code=400, detail="Email ya registrado (mock)")
         return {"id": 99, "email": data.email, "rol": "ARRENDADOR", "mock": True}
 
-@router.post("/login", summary="Login JWT HS256 8h")
+@router.post("/login", response_model=LoginOut, summary="Login JWT HS256 8h")
 async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_session)):
     _check_login_rate_limit(request)
     # B0-1: intenta DB real primero; fallback mock solo dev.

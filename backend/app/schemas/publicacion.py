@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field, ConfigDict, HttpUrl, model_validator
-from typing import Optional, Literal
+from typing import Optional, Literal, List
 from decimal import Decimal
+from datetime import datetime
 
 TipoInmueble = Literal["HABITACION_FAMILIAR","HABITACION_INDEPENDIENTE","APARTAESTUDIO","COMPARTIDO"]
 
@@ -56,3 +57,106 @@ class PublicacionOut(BaseModel):
     whatsapp_url: Optional[str] = None
     fecha_renovacion: Optional[str] = None
     fecha_expiracion: Optional[str] = None
+
+
+# --- F1 DTOs estrictos (OpenAPI explícito, alias documentados, sin extra="allow") ---
+class DesgloseOut(BaseModel):
+    completitud: int
+    telefono: int
+    fotos: int
+    vigencia: int
+    reportes: int
+
+
+class CampusOut(BaseModel):
+    id: int
+    institucion: str
+    nombre_sede: str
+    latitud: float
+    longitud: float
+
+
+class PublicacionCardOut(BaseModel):
+    """Item de GET /api/publicaciones. Alias compat explícitos (canon, indice, nivel, dist_m, zona)."""
+
+    id: int
+    titulo: str
+    descripcion: Optional[str] = None
+    tipo_inmueble: str
+    canon_mensual: float
+    canon: float  # alias compat FE legacy
+    deposito_requerido: float
+    zona_barrio_id: int
+    zona: Optional[str] = None  # alias compat
+    zona_nombre: Optional[str] = None
+    direccion_referencial: Optional[str] = None
+    reglas_convivencia: Optional[str] = None
+    estado: str
+    fecha_renovacion: Optional[datetime] = None
+    fecha_expiracion: Optional[datetime] = None
+    servicios: List[str] = []
+    servicios_ids: List[int] = []
+    fotos: List[str] = []
+    num_fotos: int = 0
+    distancia_geodesica_m: Optional[int] = None
+    dist_m: Optional[int] = None  # alias compat
+    indice_confianza: int
+    indice: int  # alias compat
+    desglose: DesgloseOut
+    nivel_confianza: str
+    nivel: str  # alias compat
+    telefono_whatsapp: Optional[str] = None
+    usuario_id: int
+
+
+class PaginatedPublicaciones(BaseModel):
+    items: List[PublicacionCardOut]
+    total: int
+    page: int
+    size: int
+    pages: int
+
+
+class PublicacionDetailOut(BaseModel):
+    """Detalle GET /api/publicaciones/{id}. Alias compat explícitos."""
+
+    id: int
+    titulo: str
+    descripcion: Optional[str] = None
+    tipo_inmueble: str
+    canon_mensual: float
+    canon: float  # alias compat
+    deposito: float  # alias compat
+    deposito_requerido: float
+    zona_barrio_id: int
+    zona: Optional[str] = None  # alias compat
+    zona_nombre: Optional[str] = None
+    direccion_referencial: Optional[str] = None
+    reglas: Optional[str] = None  # alias compat
+    reglas_convivencia: Optional[str] = None
+    estado: str
+    fecha_renovacion: Optional[datetime] = None
+    fecha_expiracion: Optional[datetime] = None
+    servicios: List[str] = []
+    servicios_ids: List[int] = []
+    fotos: List[str] = []
+    num_fotos: int = 0
+    distancia_geodesica_m: Optional[int] = None
+    dist_m: Optional[int] = None  # alias compat
+    indice_confianza: int
+    indice: int  # alias compat
+    desglose: DesgloseOut
+    nivel: str
+    nivel_confianza: str  # alias compat
+    advertencia: Optional[str] = None
+    telefono_whatsapp: Optional[str] = None
+    whatsapp_url: Optional[str] = None
+
+
+class PublicacionCreatedOut(BaseModel):
+    id: int
+    estado: str
+    indice_confianza: int
+    desglose: DesgloseOut
+    advertencia: Optional[str] = None
+    mensaje: Optional[str] = None

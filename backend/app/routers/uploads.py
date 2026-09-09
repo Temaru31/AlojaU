@@ -8,6 +8,7 @@ import uuid
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from app.core.security import require_arrendador
 
@@ -37,7 +38,12 @@ def _validate_file(file: UploadFile):
             ext = ".jpg"
     return ext
 
-@router.post("", summary="HU-005 Upload 3-10 imágenes (solo ARRENDADOR)")
+class UploadOut(BaseModel):
+    urls: List[str]
+    count: int
+
+
+@router.post("", response_model=UploadOut, summary="HU-005 Upload 3-10 imágenes (solo ARRENDADOR)")
 async def upload_fotos(
     request: Request,
     files: List[UploadFile] = File(..., description="3-10 imágenes, cada una max 5MB, image/*"),
