@@ -162,7 +162,8 @@ class PublicacionCampus(Base):
     )
     publicacion_id: Mapped[int] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), primary_key=True)
     campus_id: Mapped[int] = mapped_column(ForeignKey("campus_universitarios.id", ondelete="CASCADE"), primary_key=True)
-    distancia_geodesica_m: Mapped[int] = mapped_column(Integer, nullable=False)
+    # B0-5: NULL cuando pub sin coords (no 0). Requiere migración DB si columna era NOT NULL.
+    distancia_geodesica_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     publicacion: Mapped["Publicacion"] = relationship(back_populates="campus_links")
 

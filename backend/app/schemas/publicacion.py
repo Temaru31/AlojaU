@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, ConfigDict, HttpUrl
+from pydantic import BaseModel, Field, ConfigDict, HttpUrl, model_validator
 from typing import Optional, Literal
 from decimal import Decimal
 
@@ -20,6 +20,13 @@ class PublicacionCreate(BaseModel):
     campus_ids: list[int] = Field(min_length=1)
     fotos: list[HttpUrl] = Field(min_length=3, max_length=10, description="≥3 fotos HU-005 C2")
     incluye_servicios_base: bool = True
+
+    @model_validator(mode="after")
+    def lat_lng_both_or_none(self):
+        # B0-5: lat/lng both-or-none -> 422 si solo uno presente.
+        if (self.latitud is None) != (self.longitud is None):
+            raise ValueError("latitud y longitud deben ir juntas (both-or-none)")
+        return self
 
 class DesgloseConfianza(BaseModel):
     completitud: int

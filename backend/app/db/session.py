@@ -4,7 +4,9 @@ No tocar si no eres de BD. Lee DATABASE_URL del .env
 Sprint1: fallback mock si PG no disponible para que frontend no se bloquee.
 """
 import os
+import sys
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.pool import NullPool
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -29,14 +31,19 @@ _connect_args = {"statement_cache_size": 0} if _is_pgbouncer else {}
 
 # pool 5-20 para 50-100 concurrentes Tabla18 (NFR)
 # Sprint1: pool_pre_ping evita "cold start" + silent disconnect en Render
+# B0 fix (<=3 líneas): bajo pytest usa NullPool (cada TestClient request corre en
+# loop distinto; el pool persistente reutiliza conexiones atadas a loops cerrados
+# -> RuntimeError "attached to a different loop"). Prod/dev intactos.
+_engine_kwargs = (
+    {"poolclass": NullPool}
+    if "pytest" in sys.modules
+    else {"pool_size": 5, "max_overflow": 15, "pool_pre_ping": True, "pool_recycle": 300}
+)
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,  # True solo en dev
-    pool_size=5,
-    max_overflow=15,
-    pool_pre_ping=True,
-    pool_recycle=300,
     connect_args=_connect_args,
+    **_engine_kwargs,
 )
 AsyncSession = async_sessionmaker(engine, expire_on_commit=False)
 
