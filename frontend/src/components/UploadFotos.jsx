@@ -121,7 +121,7 @@ export default function UploadFotos({ token, onUrls, initialUrls = [] }) {
       {previews.length>0 && (
         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
           {previews.map((p, idx)=> (
-            <div key={p.id} className="relative aspect-square overflow-hidden rounded-lg bg-gray-100 border">
+            <div key={p.id} className="relative aspect-square overflow-hidden rounded-lg bg-neutral-100 border">
               <img src={p.url} alt={`Preview ${idx+1}`} className="w-full h-full object-cover" />
               <button type="button" onClick={()=> removeFile(idx)} className="absolute top-1 right-1 bg-black/60 text-white text-xs w-6 h-6 rounded-full hover:bg-red-600">×</button>
               <span className="absolute bottom-1 left-1 bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded">{(p.size/1024).toFixed(0)}KB</span>
