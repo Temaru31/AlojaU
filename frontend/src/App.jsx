@@ -1,14 +1,16 @@
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, lazy, Suspense } from 'react'
 import Buscar from './pages/Buscar'
-import Detalle from './pages/Detalle'
-import Publicar from './pages/Publicar'
-import Comparar from './pages/Comparar'
 import Perfil from './pages/Perfil'
-import AdminReportes from './pages/AdminReportes'
-import AdminDashboard from './pages/AdminDashboard'
-import ProtectedAdminRoute from './components/ProtectedAdminRoute'
 import MisPublicaciones from './pages/MisPublicaciones'
+// OLA4: rutas pesadas diferidas (code-splitting). Buscar/Perfil/MisPublicaciones
+// quedan eager (landing + auth críticas y livianas).
+const Detalle = lazy(() => import('./pages/Detalle'))
+const Publicar = lazy(() => import('./pages/Publicar'))
+const Comparar = lazy(() => import('./pages/Comparar'))
+const AdminReportes = lazy(() => import('./pages/AdminReportes'))
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'))
+import ProtectedAdminRoute from './components/ProtectedAdminRoute'
 import ColdStartBanner from './components/ColdStartBanner'
 import BrandMark from './components/BrandMark'
 import { FavoritosProvider, useFavoritos } from './contexts/FavoritosContext'
@@ -103,7 +105,7 @@ function Nav() {  const { count: favCount } = useFavoritos()
               </Link>
             ) : (
               <div className="relative">
-                <button
+                <button type="button"
                   onClick={() => setUserOpen(!userOpen)}
                   aria-label="Menú de usuario"
                   aria-expanded={userOpen}
@@ -134,7 +136,7 @@ function Nav() {  const { count: favCount } = useFavoritos()
                           🛡️ Panel admin
                         </Link>
                       )}
-                      <button
+                      <button type="button"
                         onClick={() => { logout(); closeUser() }}
                         role="menuitem"
                         className="block w-full text-left px-3 py-2 text-sm font-semibold rounded-md text-red-600 hover:bg-red-50 transition-colors"
@@ -150,7 +152,7 @@ function Nav() {  const { count: favCount } = useFavoritos()
               Publicar
             </Link>
           </div>
-          <button
+          <button type="button"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-label={mobileOpen ? 'Cerrar menú' : 'Abrir menú'}
             aria-expanded={mobileOpen}
@@ -233,7 +235,7 @@ function Nav() {  const { count: favCount } = useFavoritos()
                     🛡️ Panel admin
                   </Link>
                 )}
-                <button
+                <button type="button"
                   onClick={() => { logout(); closeMenu() }}
                   className="w-full text-left px-3 py-2.5 text-sm font-semibold rounded-md text-red-600 hover:bg-red-50 transition-colors"
                 >
@@ -306,6 +308,16 @@ function App() {
             <Nav />
             <ColdStartBanner />
             <main className="flex-1">
+              {/* OLA4: fallback skeleton coherente con el resto de la app */}
+              <Suspense fallback={
+                <div className="container-main py-12">
+                  <div className="max-w-2xl mx-auto card p-8 animate-pulse space-y-4">
+                    <div className="h-6 bg-neutral-200 rounded w-1/3" />
+                    <div className="h-4 bg-neutral-200 rounded w-1/2" />
+                    <div className="h-32 bg-neutral-100 rounded" />
+                  </div>
+                </div>
+              }>
               <Routes>
                 <Route path="/" element={<Buscar />} />
                 <Route path="/publicacion/:id" element={<Detalle />} />
@@ -316,6 +328,7 @@ function App() {
                 <Route path="/admin/dashboard" element={<ProtectedAdminRoute><AdminDashboard /></ProtectedAdminRoute>} />
                 <Route path="/admin/reportes" element={<ProtectedAdminRoute><AdminReportes /></ProtectedAdminRoute>} />
               </Routes>
+              </Suspense>
 
             </main>
             <Footer />

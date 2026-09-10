@@ -15,13 +15,13 @@ export default function Paginacion({ page=1, pages=1, total=0, onPage }){
     <nav className="flex flex-col sm:flex-row items-center justify-between gap-3 py-4 border-t border-neutral-100 mt-2" aria-label="Paginación">
       <p className="text-xs sm:text-sm text-neutral-500">Total {total} • Página {page} de {pages}</p>
       <div className="flex items-center gap-1.5">
-        <button disabled={!prev} onClick={()=> prev && onPage(prev)} className="px-3 py-1.5 text-xs sm:text-sm rounded-lg border bg-white border-neutral-200 disabled:opacity-40 hover:bg-neutral-50 disabled:cursor-not-allowed">Anterior</button>
-        {start > 1 && (<><button onClick={()=> onPage(1)} className="px-2.5 py-1.5 text-xs rounded-lg border bg-white border-neutral-200 hover:bg-neutral-50">1</button><span className="text-neutral-400">…</span></>)}
+        <button type="button" disabled={!prev} onClick={()=> prev && onPage(prev)} className="px-3 py-1.5 text-xs sm:text-sm rounded-lg border bg-white border-neutral-200 disabled:opacity-40 hover:bg-neutral-50 disabled:cursor-not-allowed">Anterior</button>
+        {start > 1 && (<><button type="button" onClick={()=> onPage(1)} className="px-2.5 py-1.5 text-xs rounded-lg border bg-white border-neutral-200 hover:bg-neutral-50">1</button><span className="text-neutral-400">…</span></>)}
         {nums.map(n=>(
-          <button key={n} onClick={()=> onPage(n)} aria-current={n===page ? 'page':undefined} className={`px-2.5 py-1.5 text-xs sm:text-sm rounded-lg border ${n===page ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-neutral-200 hover:bg-neutral-50'}`}>{n}</button>
+          <button type="button" key={n} onClick={()=> onPage(n)} aria-current={n===page ? 'page':undefined} className={`px-2.5 py-1.5 text-xs sm:text-sm rounded-lg border ${n===page ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-neutral-200 hover:bg-neutral-50'}`}>{n}</button>
         ))}
-        {end < pages && (<><span className="text-neutral-400">…</span><button onClick={()=> onPage(pages)} className="px-2.5 py-1.5 text-xs rounded-lg border bg-white border-neutral-200 hover:bg-neutral-50">{pages}</button></>)}
-        <button disabled={!next} onClick={()=> next && onPage(next)} className="px-3 py-1.5 text-xs sm:text-sm rounded-lg border bg-white border-neutral-200 disabled:opacity-40 hover:bg-neutral-50 disabled:cursor-not-allowed">Siguiente</button>
+        {end < pages && (<><span className="text-neutral-400">…</span><button type="button" onClick={()=> onPage(pages)} className="px-2.5 py-1.5 text-xs rounded-lg border bg-white border-neutral-200 hover:bg-neutral-50">{pages}</button></>)}
+        <button type="button" disabled={!next} onClick={()=> next && onPage(next)} className="px-3 py-1.5 text-xs sm:text-sm rounded-lg border bg-white border-neutral-200 disabled:opacity-40 hover:bg-neutral-50 disabled:cursor-not-allowed">Siguiente</button>
       </div>
     </nav>
   )

@@ -115,7 +115,7 @@ export default function AdminDashboard() {
             <Link to="/admin/reportes" className="btn-ghost text-xs">
               🚩 Bandeja de reportes{metricas?.reportes_pendientes ? ` (${metricas.reportes_pendientes})` : ''}
             </Link>
-            <button onClick={cargar} className="btn-ghost text-xs">Recargar</button>
+            <button type="button" onClick={cargar} className="btn-ghost text-xs">Recargar</button>
           </div>
 
           <h2 className="text-sm font-bold text-navy-800 mb-3">
@@ -139,7 +139,7 @@ export default function AdminDashboard() {
                     </div>
                     <div className="flex flex-wrap items-center gap-2 shrink-0">
                       <Link to={`/publicacion/${p.id}`} className="text-xs text-navy-600 hover:underline">Ver</Link>
-                      <button
+                      <button type="button"
                         onClick={() => cambiarEstado(p.id, 'ACTIVO')}
                         disabled={acting === p.id}
                         aria-label={`Aprobar aviso ${p.id}`}
@@ -147,7 +147,7 @@ export default function AdminDashboard() {
                       >
                         Aprobar
                       </button>
-                      <button
+                      <button type="button"
                         onClick={() => cambiarEstado(p.id, 'RECHAZADO')}
                         disabled={acting === p.id}
                         aria-label={`Rechazar aviso ${p.id}`}
@@ -157,7 +157,7 @@ export default function AdminDashboard() {
                       </button>
                       {confirmDel === p.id ? (
                         <>
-                          <button
+                          <button type="button"
                             onClick={() => eliminar(p.id)}
                             disabled={acting === p.id}
                             aria-label={`Confirmar eliminar aviso ${p.id}`}
@@ -165,12 +165,12 @@ export default function AdminDashboard() {
                           >
                             Confirmar
                           </button>
-                          <button onClick={() => setConfirmDel(null)} className="text-xs text-neutral-500 hover:underline">
+                          <button type="button" onClick={() => setConfirmDel(null)} className="text-xs text-neutral-500 hover:underline">
                             Cancelar
                           </button>
                         </>
                       ) : (
-                        <button
+                        <button type="button"
                           onClick={() => setConfirmDel(p.id)}
                           aria-label={`Eliminar aviso ${p.id}`}
                           className="px-3 py-1.5 text-xs font-semibold rounded-md text-red-600 hover:bg-red-50 transition-colors"

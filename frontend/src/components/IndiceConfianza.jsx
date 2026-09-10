@@ -74,7 +74,7 @@ export default function IndiceConfianza({ indice = 0, desglose = {} }) {
       </div>
 
       {/* Botón desplegable (UX-AUDIT: aria-controls enlaza al panel) */}
-      <button
+      <button type="button"
         onClick={() => setOpen(!open)}
         aria-expanded={open}
         aria-controls="indice-detalle"

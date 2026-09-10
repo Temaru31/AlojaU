@@ -16,6 +16,9 @@ export default function Buscar() {
     tipo: searchParams.get('tipo') || '',
     servicios: searchParams.get('servicios') || '',
   })
+  // OLA4: string primitivo estable (el objeto searchParams cambia de identidad
+  // y provocaba doble-fetch). El efecto de resultados depende de este string.
+  const queryString = searchParams.toString()
   const [pubs, setPubs] = useState([])
   const [total, setTotal] = useState(0)
   const [pages, setPages] = useState(1)
@@ -58,17 +61,21 @@ export default function Buscar() {
       .catch(() => setCampus([{ id: 1, institucion: 'Universidad del Cauca', nombre_sede: 'Campus Tulcan' }]))
   }, [])
 
+  // OLA4: AbortController + deps primitivas estables (sin objeto searchParams).
+  // La respuesta tardía de una búsqueda anterior ya no pisa a la actual.
   useEffect(() => {
+    const controller = new AbortController()
     setLoading(true); setError('')
+    const q = new URLSearchParams(queryString)
     const params = {
       campus_id: campusId,
-      precio_min: searchParams.get('precio_min') || undefined,
-      precio_max: searchParams.get('precio_max') || undefined,
-      tipo: searchParams.get('tipo') || undefined,
-      servicios: searchParams.get('servicios') || undefined,
+      precio_min: q.get('precio_min') || undefined,
+      precio_max: q.get('precio_max') || undefined,
+      tipo: q.get('tipo') || undefined,
+      servicios: q.get('servicios') || undefined,
       page, size: 9
     }
-    api.get('/api/publicaciones', { params })
+    api.get('/api/publicaciones', { params, signal: controller.signal })
       .then(r => {
         const data = r.data
         if (Array.isArray(data)) {
@@ -77,9 +84,13 @@ export default function Buscar() {
           setPubs(data.items || []); setTotal(data.total || 0); setPages(data.pages || 1)
         }
       })
-      .catch(() => { setError('No se pudo cargar publicaciones. Intenta de nuevo.'); setPubs([]) })
-      .finally(() => setLoading(false))
-  }, [campusId, page, searchParams])
+      .catch((err) => {
+        if (err?.code === 'ERR_CANCELED') return
+        setError('No se pudo cargar publicaciones. Intenta de nuevo.'); setPubs([])
+      })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    return () => controller.abort()
+  }, [campusId, page, queryString])
 
   const currentCampus = campus.find(c => c.id == campusId)
 

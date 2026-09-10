@@ -18,15 +18,16 @@ export default function AdminReportes() {
   const [error, setError] = useState('')
   const [acting, setActing] = useState(null)
 
-  const cargar = async () => {
+  const cargar = async (signal) => {
     setLoading(true)
     setError('')
     try {
       const token = localStorage.getItem('alojau_token') || ''
       const headers = token ? { Authorization: `Bearer ${token}` } : {}
-      const r = await api.get('/api/reportes', { params: { estado: 'PENDIENTE' }, headers })
+      const r = await api.get('/api/reportes', { params: { estado: 'PENDIENTE' }, headers, signal })
       setItems(r.data)
     } catch (err) {
+      if (err?.code === 'ERR_CANCELED') return
       const status = err?.response?.status
       setError(
         status === 401 ? 'Inicia sesión para ver esta página.'
@@ -35,11 +36,16 @@ export default function AdminReportes() {
       )
       setItems([])
     } finally {
-      setLoading(false)
+      if (!signal?.aborted) setLoading(false)
     }
   }
 
-  useEffect(() => { cargar() }, [])
+  // OLA4: AbortController — desmontar aborta la carga en curso (sin setState tardío).
+  useEffect(() => {
+    const controller = new AbortController()
+    cargar(controller.signal)
+    return () => controller.abort()
+  }, [])
 
   const actuar = async (id, accion) => {
     setActing(id)
@@ -68,7 +74,7 @@ export default function AdminReportes() {
         <h1 className="font-display text-xl md:text-2xl font-bold text-navy-900">
           Reportes pendientes {items.length > 0 && <span className="text-sm font-normal text-neutral-400">({items.length})</span>}
         </h1>
-        <button onClick={cargar} className="btn-ghost text-xs">Recargar</button>
+        <button type="button" onClick={cargar} className="btn-ghost text-xs">Recargar</button>
       </div>
 
       {error && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-3" role="alert">{error}</p>}
@@ -100,7 +106,7 @@ export default function AdminReportes() {
                 </p>
               </div>
               <div className="flex gap-2 shrink-0">
-                <button
+                <button type="button"
                   onClick={() => actuar(r.id, 'descartar')}
                   disabled={acting === r.id}
                   aria-label={`Descartar reporte ${r.id}`}
@@ -108,7 +114,7 @@ export default function AdminReportes() {
                 >
                   Descartar
                 </button>
-                <button
+                <button type="button"
                   onClick={() => actuar(r.id, 'confirmar')}
                   disabled={acting === r.id}
                   aria-label={`Confirmar reporte ${r.id}`}

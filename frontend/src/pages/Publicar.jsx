@@ -208,13 +208,13 @@ export default function Publicar() {
                 />
               </div>
               {loginError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-2">{loginError}</p>}
-              <button disabled={loginLoading} className="btn-accent w-full justify-center">
+              <button type="submit" disabled={loginLoading} className="btn-accent w-full justify-center">
                 {loginLoading ? 'Ingresando...' : 'Iniciar sesión como ARRENDADOR'}
               </button>
             </form>
 
             <div className="mt-3 text-xs">
-              <button
+              <button type="button"
                 onClick={() => {
                   const t = 'mock-token-arrendador'; localStorage.setItem('alojau_token', t); setToken(t); emitAuthChange()
                 }}
@@ -245,7 +245,7 @@ export default function Publicar() {
             <h1 className="font-display text-2xl md:text-3xl font-bold text-navy-900 tracking-tight mb-0">
               Publicar vivienda
             </h1>
-            <button onClick={handleLogout} className="text-xs sm:text-sm text-neutral-500 hover:text-red-600">Cerrar sesión</button>
+            <button type="button" onClick={handleLogout} className="text-xs sm:text-sm text-neutral-500 hover:text-red-600">Cerrar sesión</button>
           </div>
           <p className="text-sm text-neutral-500 mt-1">
             Completa los datos. La publicacion pasara a estado PENDIENTE hasta ser revisada.

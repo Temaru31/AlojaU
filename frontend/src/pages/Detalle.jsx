@@ -108,14 +108,14 @@ export default function Detalle() {
           )}
 
           <div className="flex flex-wrap gap-2">
-            <button
+            <button type="button"
               onClick={() => favHook.toggle(pub.id)}
               aria-pressed={isFav}
               className={`px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition ${isFav ? 'bg-red-500 text-white border-red-500' : 'bg-white border-neutral-200 hover:bg-neutral-50'}`}
             >
               {isFav ? '♥ En favoritos' : '♡ Añadir a favoritos'}
             </button>
-            <button
+            <button type="button"
               onClick={() => compHook.toggle(pub.id)}
               aria-pressed={isComp}
               className={`px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition ${isComp ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-neutral-200 hover:bg-neutral-50'}`}
@@ -123,7 +123,7 @@ export default function Detalle() {
               {isComp ? '✓ En comparar' : '+ Comparar (máx 3)'}
             </button>
             {/* UX: reportar visible en cabecera (secundario discreto, no escondido bajo el mapa) */}
-            <button
+            <button type="button"
               onClick={() => setReportOpen(true)}
               aria-label="Reportar este aviso"
               className="px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition bg-white border-neutral-200 text-neutral-500 hover:text-red-600 hover:border-red-200 hover:bg-red-50"
@@ -238,7 +238,7 @@ export default function Detalle() {
               </div>
             )}
             {/* UX: segunda vía clara para reportar, junto al contacto (texto oscuro legible) */}
-            <button
+            <button type="button"
               onClick={() => setReportOpen(true)}
               className="mt-3 w-full inline-flex items-center justify-center gap-1.5 text-xs font-medium text-neutral-600 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-100 rounded-md py-2 transition-colors"
             >

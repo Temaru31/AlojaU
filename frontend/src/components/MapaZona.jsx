@@ -3,11 +3,12 @@ import 'leaflet/dist/leaflet.css'
 import L from 'leaflet'
 import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
 // Fix icon
+// OLA4: iconos servidos en local (public/leaflet/) en vez de CDN unpkg (SPOF + integridad).
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  iconRetinaUrl: '/leaflet/marker-icon-2x.png',
+  iconUrl: '/leaflet/marker-icon.png',
+  shadowUrl: '/leaflet/marker-shadow.png',
 })
 
 export default function MapaZona({ zona = 'No informado', campus = { lat: 2.443, lng: -76.606 }, dist_m = null }) {
