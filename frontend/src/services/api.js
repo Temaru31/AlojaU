@@ -7,12 +7,30 @@ export const API_TIMEOUT_MS = 55000
 export const API_MAX_RETRIES = 2
 export const API_SLOW_THRESHOLD_MS = 4000
 const RETRYABLE_STATUS = new Set([502, 503, 504])
+const LOCAL_API_FALLBACK = 'http://localhost:8000'
+
+// OLA2-M3: fail-fast en producción. Un build de prod sin VITE_API_URL apuntaría
+// en silencio a localhost (app rota sin error visible). En dev/test se mantiene
+// el fallback local. `env` inyectable para unit tests (por defecto import.meta.env).
+export function getApiBase(env = import.meta.env) {
+  const url = env?.VITE_API_URL
+  if (!url && env?.PROD) {
+    throw new Error('VITE_API_URL no definida en producción (fail-fast OLA2-M3)')
+  }
+  return url || LOCAL_API_FALLBACK
+}
 
 export function isRetryableError(err) {
+  if (isCancelError(err)) return false // OLA4: un abort nunca se reintenta
   const status = err?.response?.status
   if (status != null) return RETRYABLE_STATUS.has(status)
   // Sin respuesta: timeout, red caída, cold start Render.
   return true
+}
+
+// OLA4: peticiones abortadas vía AbortController (axios las rechaza con ERR_CANCELED).
+export function isCancelError(err) {
+  return err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError'
 }
 
 export function retryDelayMs(attempt) {
@@ -72,7 +90,7 @@ export function __resetApiTrackerForTests() {
 }
 
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
+  baseURL: getApiBase(),
   timeout: API_TIMEOUT_MS,
 })
 

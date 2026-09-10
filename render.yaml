@@ -18,7 +18,7 @@ services:
       - key: SECRET_KEY
         generateValue: true # Render genera 64 chars si no pones uno
       - key: CORS_ORIGINS
-        value: https://alojau.vercel.app,http://localhost:5173
+        value: https://aloja-u.vercel.app,http://localhost:5173
       - key: ENV
         value: prod
       - key: USE_MOCK_FALLBACK

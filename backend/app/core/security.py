@@ -1,7 +1,7 @@
 """JWT HS256 + bcrypt con fail-closed en prod (mock solo dev).
 Uso: Depends(get_current_user/require_arrendador/require_admin) en routers. Ej: headers {"Authorization": "Bearer <jwt>"} -> {"id":1,"rol":"ARRENDADOR"}."""
 from datetime import datetime, timezone, timedelta
-from jose import jwt
+import jwt  # OLA1: PyJWT (reemplaza python-jose abandonado); HS256 + require exp/sub
 from passlib.context import CryptContext
 from fastapi import HTTPException, Header
 from .config import settings
@@ -14,7 +14,16 @@ def create_token(data: dict):
     return jwt.encode({**data, "exp": exp}, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 def decode_token(token: str):
     try:
-        return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        return jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM],
+            options={"require": ["exp", "sub"]},  # OLA1: rechaza tokens sin expiración ni sujeto
+        )
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token inválido o expirado")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token inválido o expirado")
     except Exception:
         raise HTTPException(status_code=401, detail="Token inválido o expirado")
 

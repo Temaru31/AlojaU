@@ -3,6 +3,11 @@ import os
 from pydantic_settings import BaseSettings
 from pydantic import field_validator, model_validator
 
+# OLA2-M3: dominio prod canónico confirmado en dashboard Vercel (con guion).
+# render.yaml y .env.example deben usar exactamente este valor.
+CANONICAL_PROD_ORIGIN = "https://aloja-u.vercel.app"
+TYPO_PROD_ORIGIN = "https://alojau.vercel.app"  # sin guion: typo histórico, rechazar en prod
+
 class Settings(BaseSettings):
     ENV: str = "dev"  # dev|test|prod - prod activa fail-closed RLS/SEC
     DATABASE_URL: str = "postgresql+asyncpg://alojau:alojau123@localhost:5432/alojau"
@@ -58,6 +63,10 @@ class Settings(BaseSettings):
                 raise ValueError("Fail-closed: USE_MOCK_FALLBACK debe ser False en prod (DoD-5)")
             if "*" in self.CORS_ORIGINS:
                 raise ValueError("Fail-closed: CORS_ORIGINS no puede contener * en prod")
+            if TYPO_PROD_ORIGIN in self.cors_origins_list:
+                raise ValueError(
+                    f"Fail-closed: dominio con typo {TYPO_PROD_ORIGIN}; usa {CANONICAL_PROD_ORIGIN} (OLA2-M3)"
+                )
         return self
 
     @property
