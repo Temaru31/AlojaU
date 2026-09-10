@@ -15,3 +15,4 @@
 | 2026-09-09 | Fix 5 errores + auditoría UX subagente (sin screenshots, código+curl) + merge UX a main + check Vercel | Muse Spark | pytest 96, vitest 79, build OK, prod verificada |
 | 2026-09-09 | Dueño+Perfil (/mias paginado, PATCH editar, MisPubs modal, Perfil datos, ScrollToTop) rama feature/DUENO-perfil | Muse Spark | pytest 102, vitest 83, build OK, live OK |
 | 2026-09-10 | RBAC admin (seed_db.py, /api/admin, dashboard, guard, perfil por rol) rama feature/RBAC-admin | Muse Spark | pytest 107 (5 RBAC), vitest 90 (7 RBAC), build OK, live OK |
+| 2026-09-10 | Seed Supabase [OK] + T5 conftest reseed hermético + guard anti-prod, rama feature/T5-aislamiento | Muse Spark | pytest 107, counts 6/1/2 intactos, vitest 90, build OK |
