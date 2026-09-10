@@ -30,12 +30,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # DDL canónico es backend/db/schema.sql (psql/Supabase).
-    # Alembic lo replica via op.execute. Soporta ejecución desde backend/ o raíz.
+    # Alembic lo replica via op.execute. Solo rutas relativas al proyecto:
+    # primero relativa al archivo (funciona con cualquier CWD), luego CWD raíz/backend.
+    # OLA3: eliminada la ruta absoluta de máquina de desarrollo; solo relativas.
     import pathlib
+    _here = pathlib.Path(__file__).resolve()
     for cand in [
+        _here.parent.parent / "db" / "schema.sql",
         pathlib.Path("db/schema.sql"),
         pathlib.Path("backend/db/schema.sql"),
-        pathlib.Path("/home/angel/Escritorio/AlojaU/backend/db/schema.sql"),
     ]:
         if cand.exists():
             op.execute(sa.text(cand.read_text(encoding="utf-8")))

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS zonas_barrios (
   estrato SMALLINT CHECK (estrato BETWEEN 1 AND 6),
   UNIQUE(ciudad_id, nombre)
 );
+CREATE INDEX IF NOT EXISTS idx_zonas_ciudad ON zonas_barrios(ciudad_id);
 
 -- 3. Campus universitarios
 CREATE TABLE IF NOT EXISTS campus_universitarios (
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS campus_universitarios (
   activo BOOLEAN NOT NULL DEFAULT TRUE,
   UNIQUE(institucion, nombre_sede)
 );
+CREATE INDEX IF NOT EXISTS idx_campus_ciudad ON campus_universitarios(ciudad_id);
 
 -- 4. Usuarios (ARRENDADOR, ADMIN) - estudiante es anónimo
 CREATE TABLE IF NOT EXISTS usuarios (
@@ -46,6 +48,7 @@ CREATE TABLE IF NOT EXISTS usuarios (
   telefono_verificado BOOLEAN NOT NULL DEFAULT FALSE,
   creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_usuarios_rol ON usuarios(rol);
 
 -- 5. Servicios catálogo
 CREATE TABLE IF NOT EXISTS servicios_catalogo (
@@ -77,6 +80,10 @@ CREATE TABLE IF NOT EXISTS publicaciones (
 );
 CREATE INDEX IF NOT EXISTS idx_publicaciones_estado_canon ON publicaciones(estado, canon_mensual);
 CREATE INDEX IF NOT EXISTS idx_publicaciones_activo ON publicaciones(estado) WHERE estado='ACTIVO';
+-- OLA3/M6: alineación con modelos (antes solo existían los 2 de arriba)
+CREATE INDEX IF NOT EXISTS idx_publicaciones_zona_estado ON publicaciones(zona_barrio_id, estado);
+CREATE INDEX IF NOT EXISTS idx_publicaciones_usuario ON publicaciones(usuario_id);
+CREATE INDEX IF NOT EXISTS idx_publicaciones_vigencia ON publicaciones(fecha_renovacion);
 
 -- 7. Publicacion - Servicios (N-N)
 CREATE TABLE IF NOT EXISTS publicacion_servicios (
@@ -94,6 +101,7 @@ CREATE TABLE IF NOT EXISTS publicacion_campus (
   PRIMARY KEY (publicacion_id, campus_id)
 );
 CREATE INDEX IF NOT EXISTS idx_pubcampus_campus_dist ON publicacion_campus(campus_id, distancia_geodesica_m);
+CREATE INDEX IF NOT EXISTS idx_pubcampus_pub ON publicacion_campus(publicacion_id);
 
 -- 9. Imágenes
 CREATE TABLE IF NOT EXISTS imagenes_publicacion (
@@ -103,6 +111,7 @@ CREATE TABLE IF NOT EXISTS imagenes_publicacion (
   orden SMALLINT NOT NULL CHECK (orden > 0),
   UNIQUE(publicacion_id, orden)
 );
+CREATE INDEX IF NOT EXISTS idx_imagenes_pub ON imagenes_publicacion(publicacion_id);
 
 -- 10. Reportes (FIX estado PENDIENTE/DESCARTADO/CONFIRMADO, nunca ACTIVO)
 CREATE TABLE IF NOT EXISTS reportes_publicacion (
@@ -115,6 +124,7 @@ CREATE TABLE IF NOT EXISTS reportes_publicacion (
   fecha_creacion TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_reportes_pub_estado ON reportes_publicacion(publicacion_id, estado);
+CREATE INDEX IF NOT EXISTS idx_reportes_usuario ON reportes_publicacion(usuario_id);
 
 -- 11. Auditoría máquina estados (faltante en doc original)
 CREATE TABLE IF NOT EXISTS publicaciones_audit (
@@ -126,6 +136,9 @@ CREATE TABLE IF NOT EXISTS publicaciones_audit (
   creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_audit_pub ON publicaciones_audit(publicacion_id, creado_en);
+-- OLA3/M6: alineación con modelos + FK usuario sin índice
+CREATE INDEX IF NOT EXISTS idx_audit_evento ON publicaciones_audit(evento);
+CREATE INDEX IF NOT EXISTS idx_audit_usuario ON publicaciones_audit(usuario_id);
 
 -- 12. Función Haversine (p26) - IMMUTABLE para índices
 CREATE OR REPLACE FUNCTION haversine_m(lat1 DOUBLE PRECISION, lon1 DOUBLE PRECISION, lat2 DOUBLE PRECISION, lon2 DOUBLE PRECISION)
