@@ -13,9 +13,9 @@ L.Icon.Default.mergeOptions({
 })
 
 const MODOS_VIAJE = [
-  { id: 'walking', etiqueta: 'A pie' },
-  { id: 'driving', etiqueta: 'Auto' },
-  { id: 'transit', etiqueta: 'Bus' },
+  { id: 'walking', etiqueta: 'A pie', icono: '🚶' },
+  { id: 'driving', etiqueta: 'Auto', icono: '🚗' },
+  { id: 'transit', etiqueta: 'Bus', icono: '🚌' },
 ]
 
 /** Deep-link universal Google Maps (costo-cero: sin API key ni cuotas). */
@@ -53,9 +53,13 @@ export default function MapaZona({
   const gmapsUrl = destino
     ? buildGoogleMapsDirUrl({ origin: `${campus.lat},${campus.lng}`, destination: destino, travelmode: modoViaje })
     : null
-  const osmUrl = destino
-    ? `https://www.openstreetmap.org/directions?from=${campus.lat}%2C${campus.lng}&to=${encodeURIComponent(destino)}`
+  // FIX-OSM: el endpoint /directions con texto fallaba ("Búsqueda fallida",
+  // mapa en Europa). Solo coords precisas con formato marcador; sin coords
+  // no se renderiza el botón (solo Google Maps, que sí resuelve texto).
+  const osmUrl = tieneAviso
+    ? `https://www.openstreetmap.org/?mlat=${aviso.lat}&mlon=${aviso.lng}#map=17/${aviso.lat}/${aviso.lng}`
     : null
+  const modoActual = MODOS_VIAJE.find(m => m.id === modoViaje) || MODOS_VIAJE[0]
 
   return (
     <div className="w-full min-w-0">
@@ -130,38 +134,40 @@ export default function MapaZona({
         )}
       </p>
       {gmapsUrl && (
-        <div className="mt-3 rounded-lg border border-neutral-200 bg-white p-3">
-          <div className="flex flex-wrap items-center gap-1.5 mb-2.5" role="group" aria-label="Modo de viaje">
-            {MODOS_VIAJE.map(m => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => setModoViaje(m.id)}
-                aria-pressed={modoViaje === m.id}
-                className={`text-[11px] font-medium px-2.5 py-1 rounded-full border transition ${modoViaje === m.id ? 'bg-navy-800 text-white border-navy-800' : 'bg-white text-neutral-600 border-neutral-200 hover:border-navy-300'}`}
-              >
-                {m.etiqueta}
-              </button>
-            ))}
-          </div>
-          <div className="flex flex-col sm:flex-row gap-2">
+        <div className="mt-3 rounded-xl border border-neutral-200 bg-white p-3 sm:p-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="inline-flex items-center gap-1 self-start rounded-full bg-neutral-100 p-1" role="group" aria-label="Modo de viaje">
+              {MODOS_VIAJE.map(m => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setModoViaje(m.id)}
+                  aria-pressed={modoViaje === m.id}
+                  className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full transition ${modoViaje === m.id ? 'bg-white text-navy-900 shadow-sm' : 'text-neutral-500 hover:text-navy-800'}`}
+                >
+                  <span aria-hidden="true">{m.icono}</span> {m.etiqueta}
+                </button>
+              ))}
+            </div>
             <a
               href={gmapsUrl}
               target="_blank"
               rel="noopener"
-              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-navy-800 text-white font-medium text-xs rounded-md hover:bg-navy-900 active:scale-95 transition flex-1"
+              className="inline-flex w-full md:w-auto md:flex-1 md:max-w-xs items-center justify-center gap-2 px-4 py-3 bg-navy-800 text-white font-semibold text-sm rounded-lg hover:bg-navy-900 active:scale-[0.98] transition"
             >
-              <span aria-hidden="true">🧭</span> Cómo llegar en Google Maps
+              <span aria-hidden="true">{modoActual.icono}</span> Cómo llegar en Google Maps
             </a>
+          </div>
+          {osmUrl && (
             <a
               href={osmUrl}
               target="_blank"
               rel="noopener"
-              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-medium text-neutral-600 border border-neutral-200 rounded-md hover:border-navy-300 hover:text-navy-800 transition"
+              className="mt-2.5 inline-flex items-center gap-1.5 text-[11px] font-medium text-neutral-500 hover:text-navy-800 hover:underline transition"
             >
-              Abrir en OSM
+              <span aria-hidden="true">🗺️</span> Abrir ubicación en OpenStreetMap
             </a>
-          </div>
+          )}
           {!tieneAviso && (
             <p className="text-[11px] text-neutral-400 mt-2">Destino aproximado por dirección referencial — confirma por WhatsApp.</p>
           )}

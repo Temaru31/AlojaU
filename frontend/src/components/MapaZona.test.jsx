@@ -46,7 +46,10 @@ describe('MapaZona Oleada 2', () => {
     expect(screen.getByText(/Ubicación aproximada/)).toBeInTheDocument()
     const link = screen.getByRole('link', { name: /Cómo llegar en Google Maps/ })
     expect(link.getAttribute('href')).toContain('2.4451')
-    expect(screen.getByRole('link', { name: 'Abrir en OSM' })).toBeInTheDocument()
+    const osm = screen.getByRole('link', { name: /Abrir ubicación en OpenStreetMap/ })
+    // FIX-OSM: coords directas con marcador, nunca /directions con texto.
+    expect(osm.getAttribute('href')).toContain('mlat=2.4451')
+    expect(osm.getAttribute('href')).toContain('#map=17/2.4451/')
   })
 
   it('cambiar modo de viaje actualiza el deep-link', () => {
@@ -69,5 +72,28 @@ describe('MapaZona Oleada 2', () => {
     expect(screen.queryByTestId('linea-ruta')).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Cómo llegar/ })).not.toBeInTheDocument()
     expect(screen.getByText(/mapa referencial del campus/)).toBeInTheDocument()
+  })
+
+  it('sin coords precisas no muestra OSM (solo Google Maps con texto)', () => {
+    render(
+      <MemoryRouter>
+        <MapaZona campus={{ lat: 2.443, lng: -76.606 }} dist_m={null} direccion="Calle 5 #4-70" />
+      </MemoryRouter>
+    )
+    expect(screen.getByRole('link', { name: /Cómo llegar en Google Maps/ })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /OpenStreetMap/ })).not.toBeInTheDocument()
+  })
+
+  it('CTA muestra el icono del modo de viaje seleccionado', () => {
+    render(
+      <MemoryRouter>
+        <MapaZona campus={{ lat: 2.443, lng: -76.606 }} aviso={{ lat: 2.4451, lng: -76.6085 }} />
+      </MemoryRouter>
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Auto/ }))
+    const cta = screen.getByRole('link', { name: /Cómo llegar en Google Maps/ })
+    expect(cta.getAttribute('href')).toContain('travelmode=driving')
+    // El icono va en span aria-hidden (no cuenta en el nombre accesible).
+    expect(cta.textContent).toContain('🚗')
   })
 })
