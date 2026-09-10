@@ -72,6 +72,9 @@ def mock_to_out(pub: dict, campus_id: Optional[int] = None) -> dict:
         "telefono_whatsapp": tel,
         "whatsapp_url": whatsapp_link(pub["titulo"], pub["id"], tel),
         "usuario_id": pub.get("usuario_id"),
+        # Oleada 2: coords para MapaZona modo aviso + deep-link (eran internas, ahora visibles).
+        "latitud": pub.get("latitud"),
+        "longitud": pub.get("longitud"),
     }
 
 
@@ -149,6 +152,9 @@ def build_detail(p, reportes_activos: int, u, dist) -> dict:
         "nivel": trust["nivel"], "nivel_confianza": trust["nivel"],
         "advertencia": trust["advertencia"], "telefono_whatsapp": tel,
         "whatsapp_url": whatsapp_link(p.titulo, p.id, tel),
+        # Oleada 2: coords para MapaZona modo aviso + deep-link (eran internas, ahora visibles).
+        "latitud": float(p.latitud) if p.latitud is not None else None,
+        "longitud": float(p.longitud) if p.longitud is not None else None,
     }
 
 
@@ -165,9 +171,14 @@ def cards_for_page(pubs, reportes_map: dict, users_map: dict, dist_map: dict, ca
     return out
 
 
-def filter_mock_pubs(pubs: List[dict], campus_id=None, precio_min=None, precio_max=None, tipo=None, servicios_ids=None):
-    """Filtros HU-001/002 sobre MOCK_PUBS (solo dev sin PG)."""
+def filter_mock_pubs(pubs: List[dict], campus_id=None, precio_min=None, precio_max=None, tipo=None, servicios_ids=None, q=None):
+    """Filtros HU-001/002 + Oleada 2 (q texto libre) sobre MOCK_PUBS (solo dev sin PG)."""
     from app.services.haversine import haversine_m as _h
+    import unicodedata
+
+    def _norm(s: str) -> str:
+        s = (s or "").lower()
+        return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
 
     filtradas = [p for p in pubs if p["estado"] == "ACTIVO"]
     if campus_id:
@@ -181,6 +192,20 @@ def filter_mock_pubs(pubs: List[dict], campus_id=None, precio_min=None, precio_m
         filtradas = [p for p in filtradas if p["tipo_inmueble"] == tipo]
     if servicios_ids:
         filtradas = [p for p in filtradas if all(s in p.get("servicios_ids", []) for s in servicios_ids)]
+    if q and q.strip():
+        nq = _norm(q.strip())
+        # Relevancia simple: empieza-por-título > contiene-en-título > contiene-en-descripción.
+        scored = []
+        for p in filtradas:
+            nt, nd = _norm(p.get("titulo", "")), _norm(p.get("descripcion", ""))
+            if nt.startswith(nq):
+                scored.append((0, p))
+            elif nq in nt:
+                scored.append((1, p))
+            elif nq in nd:
+                scored.append((2, p))
+        scored.sort(key=lambda t: t[0])
+        filtradas = [p for _, p in scored]
     return filtradas
 
 

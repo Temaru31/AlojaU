@@ -2,15 +2,48 @@
 Uso: routers/publicaciones.py. Ej: total, pubs = await repo.query_lista(db, ...)."""
 from typing import List, Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.pagination import paginate_params, build_paginated
 
+# Oleada 2: umbrales de búsqueda por texto (alineados al prompt táctico).
+Q_MIN_FTS_LEN = 3  # q más corta -> solo fallback difuso (ILIKE/trigrama)
+Q_TRGM_SIMILARITY = 0.3
 
-def lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servicios):
-    """Filtros HU-001/002 compartidos por COUNT y página (SQLAlchemy portable PG/SQLite)."""
+
+def _texto_busqueda(Publicacion):
+    """Expresión titulo + descripcion para FTS (ambas NOT NULL en el modelo)."""
+    return Publicacion.titulo + " " + Publicacion.descripcion
+
+
+def fts_condition(Publicacion, q: str):
+    """Coincidencia Full-Text español (usa idx_publicaciones_fts)."""
+    return func.to_tsvector("spanish", _texto_busqueda(Publicacion)).op("@@")(
+        func.websearch_to_tsquery("spanish", q)
+    )
+
+
+def fuzzy_condition(Publicacion, q: str):
+    """Fallback tolerante a typos: trigramas o ILIKE parcial (usa idx_publicaciones_trgm)."""
+    return or_(
+        func.similarity(Publicacion.titulo, q) > Q_TRGM_SIMILARITY,
+        Publicacion.titulo.ilike(f"%{q}%"),
+        Publicacion.descripcion.ilike(f"%{q}%"),
+    )
+
+
+def ts_rank_order(Publicacion, q: str):
+    """Relevancia FTS (mayor primero)."""
+    return func.ts_rank(
+        func.to_tsvector("spanish", _texto_busqueda(Publicacion)),
+        func.websearch_to_tsquery("spanish", q),
+    ).desc()
+
+
+def lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servicios, q: Optional[str] = None, q_mode: Optional[str] = None):
+    """Filtros HU-001/002 + Oleada 2 (q) compartidos por COUNT y página (SQLAlchemy portable PG/SQLite)."""
     conds = [Publicacion.estado == "ACTIVO"]
     if precio_min is not None:
         conds.append(Publicacion.canon_mensual >= precio_min)
@@ -21,7 +54,21 @@ def lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servi
     if servicios:
         for sid in servicios:
             conds.append(Publicacion.servicios.any(id=sid))
+    if q and q_mode == "fts":
+        conds.append(fts_condition(Publicacion, q))
+    elif q and q_mode == "fuzzy":
+        conds.append(fuzzy_condition(Publicacion, q))
     return conds
+
+
+def resolver_modo_q(q: Optional[str]) -> Optional[str]:
+    """Normaliza q y elige modo: None (sin búsqueda), 'fts' (>=3 chars) o 'fuzzy' (<3)."""
+    if q is None:
+        return None
+    q = q.strip()
+    if not q:
+        return None
+    return "fts" if len(q) >= Q_MIN_FTS_LEN else "fuzzy"
 
 
 async def count_total(db: AsyncSession, conds, campus_id: Optional[int]) -> int:
@@ -36,8 +83,12 @@ async def count_total(db: AsyncSession, conds, campus_id: Optional[int]) -> int:
     return (await db.execute(stmt)).scalar() or 0
 
 
-async def fetch_page(db: AsyncSession, conds, campus_id: Optional[int], limit: int, offset: int):
-    """Página en SQL con orden determinista (distancia NULLS LAST + id)."""
+async def fetch_page(db: AsyncSession, conds, campus_id: Optional[int], limit: int, offset: int, q: Optional[str] = None, q_mode: Optional[str] = None):
+    """Página en SQL con orden determinista (distancia NULLS LAST + id).
+
+    Oleada 2: con q en modo FTS ordena por relevancia (ts_rank) y luego
+    fecha_renovacion; en modo fuzzy/recientes, por fecha_renovacion + id.
+    """
     from app.models import Publicacion, PublicacionCampus
 
     stmt = (
@@ -49,8 +100,25 @@ async def fetch_page(db: AsyncSession, conds, campus_id: Optional[int], limit: i
         stmt = (
             stmt.join(PublicacionCampus, PublicacionCampus.publicacion_id == Publicacion.id)
             .where(PublicacionCampus.campus_id == campus_id)
-            .order_by(PublicacionCampus.distancia_geodesica_m.asc().nullslast(), Publicacion.id.asc())
         )
+        if q_mode == "fts" and q:
+            stmt = stmt.order_by(
+                ts_rank_order(Publicacion, q),
+                Publicacion.fecha_renovacion.desc(),
+                Publicacion.id.asc(),
+            )
+        elif q:
+            stmt = stmt.order_by(Publicacion.fecha_renovacion.desc(), Publicacion.id.asc())
+        else:
+            stmt = stmt.order_by(PublicacionCampus.distancia_geodesica_m.asc().nullslast(), Publicacion.id.asc())
+    elif q_mode == "fts" and q:
+        stmt = stmt.order_by(
+            ts_rank_order(Publicacion, q),
+            Publicacion.fecha_renovacion.desc(),
+            Publicacion.id.asc(),
+        )
+    elif q:
+        stmt = stmt.order_by(Publicacion.fecha_renovacion.desc(), Publicacion.id.asc())
     else:
         stmt = stmt.order_by(Publicacion.id.asc())
     stmt = stmt.limit(limit).offset(offset)
@@ -96,13 +164,44 @@ async def fetch_page_aggregates(db: AsyncSession, pubs, campus_id: Optional[int]
     return reportes_map, users_map, dist_map
 
 
-async def query_lista(db, campus_id, precio_min, precio_max, tipo, servicios, page=1, size=9):
+async def query_lista(db, campus_id, precio_min, precio_max, tipo, servicios, page=1, size=9, q: Optional[str] = None):
     """COUNT + página + agregados para GET /api/publicaciones.
-    Uso: routers/publicaciones.py::list_publicaciones. Ej: total, pubs, *_map, size = await query_lista(db, 1, None, None, None, None)."""
+
+    Uso: routers/publicaciones.py::list_publicaciones. Ej: total, pubs, *_map, size = await query_lista(db, 1, None, None, None, None).
+    Oleada 2: q>=3 chars primero FTS; si 0 resultados -> fallback difuso (trigrama/ILIKE).
+    q de 1-2 chars -> directo a fallback difuso. q vacía -> sin filtro de texto.
+    """
     from app.models import Publicacion
 
-    conds = lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servicios)
+    q = q.strip() if isinstance(q, str) else None
+    if q == "":
+        q = None
+    mode = resolver_modo_q(q)
     offset, size_norm = paginate_params(page, size)
+
+    async def _consultar(q_mode):
+        conds = lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servicios, q, q_mode)
+        total = await count_total(db, conds, campus_id)
+        if total == 0:
+            return build_paginated([], 0, page, size_norm)
+        pubs = await fetch_page(db, conds, campus_id, size_norm, offset, q, q_mode)
+        reportes_map, users_map, dist_map = await fetch_page_aggregates(db, pubs, campus_id)
+        return total, pubs, reportes_map, users_map, dist_map, size_norm
+
+    if mode == "fts":
+        try:
+            res = await _consultar("fts")
+            total = res[0] if isinstance(res, tuple) else res.get("total", 0)
+            if total > 0:
+                return res
+        except Exception:
+            # FTS no disponible (p.ej. dialecto sin websearch_to_tsquery): cae al fallback.
+            pass
+        return await _consultar("fuzzy")
+    if mode == "fuzzy":
+        return await _consultar("fuzzy")
+
+    conds = lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servicios)
     total = await count_total(db, conds, campus_id)
     if total == 0:
         return build_paginated([], 0, page, size_norm)

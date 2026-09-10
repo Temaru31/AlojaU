@@ -386,6 +386,9 @@ export default function Detalle() {
               zona={zona}
               dist_m={dist}
               campus={{ lat: 2.443, lng: -76.606 }}
+              aviso={pub.latitud != null && pub.longitud != null ? { lat: pub.latitud, lng: pub.longitud } : null}
+              direccion={pub.direccion_referencial || ''}
+              titulo={pub.titulo}
             />
           </div>
 

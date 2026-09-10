@@ -99,6 +99,7 @@ async def list_publicaciones(
     precio_max: Optional[int] = Query(None, ge=0, le=10_000_000, description="COP máximo"),
     tipo: Optional[str] = Query(None, pattern="^(HABITACION_FAMILIAR|HABITACION_INDEPENDIENTE|APARTAESTUDIO|COMPARTIDO)$"),
     servicios: Optional[str] = Query(None, max_length=50, description="IDs coma separados, ej: 1,3"),
+    q: Optional[str] = Query(None, min_length=2, max_length=100, description="Texto libre: FTS español + fallback trigramas (Oleada 2)"),
     page: int = Query(1, ge=1, le=1000, description="Página 1-indexed"),
     size: int = Query(9, ge=1, le=50, description="Tamaño página"),
     db: AsyncSession = Depends(get_session),
@@ -122,7 +123,7 @@ async def list_publicaciones(
     # Intento DB real con fallback mock solo en dev (B0-2 fail-closed 503 en prod)
     try:
         total, pubs, rep_map, user_map, dist_map, size_norm = await repo.query_lista(
-            db, campus_id, precio_min, precio_max, tipo, servicios_ids, page, size
+            db, campus_id, precio_min, precio_max, tipo, servicios_ids, page, size, q
         )
         items = view.cards_for_page(pubs, rep_map, user_map, dist_map, campus_id)
         return build_paginated(items, total, page, size_norm)
@@ -138,7 +139,7 @@ async def list_publicaciones(
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         print(f"[Sprint1 mock fallback] DB no disponible: {e!r}")
-        filtradas = view.filter_mock_pubs(MOCK_PUBS, campus_id, precio_min, precio_max, tipo, servicios_ids)
+        filtradas = view.filter_mock_pubs(MOCK_PUBS, campus_id, precio_min, precio_max, tipo, servicios_ids, q)
         items = [view.mock_to_out(p, campus_id) for p in filtradas]
         total = len(items)
         offset, size_norm = paginate_params(page, size)

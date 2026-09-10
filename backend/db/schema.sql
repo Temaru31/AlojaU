@@ -4,6 +4,9 @@ BEGIN;
 
 -- Extensiones
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+-- Oleada 2: búsqueda por texto (FTS español + trigramas). Ver alembic 003_busqueda_fts.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS unaccent;
 
 -- 1. Ciudades
 CREATE TABLE IF NOT EXISTS ciudades (
@@ -84,6 +87,9 @@ CREATE INDEX IF NOT EXISTS idx_publicaciones_activo ON publicaciones(estado) WHE
 CREATE INDEX IF NOT EXISTS idx_publicaciones_zona_estado ON publicaciones(zona_barrio_id, estado);
 CREATE INDEX IF NOT EXISTS idx_publicaciones_usuario ON publicaciones(usuario_id);
 CREATE INDEX IF NOT EXISTS idx_publicaciones_vigencia ON publicaciones(fecha_renovacion);
+-- Oleada 2 (FTS + trigramas, ver alembic 003_busqueda_fts):
+CREATE INDEX IF NOT EXISTS idx_publicaciones_fts ON publicaciones USING gin(to_tsvector('spanish', coalesce(titulo, '') || ' ' || coalesce(descripcion, '')));
+CREATE INDEX IF NOT EXISTS idx_publicaciones_trgm ON publicaciones USING gin(titulo gin_trgm_ops);
 
 -- 7. Publicacion - Servicios (N-N)
 CREATE TABLE IF NOT EXISTS publicacion_servicios (

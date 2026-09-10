@@ -177,6 +177,9 @@ class PublicacionDetailOut(BaseModel):
     advertencia: Optional[str] = None
     telefono_whatsapp: Optional[str] = None
     whatsapp_url: Optional[str] = None
+    # Oleada 2: coords del aviso (para mapa + deep-link; null si el dueño no las informó).
+    latitud: Optional[float] = None
+    longitud: Optional[float] = None
 
 
 class PublicacionCreatedOut(BaseModel):

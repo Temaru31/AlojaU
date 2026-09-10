@@ -6,7 +6,7 @@ import { api } from '../services/api'
 
 vi.mock('../services/api', () => ({ api: { get: vi.fn() } }))
 // Leaflet no corre en jsdom: se mockean hijos visuales (el scroll/botones se prueban aquí).
-vi.mock('../components/MapaZona', () => ({ default: () => <div data-testid="mapa" /> }))
+vi.mock('../components/MapaZona', () => ({ default: (props) => <div data-testid="mapa" data-aviso={props.aviso ? JSON.stringify(props.aviso) : ''} /> }))
 vi.mock('../components/GaleriaFotos', () => ({ default: () => <div data-testid="galeria" /> }))
 vi.mock('../components/IndiceConfianza', () => ({ default: () => <div data-testid="indice" /> }))
 vi.mock('../components/ReportarModal', () => ({ default: () => <div data-testid="reportar" /> }))
@@ -96,5 +96,21 @@ describe('Detalle UX', () => {
     renderDetalle()
     await waitFor(() => expect(screen.getByText(/No se pudo cargar la publicación/)).toBeInTheDocument())
     expect(screen.getByRole('button', { name: 'Reintentar' })).toBeInTheDocument()
+  })
+
+  it('Oleada 2: pasa coords del aviso al mapa (modo aviso + deep-link)', async () => {
+    window.scrollTo = vi.fn()
+    api.get.mockResolvedValue({ data: { ...pub, latitud: 2.4451, longitud: -76.6085 } })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByTestId('mapa')).toBeInTheDocument())
+    expect(screen.getByTestId('mapa').dataset.aviso).toContain('2.4451')
+  })
+
+  it('Oleada 2: sin coords el mapa va en modo campus (aviso vacío)', async () => {
+    window.scrollTo = vi.fn()
+    api.get.mockResolvedValue({ data: { ...pub, latitud: null, longitud: null } })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByTestId('mapa')).toBeInTheDocument())
+    expect(screen.getByTestId('mapa').dataset.aviso).toBe('')
   })
 })

@@ -1,15 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../services/api'
 import Card from '../components/Card'
 import Filtros from '../components/Filtros'
 import Paginacion from '../components/Paginacion'
+import SearchBar from '../components/SearchBar'
 
 export default function Buscar() {
   const [campus, setCampus] = useState([])
   const [searchParams, setSearchParams] = useSearchParams()
   const campusId = Number(searchParams.get('campus_id') || 1)
   const page = Number(searchParams.get('page') || 1)
+  const q = searchParams.get('q') || ''
   const [filtros, setFiltros] = useState({
     min: searchParams.get('precio_min') || '',
     max: searchParams.get('precio_max') || '',
@@ -32,6 +34,18 @@ export default function Buscar() {
     setSearchParams(params)
   }
 
+  const setQ = (texto) => {
+    const params = new URLSearchParams(searchParams)
+    texto.trim() ? params.set('q', texto.trim()) : params.delete('q')
+    params.set('page', 1)
+    if (params.toString() !== searchParams.toString()) setSearchParams(params)
+  }
+
+  const limpiarTodo = () => {
+    setFiltros({ min: '', max: '', tipo: '', servicios: '' })
+    setQ('')
+  }
+
   const setPage = (p) => {
     const params = new URLSearchParams(searchParams)
     params.set('page', p)
@@ -39,21 +53,27 @@ export default function Buscar() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  // debounce filtros -> URL (400ms)
+  // debounce filtros -> URL (400ms). El ref evita re-escribir la URL cuando
+  // el efecto se re-dispara por cambios ajenos (q, page) y el queryString en
+  // deps evita pisarlos con un closure rancio.
+  const filtrosAplicados = useRef(null)
   useEffect(() => {
+    const firma = JSON.stringify([filtros.min, filtros.max, filtros.tipo, filtros.servicios])
+    if (filtrosAplicados.current === firma) return
     const t = setTimeout(() => {
-      const params = new URLSearchParams(searchParams)
+      filtrosAplicados.current = firma
+      const params = new URLSearchParams(queryString)
       filtros.min ? params.set('precio_min', filtros.min) : params.delete('precio_min')
       filtros.max ? params.set('precio_max', filtros.max) : params.delete('precio_max')
       filtros.tipo ? params.set('tipo', filtros.tipo) : params.delete('tipo')
       filtros.servicios ? params.set('servicios', filtros.servicios) : params.delete('servicios')
       params.set('page', 1)
-      if (params.toString() !== searchParams.toString()) {
+      if (params.toString() !== queryString) {
         setSearchParams(params)
       }
     }, 400)
     return () => clearTimeout(t)
-  }, [filtros.min, filtros.max, filtros.tipo, filtros.servicios])
+  }, [filtros.min, filtros.max, filtros.tipo, filtros.servicios, queryString])
 
   useEffect(() => {
     api.get('/api/campus')
@@ -73,6 +93,7 @@ export default function Buscar() {
       precio_max: q.get('precio_max') || undefined,
       tipo: q.get('tipo') || undefined,
       servicios: q.get('servicios') || undefined,
+      q: q.get('q') || undefined,
       page, size: 9
     }
     api.get('/api/publicaciones', { params, signal: controller.signal })
@@ -125,6 +146,10 @@ export default function Buscar() {
       <section className="bg-white border-b border-neutral-150 sticky top-16 z-30">
         <div className="container-main py-4">
           <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex-[1.2]">
+              <label className="block text-xs font-medium text-neutral-500 mb-1.5">Buscar</label>
+              <SearchBar value={q} onChange={setQ} />
+            </div>
             <div className="flex-1">
               <label className="block text-xs font-medium text-neutral-500 mb-1.5">Campus</label>
               <select
@@ -201,8 +226,19 @@ export default function Buscar() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
               </svg>
             </div>
-            <p className="text-sm font-medium text-neutral-700 mb-1">Sin resultados</p>
-            <p className="text-xs text-neutral-400">Prueba otro campus o ajusta los filtros de busqueda</p>
+            <p className="text-sm font-medium text-neutral-700 mb-1">Sin resultados{q && <> para “{q}”</>}</p>
+            <p className="text-xs text-neutral-400 max-w-sm mx-auto">
+              {q
+                ? <>Intenta con “habitación”, “amoblado” o “cerca a la universidad”, revisa la ortografía o limpia los filtros.</>
+                : <>Prueba otro campus o ajusta los filtros de búsqueda.</>}
+            </p>
+            <button
+              type="button"
+              onClick={limpiarTodo}
+              className="mt-5 text-xs font-semibold text-navy-700 border border-navy-200 rounded-md px-4 py-2 hover:bg-navy-50 transition"
+            >
+              Limpiar búsqueda y filtros
+            </button>
           </div>
         )}
       </div>
