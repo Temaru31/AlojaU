@@ -8,10 +8,12 @@ import MisPublicaciones from './pages/MisPublicaciones'
 const Detalle = lazy(() => import('./pages/Detalle'))
 const Publicar = lazy(() => import('./pages/Publicar'))
 const Comparar = lazy(() => import('./pages/Comparar'))
+const Favoritos = lazy(() => import('./pages/Favoritos'))
 const AdminReportes = lazy(() => import('./pages/AdminReportes'))
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'))
 import ProtectedAdminRoute from './components/ProtectedAdminRoute'
 import ColdStartBanner from './components/ColdStartBanner'
+import Toaster from './components/Toast'
 import BrandMark from './components/BrandMark'
 import { FavoritosProvider, useFavoritos } from './contexts/FavoritosContext'
 import { CompararProvider, useComparar } from './contexts/CompararContext'
@@ -86,6 +88,14 @@ function Nav() {  const { count: favCount } = useFavoritos()
                 Comparar {compCount > 0 && <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full ml-1">{compCount}/{compMax}</span>}
               </Link>
               <Link
+                to="/favoritos"
+                className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${
+                  isActive('/favoritos') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
+                }`}
+              >
+                Favoritos {favCount > 0 && <span className="bg-red-100 text-red-700 text-[11px] px-1.5 py-0.5 rounded-full ml-1">{favCount}</span>}
+              </Link>
+              <Link
                 to="/perfil"
                 className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${
                   isActive('/perfil') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
@@ -97,7 +107,9 @@ function Nav() {  const { count: favCount } = useFavoritos()
           </div>
 
           <div className="hidden md:flex items-center gap-3">
-            {favCount > 0 && <span className="text-sm text-neutral-500" aria-label={`${favCount} favoritos`}>♡ {favCount}</span>}
+            <Link to="/favoritos" className="text-sm text-neutral-500 hover:text-red-600 transition-colors" aria-label={`${favCount} favoritos`}>
+              ♡ {favCount}
+            </Link>
             {/* UX: navbar según sesión */}
             {!token ? (
               <Link to="/perfil" className="px-3 py-2 text-sm font-medium rounded-md text-neutral-500 hover:text-navy-700 hover:bg-neutral-100 transition-colors">
@@ -197,9 +209,16 @@ function Nav() {  const { count: favCount } = useFavoritos()
               <span>Comparar</span>
               <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${compCount} de ${compMax} para comparar`}>{compCount}/{compMax}</span>
             </Link>
-            {/* UX-AUDIT P1: se elimina el item "Favoritos" (apuntaba a "/" = Buscar,
-                enlace muerto). La página /favoritos llega en T3 (BUG-07); el contador
-                ♡ del navbar desktop sigue visible. */}
+            {/* P-02: Favoritos ya tiene página propia (antes enlace muerto a "/"). */}
+            <Link
+              to="/favoritos"
+              onClick={closeMenu}
+              aria-current={isActive('/favoritos') ? 'page' : undefined}
+              className={mobileLinkCls(isActive('/favoritos'))}
+            >
+              <span>Favoritos</span>
+              <span className="bg-red-100 text-red-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${favCount} favoritos`}>{favCount}</span>
+            </Link>
             <Link
               to="/perfil"
               onClick={closeMenu}
@@ -276,6 +295,7 @@ function Footer() {
             <h4 className="text-sm font-semibold text-navy-800 mb-3">Plataforma</h4>
             <ul className="space-y-2">
               <li><Link to="/" className="text-sm text-neutral-500 hover:text-navy-700 transition-colors">Buscar vivienda</Link></li>
+              <li><Link to="/favoritos" className="text-sm text-neutral-500 hover:text-navy-700 transition-colors">Favoritos</Link></li>
               <li><Link to="/comparar" className="text-sm text-neutral-500 hover:text-navy-700 transition-colors">Comparar</Link></li>
               <li><Link to="/publicar" className="text-sm text-neutral-500 hover:text-navy-700 transition-colors">Publicar</Link></li>
             </ul>
@@ -321,6 +341,7 @@ function App() {
               <Routes>
                 <Route path="/" element={<Buscar />} />
                 <Route path="/publicacion/:id" element={<Detalle />} />
+                <Route path="/favoritos" element={<Favoritos />} />
                 <Route path="/comparar" element={<Comparar />} />
                 <Route path="/publicar" element={<Publicar />} />
                 <Route path="/perfil" element={<Perfil />} />
@@ -329,6 +350,7 @@ function App() {
                 <Route path="/admin/reportes" element={<ProtectedAdminRoute><AdminReportes /></ProtectedAdminRoute>} />
               </Routes>
               </Suspense>
+              <Toaster />
 
             </main>
             <Footer />

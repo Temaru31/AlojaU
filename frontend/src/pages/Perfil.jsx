@@ -16,8 +16,8 @@ export default function Perfil() {
   const [nombre, setNombre] = useState('')
 
   // Formulario de login si no hay token
-  const [loginEmail, setLoginEmail] = useState('arrendador@alojau.com')
-  const [loginPass, setLoginPass] = useState('AlojaU123')
+  const [loginEmail, setLoginEmail] = useState('')
+  const [loginPass, setLoginPass] = useState('')
   const [loginLoading, setLoginLoading] = useState(false)
 
   // Resumen del dueño (totales vía /mias; si falla se oculta en silencio).
@@ -108,13 +108,6 @@ export default function Perfil() {
     }
   }
 
-  const handleUsarMock = () => {
-    const t = 'mock-token-arrendador'
-    localStorage.setItem('alojau_token', t)
-    setToken(t)
-    emitAuthChange()
-  }
-
   // Nota UX: el cierre de sesión vive en el dropdown del navbar (AuthContext.logout).
 
   const handleGuardarDatos = async (e) => {
@@ -165,11 +158,6 @@ export default function Perfil() {
               Debes iniciar sesión para ver y editar tu información de contacto.
             </p>
 
-            <div className="bg-gold-50 border border-gold-200 rounded-md p-3 mb-4 text-xs sm:text-sm">
-              <p className="font-medium text-gold-700">Cuenta demo rápida:</p>
-              <p className="text-gold-600">Email: <code>arrendador@alojau.com</code> / Pass: <code>AlojaU123</code></p>
-            </div>
-
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-navy-800 mb-1.5">Email</label>
@@ -196,16 +184,6 @@ export default function Perfil() {
                 {loginLoading ? 'Ingresando...' : 'Iniciar sesión'}
               </button>
             </form>
-
-            <div className="mt-4 pt-4 border-t border-neutral-150 text-center">
-              <button
-                type="button"
-                onClick={handleUsarMock}
-                className="text-xs text-navy-600 hover:text-navy-800 hover:underline font-medium"
-              >
-                Usar mock-token-arrendador sin password (solo dev)
-              </button>
-            </div>
           </div>
         </div>
       </div>

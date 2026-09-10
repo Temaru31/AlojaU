@@ -20,8 +20,8 @@ const ZONAS = [
 export default function Publicar() {
   const [campus, setCampus] = useState([])
   const [token, setToken] = useState(() => localStorage.getItem('alojau_token') || '')
-  const [loginEmail, setLoginEmail] = useState('arrendador@alojau.com')
-  const [loginPass, setLoginPass] = useState('AlojaU123')
+  const [loginEmail, setLoginEmail] = useState('')
+  const [loginPass, setLoginPass] = useState('')
   const [loginError, setLoginError] = useState('')
   const [loginLoading, setLoginLoading] = useState(false)
 
@@ -75,7 +75,7 @@ export default function Publicar() {
       setToken(t)
       emitAuthChange()
     } catch (err) {
-      setLoginError(err.response?.data?.detail || 'Credenciales inválidas (usa arrendador@alojau.com / AlojaU123)')
+      setLoginError(err.response?.data?.detail || 'Credenciales inválidas')
     } finally { setLoginLoading(false) }
   }
 
@@ -181,11 +181,6 @@ export default function Publicar() {
               Debes iniciar sesión como <b>ARRENDADOR</b> para publicar. Estado inicial siempre <span className="font-medium text-gold-600">PENDIENTE</span> hasta ser revisada.
             </p>
 
-            <div className="bg-gold-50 border border-gold-200 rounded-md p-3 mb-4 text-xs sm:text-sm">
-              <p className="font-medium text-gold-700">Demo:</p>
-              <p className="text-gold-600">Email: <code>arrendador@alojau.com</code> / Pass: <code>AlojaU123</code></p>
-            </div>
-
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-navy-800 mb-1.5">Email</label>
@@ -212,17 +207,6 @@ export default function Publicar() {
                 {loginLoading ? 'Ingresando...' : 'Iniciar sesión como ARRENDADOR'}
               </button>
             </form>
-
-            <div className="mt-3 text-xs">
-              <button type="button"
-                onClick={() => {
-                  const t = 'mock-token-arrendador'; localStorage.setItem('alojau_token', t); setToken(t); emitAuthChange()
-                }}
-                className="text-navy-600 hover:text-navy-700 hover:underline"
-              >
-                Usar mock-token-arrendador sin password (solo dev)
-              </button>
-            </div>
           </div>
         </div>
       </div>

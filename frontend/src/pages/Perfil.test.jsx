@@ -12,14 +12,17 @@ afterEach(() => {
 })
 
 describe('Perfil - Perfil verificable + confianza clara', () => {
-  it('muestra inicio de sesión si no hay token', () => {
+  it('muestra inicio de sesión si no hay token (sin credenciales demo expuestas)', () => {
     render(
       <BrowserRouter>
         <Perfil />
       </BrowserRouter>
     )
     expect(screen.getByText(/Debes iniciar sesión/i)).toBeInTheDocument()
-    expect(screen.getByText(/Usar mock-token-arrendador/i)).toBeInTheDocument()
+    // D-20: ni credenciales ni mock-token visibles en UI
+    expect(screen.queryByText(/Usar mock-token-arrendador/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/arrendador@alojau\.com/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/AlojaU123/i)).not.toBeInTheDocument()
   })
 
   it('carga y muestra perfil con teléfono sin verificar (0 pts)', async () => {

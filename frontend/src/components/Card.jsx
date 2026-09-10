@@ -1,6 +1,7 @@
 import { getLabelIndice, formatDistancia } from '../utils/formatters'
 import { formatTiempoCaminando } from '../utils/formatters'
 import SmartImage from './SmartImage'
+import { notifyToast } from './Toast'
 import { useFavoritos } from '../contexts/FavoritosContext'
 import { useComparar } from '../contexts/CompararContext'
 
@@ -65,8 +66,12 @@ export default function Card({ pub }) {
           type="button"
           aria-label={isFav ? 'Quitar de favoritos' : 'Añadir a favoritos'}
           aria-pressed={isFav}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); favHook.toggle(pub.id) }}
-          className={`absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center text-sm backdrop-blur-sm border transition ${isFav ? 'bg-red-500 text-white border-red-500' : 'bg-white/90 text-neutral-600 border-white hover:bg-white'}`}
+          onClick={(e) => {
+            e.preventDefault(); e.stopPropagation()
+            favHook.toggle(pub.id)
+            notifyToast(isFav ? 'Quitado de favoritos' : 'Guardado en favoritos', isFav ? undefined : '/favoritos')
+          }}
+          className={`absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center text-sm backdrop-blur-sm border transition active:scale-90 ${isFav ? 'bg-red-500 text-white border-red-500' : 'bg-white/90 text-neutral-600 border-white hover:bg-white'}`}
           title={isFav ? 'En favoritos' : 'Añadir a favoritos'}
         >
           {isFav ? '♥' : '♡'}
@@ -76,8 +81,12 @@ export default function Card({ pub }) {
           type="button"
           aria-label={isComp ? 'Quitar de comparar' : 'Añadir a comparar'}
           aria-pressed={isComp}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); compHook.toggle(pub.id) }}
-          className={`absolute bottom-3 right-3 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold backdrop-blur-sm border transition ${isComp ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white/90 text-neutral-600 border-white hover:bg-white'}`}
+          onClick={(e) => {
+            e.preventDefault(); e.stopPropagation()
+            compHook.toggle(pub.id)
+            if (!isComp) notifyToast('Añadido a comparar', '/comparar')
+          }}
+          className={`absolute bottom-3 right-3 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold backdrop-blur-sm border transition active:scale-90 ${isComp ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white/90 text-neutral-600 border-white hover:bg-white'}`}
           title={isComp ? 'En comparar' : 'Añadir a comparar (máx 3)'}
         >
           {isComp ? '✓' : '+'}
