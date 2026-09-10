@@ -90,4 +90,29 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
       expect(screen.getByText(/Verificado \(\+20 pts\)/i)).toBeInTheDocument()
     })
   })
+
+  it('rol ADMIN ve banner maestro + acceso al dashboard', async () => {
+    localStorage.setItem('alojau_token', 'mock-token-admin')
+    vi.spyOn(api, 'get').mockImplementation((url) => {
+      if (url === '/api/admin/metricas') {
+        return Promise.resolve({ data: { pendientes: 2, reportes_pendientes: 1 } })
+      }
+      return Promise.resolve({
+        data: {
+          id: 2, email: 'admin@alojau.com', nombre_completo: 'Admin AlojaU',
+          telefono_whatsapp: '573009999999', telefono_verificado: true, rol: 'ADMIN',
+        }
+      })
+    })
+
+    render(
+      <BrowserRouter>
+        <Perfil />
+      </BrowserRouter>
+    )
+
+    expect(await screen.findByText(/Modo Administrador Maestro/)).toBeInTheDocument()
+    expect(await screen.findByText(/2 avisos por revisar/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Abrir panel admin/ })).toHaveAttribute('href', '/admin/dashboard')
+  })
 })

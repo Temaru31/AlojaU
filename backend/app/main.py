@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
 from app.core.config import settings
-from app.routers import publicaciones, campus, auth, uploads, reportes
+from app.routers import publicaciones, campus, auth, uploads, reportes, admin
 
 app = FastAPI(
     title="AlojaU API",
@@ -64,12 +64,13 @@ async def custom_docs():
         swagger_favicon_url="/static/favicon.svg",
     )
 
-# Routers Sprint1 + T1 reportes
+# Routers Sprint1 + T1 reportes + RBAC admin
 app.include_router(campus.router)
 app.include_router(publicaciones.router)
 app.include_router(auth.router)
 app.include_router(uploads.router)
 app.include_router(reportes.router)
+app.include_router(admin.router)
 
 # Legacy mock endpoints removidos: ahora en routers/publicaciones.py y routers/campus.py
 # - GET /api/publicaciones?campus_id=&precio_min=&precio_max=&tipo=&servicios=  (HU-001+002)

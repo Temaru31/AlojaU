@@ -13,7 +13,7 @@ logger = logging.getLogger("alojau.auth")
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-# Mock users (sin BD, solo dev)
+# Mock users (sin BD, solo dev). Claves demo ÚNICAS: AlojaU123 (igual que seed_db.py).
 MOCK_USERS = {
     "arrendador@alojau.com": {
         "password": hash_password("AlojaU123"),
@@ -24,7 +24,7 @@ MOCK_USERS = {
         "telefono_verificado": False,
     },
     "admin@alojau.com": {
-        "password": hash_password("Admin123"),
+        "password": hash_password("AlojaU123"),
         "rol": "ADMIN",
         "id": 2,
         "nombre_completo": "Administrador AlojaU",

@@ -61,3 +61,8 @@ def require_admin(authorization: str = Header(None)):
     if u.get("rol") != "ADMIN":
         raise HTTPException(status_code=403, detail="Solo ADMIN")
     return u
+
+
+# Alias con nombre explícito para endpoints de administración (RBAC).
+# Uso: user: dict = Depends(get_current_admin_user). Equivale a require_admin.
+get_current_admin_user = require_admin

@@ -6,6 +6,8 @@ import Publicar from './pages/Publicar'
 import Comparar from './pages/Comparar'
 import Perfil from './pages/Perfil'
 import AdminReportes from './pages/AdminReportes'
+import AdminDashboard from './pages/AdminDashboard'
+import ProtectedAdminRoute from './components/ProtectedAdminRoute'
 import MisPublicaciones from './pages/MisPublicaciones'
 import ColdStartBanner from './components/ColdStartBanner'
 import BrandMark from './components/BrandMark'
@@ -127,6 +129,11 @@ function Nav() {  const { count: favCount } = useFavoritos()
                       <Link to="/mis-publicaciones" onClick={closeUser} role="menuitem" className="block px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-100">
                         Mis Publicaciones
                       </Link>
+                      {user?.rol === 'ADMIN' && (
+                        <Link to="/admin/dashboard" onClick={closeUser} role="menuitem" className="block px-3 py-2 text-sm font-bold rounded-md text-navy-800 bg-navy-50 hover:bg-navy-100">
+                          🛡️ Panel admin
+                        </Link>
+                      )}
                       <button
                         onClick={() => { logout(); closeUser() }}
                         role="menuitem"
@@ -216,6 +223,16 @@ function Nav() {  const { count: favCount } = useFavoritos()
                 >
                   Mis Publicaciones
                 </Link>
+                {user?.rol === 'ADMIN' && (
+                  <Link
+                    to="/admin/dashboard"
+                    onClick={closeMenu}
+                    aria-current={isActive('/admin/dashboard') ? 'page' : undefined}
+                    className={mobileLinkCls(isActive('/admin/dashboard'))}
+                  >
+                    🛡️ Panel admin
+                  </Link>
+                )}
                 <button
                   onClick={() => { logout(); closeMenu() }}
                   className="w-full text-left px-3 py-2.5 text-sm font-semibold rounded-md text-red-600 hover:bg-red-50 transition-colors"
@@ -296,7 +313,8 @@ function App() {
                 <Route path="/publicar" element={<Publicar />} />
                 <Route path="/perfil" element={<Perfil />} />
                 <Route path="/mis-publicaciones" element={<MisPublicaciones />} />
-                <Route path="/admin/reportes" element={<AdminReportes />} />
+                <Route path="/admin/dashboard" element={<ProtectedAdminRoute><AdminDashboard /></ProtectedAdminRoute>} />
+                <Route path="/admin/reportes" element={<ProtectedAdminRoute><AdminReportes /></ProtectedAdminRoute>} />
               </Routes>
 
             </main>

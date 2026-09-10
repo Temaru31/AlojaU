@@ -14,3 +14,4 @@
 | 2026-09-09 | UX integral (scroll Detalle, reportar x2, colores confianza, /mias + AuthContext + navbar avatar, limpieza textos) rama feature/UX-mejoras | Muse Spark | pytest 96 passed (4 mias), vitest 76 passed (10 UX), build OK |
 | 2026-09-09 | Fix 5 errores + auditoría UX subagente (sin screenshots, código+curl) + merge UX a main + check Vercel | Muse Spark | pytest 96, vitest 79, build OK, prod verificada |
 | 2026-09-09 | Dueño+Perfil (/mias paginado, PATCH editar, MisPubs modal, Perfil datos, ScrollToTop) rama feature/DUENO-perfil | Muse Spark | pytest 102, vitest 83, build OK, live OK |
+| 2026-09-10 | RBAC admin (seed_db.py, /api/admin, dashboard, guard, perfil por rol) rama feature/RBAC-admin | Muse Spark | pytest 107 (5 RBAC), vitest 90 (7 RBAC), build OK, live OK |

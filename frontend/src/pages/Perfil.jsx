@@ -22,6 +22,8 @@ export default function Perfil() {
 
   // Resumen del dueño (totales vía /mias; si falla se oculta en silencio).
   const [misStats, setMisStats] = useState(null)
+  // Alertas del sistema (solo ADMIN, vía /api/admin/metricas; si falla se oculta).
+  const [alertas, setAlertas] = useState(null)
 
   const cargarPerfil = async (authToken) => {
     setLoading(true)
@@ -62,6 +64,18 @@ export default function Perfil() {
     })
     return () => { vivo = false }
   }, [token])
+
+  const esAdmin = perfil?.rol === 'ADMIN'
+
+  // Alertas admin: pendientes + reportes (mismo origen que el dashboard).
+  useEffect(() => {
+    if (!token || !esAdmin) { setAlertas(null); return }
+    let vivo = true
+    api.get('/api/admin/metricas', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => { if (vivo) setAlertas(r.data) })
+      .catch(() => { if (vivo) setAlertas(null) })
+    return () => { vivo = false }
+  }, [token, esAdmin])
 
   // UX-AUDIT P0: el navbar puede cerrar sesión (AuthContext.logout); si este
   // token local queda rancio, la vista mostraría 401. Re-sincroniza con eventos.
@@ -255,6 +269,19 @@ export default function Perfil() {
         </div>
 
         {/* Feedback alerts */}
+        {esAdmin && (
+          <div className="rounded-xl border-2 border-navy-800 bg-navy-900 text-white p-4 sm:p-5" role="status">
+            <p className="font-display font-bold text-base sm:text-lg">🛡️ Modo Administrador Maestro</p>
+            <p className="text-xs sm:text-sm text-navy-200 mt-1">
+              {alertas
+                ? `${alertas.pendientes ?? 0} avisos por revisar · ${alertas.reportes_pendientes ?? 0} reportes pendientes`
+                : 'Cargando alertas del sistema…'}
+            </p>
+            <Link to="/admin/dashboard" className="inline-block mt-3 px-4 py-2 text-xs font-bold bg-gold-400 text-navy-900 rounded-md hover:bg-gold-500 transition">
+              Abrir panel admin →
+            </Link>
+          </div>
+        )}
         {error && (
           <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-md flex items-center gap-2">
             <svg className="w-4 h-4 text-red-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
