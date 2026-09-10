@@ -9,6 +9,7 @@ import AdminReportes from './pages/AdminReportes'
 import AdminDashboard from './pages/AdminDashboard'
 import ProtectedAdminRoute from './components/ProtectedAdminRoute'
 import MisPublicaciones from './pages/MisPublicaciones'
+import Favoritos from './pages/Favoritos'
 import ColdStartBanner from './components/ColdStartBanner'
 import BrandMark from './components/BrandMark'
 import { FavoritosProvider, useFavoritos } from './contexts/FavoritosContext'
@@ -84,6 +85,20 @@ function Nav() {  const { count: favCount } = useFavoritos()
                 Comparar {compCount > 0 && <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full ml-1">{compCount}/{compMax}</span>}
               </Link>
               <Link
+                to="/favoritos"
+                className={`px-3 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-1 ${
+                  isActive('/favoritos') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
+                }`}
+              >
+                <span>Favoritos</span>
+                <span className="text-red-500 text-xs">♥</span>
+                {favCount > 0 && (
+                  <span className="bg-red-100 text-red-700 text-[11px] px-1.5 py-0.5 rounded-full font-bold">
+                    {favCount}
+                  </span>
+                )}
+              </Link>
+              <Link
                 to="/perfil"
                 className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${
                   isActive('/perfil') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
@@ -91,11 +106,37 @@ function Nav() {  const { count: favCount } = useFavoritos()
               >
                 Mi Perfil
               </Link>
+              {token && (
+                <Link
+                  to="/mis-publicaciones"
+                  className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${
+                    isActive('/mis-publicaciones') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
+                  }`}
+                >
+                  Mis publicaciones
+                </Link>
+              )}
             </div>
           </div>
 
           <div className="hidden md:flex items-center gap-3">
-            {favCount > 0 && <span className="text-sm text-neutral-500" aria-label={`${favCount} favoritos`}>♡ {favCount}</span>}
+            <Link
+              to="/favoritos"
+              aria-label={`Favoritos ${favCount > 0 ? `(${favCount})` : ''}`}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition text-sm font-medium ${
+                isActive('/favoritos')
+                  ? 'border-red-300 bg-red-50 text-red-700'
+                  : 'border-neutral-200 text-neutral-600 hover:border-red-300 hover:bg-red-50/50'
+              }`}
+            >
+              <span className="text-red-500 text-sm">♥</span>
+              <span>Favoritos</span>
+              {favCount > 0 && (
+                <span className="bg-red-100 text-red-700 text-xs px-1.5 py-0.2 rounded-full font-bold">
+                  {favCount}
+                </span>
+              )}
+            </Link>
             {/* UX: navbar según sesión */}
             {!token ? (
               <Link to="/perfil" className="px-3 py-2 text-sm font-medium rounded-md text-neutral-500 hover:text-navy-700 hover:bg-neutral-100 transition-colors">
@@ -195,9 +236,17 @@ function Nav() {  const { count: favCount } = useFavoritos()
               <span>Comparar</span>
               <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${compCount} de ${compMax} para comparar`}>{compCount}/{compMax}</span>
             </Link>
-            {/* UX-AUDIT P1: se elimina el item "Favoritos" (apuntaba a "/" = Buscar,
-                enlace muerto). La página /favoritos llega en T3 (BUG-07); el contador
-                ♡ del navbar desktop sigue visible. */}
+            <Link
+              to="/favoritos"
+              onClick={closeMenu}
+              aria-current={isActive('/favoritos') ? 'page' : undefined}
+              className={mobileLinkCls(isActive('/favoritos'))}
+            >
+              <span>Favoritos</span>
+              <span className="text-red-500 font-semibold flex items-center gap-1">
+                ♥ {favCount > 0 && <span className="bg-red-100 text-red-700 text-[11px] px-1.5 py-0.5 rounded-full font-bold">{favCount}</span>}
+              </span>
+            </Link>
             <Link
               to="/perfil"
               onClick={closeMenu}
@@ -313,6 +362,7 @@ function App() {
                 <Route path="/publicar" element={<Publicar />} />
                 <Route path="/perfil" element={<Perfil />} />
                 <Route path="/mis-publicaciones" element={<MisPublicaciones />} />
+                <Route path="/favoritos" element={<Favoritos />} />
                 <Route path="/admin/dashboard" element={<ProtectedAdminRoute><AdminDashboard /></ProtectedAdminRoute>} />
                 <Route path="/admin/reportes" element={<ProtectedAdminRoute><AdminReportes /></ProtectedAdminRoute>} />
               </Routes>

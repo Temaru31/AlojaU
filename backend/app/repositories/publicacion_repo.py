@@ -212,3 +212,85 @@ async def create_persisted(db, payload, user_id: int, trust: dict, campus_ids, s
     await db.commit()
     await db.refresh(nueva)
     return nueva
+
+
+async def renovar_publicacion(db: AsyncSession, pub_id: int, user_id: int) -> dict:
+    """Renueva la vigencia de una publicación por exactamente 30 días calendario (PA-01).
+
+    Reglas de negocio:
+    - Solo el dueño (user_id == publicacion.usuario_id) puede renovar.
+    - Si fecha_expiracion > ahora: nueva = fecha_expiracion_actual + 30 días.
+    - Si ya venció:               nueva = ahora + 30 días.
+    - EXPIRADO → estado pasa a ACTIVO tras la renovación.
+    - RECHAZADO / DESACTIVADO → fecha renovada pero estado no cambia.
+    - Genera fila de auditoría con evento 'RENEWED'.
+
+    Uso: routers/publicaciones.py::renovar.
+    Ej: datos = await renovar_publicacion(db, 25, 1).
+    Retorna dict con id, estado, fecha_expiracion_anterior, fecha_expiracion_nueva, dias_agregados, mensaje.
+    Lanza HTTPException 404/403.
+    """
+    import json
+    from datetime import datetime, timezone, timedelta
+    from fastapi import HTTPException
+    from app.models import Publicacion, PublicacionesAudit as PublicacionAudit
+
+    # 1. Cargar publicación (404 si no existe)
+    p = await db.get(Publicacion, pub_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Publicación no encontrada")
+
+    # 2. Verificar propiedad (403 si no es el dueño)
+    if p.usuario_id != user_id:
+        raise HTTPException(status_code=403, detail="No tienes permisos para renovar esta publicación.")
+
+    # 3. Calcular nueva fecha de expiración (30 días reales exactos)
+    now = datetime.now(timezone.utc)
+    fecha_anterior = p.fecha_expiracion
+
+    # Asegurar que fecha_anterior tiene tzinfo para comparar
+    if fecha_anterior.tzinfo is None:
+        fecha_anterior = fecha_anterior.replace(tzinfo=timezone.utc)
+
+    if fecha_anterior > now:
+        # Publicación vigente: extender desde la fecha actual de expiración
+        fecha_nueva = fecha_anterior + timedelta(days=30)
+    else:
+        # Publicación vencida: nueva vigencia desde ahora
+        fecha_nueva = now + timedelta(days=30)
+
+    # 4. Actualizar estado si la publicación está EXPIRADA
+    estado_anterior = p.estado
+    if p.estado == "EXPIRADO":
+        p.estado = "ACTIVO"
+    # RECHAZADO y DESACTIVADO conservan su estado por regla de negocio explícita
+
+    # 5. Actualizar fechas
+    p.fecha_expiracion = fecha_nueva
+    p.fecha_renovacion = now
+
+    # 6. Insertar fila de auditoría
+    detalle = json.dumps({
+        "fecha_expiracion_anterior": fecha_anterior.isoformat(),
+        "fecha_expiracion_nueva": fecha_nueva.isoformat(),
+        "estado_anterior": estado_anterior,
+        "estado_nuevo": p.estado,
+    }, ensure_ascii=False)
+    db.add(PublicacionAudit(
+        publicacion_id=p.id,
+        usuario_id=user_id,
+        evento="RENEWED",
+        detalle=detalle,
+    ))
+
+    await db.commit()
+    await db.refresh(p)
+
+    return {
+        "id": p.id,
+        "estado": p.estado,
+        "fecha_expiracion_anterior": fecha_anterior,
+        "fecha_expiracion_nueva": fecha_nueva,
+        "dias_agregados": 30,
+        "mensaje": "La publicación fue renovada exitosamente.",
+    }
