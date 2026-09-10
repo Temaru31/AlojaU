@@ -25,9 +25,17 @@ def _normalize_supabase_url(url: str) -> str:
 
 DATABASE_URL = _normalize_supabase_url(_RAW_URL)
 
-# Detecta pgbouncer para desactivar statement cache (asyncpg + pgbouncer)
-_is_pgbouncer = "pgbouncer=true" in DATABASE_URL.lower()
-_connect_args = {"statement_cache_size": 0} if _is_pgbouncer else {}
+# PgBouncer / Supabase pooler (puerto 6543, transaction mode): las sentencias
+# preparadas con nombre NO sobreviven al cambio de conexión del pool ->
+# `asyncpg.exceptions.InvalidSQLStatementNameError: prepared statement does not exist`.
+# Se desactiva SIEMPRE el caché (el flag `pgbouncer=true` en la URL no es fiable:
+# Supabase no lo incluye). `statement_cache_size` lo consume asyncpg y
+# `prepared_statement_cache_size` el dialecto SQLAlchemy-asyncpg. Costo: parseo
+# por query (despreciable frente a un 500 en prod).
+_connect_args = {
+    "statement_cache_size": 0,
+    "prepared_statement_cache_size": 0,
+}
 
 # pool 5-20 para 50-100 concurrentes Tabla18 (NFR)
 # Sprint1: pool_pre_ping evita "cold start" + silent disconnect en Render
