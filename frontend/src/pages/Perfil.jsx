@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
-import { emitAuthChange } from '../contexts/AuthContext'
+import { emitAuthChange, inicialesDe } from '../contexts/AuthContext'
 
 export default function Perfil() {
   const [token, setToken] = useState(() => localStorage.getItem('alojau_token') || '')
@@ -19,6 +19,9 @@ export default function Perfil() {
   const [loginEmail, setLoginEmail] = useState('arrendador@alojau.com')
   const [loginPass, setLoginPass] = useState('AlojaU123')
   const [loginLoading, setLoginLoading] = useState(false)
+
+  // Resumen del dueño (totales vía /mias; si falla se oculta en silencio).
+  const [misStats, setMisStats] = useState(null)
 
   const cargarPerfil = async (authToken) => {
     setLoading(true)
@@ -43,6 +46,21 @@ export default function Perfil() {
     if (token) {
       cargarPerfil(token)
     }
+  }, [token])
+
+  // Stats livianas: 3 totales (size=1) en paralelo; cualquier fallo -> sin stats.
+  useEffect(() => {
+    if (!token) { setMisStats(null); return }
+    let vivo = true
+    const head = { headers: { Authorization: `Bearer ${token}` } }
+    Promise.all([
+      api.get('/api/publicaciones/mias', { params: { size: 1 }, ...head }).then(r => r.data?.total ?? 0).catch(() => null),
+      api.get('/api/publicaciones/mias', { params: { size: 1, estado: 'ACTIVO' }, ...head }).then(r => r.data?.total ?? 0).catch(() => null),
+      api.get('/api/publicaciones/mias', { params: { size: 1, estado: 'PENDIENTE' }, ...head }).then(r => r.data?.total ?? 0).catch(() => null),
+    ]).then(([total, activas, pendientes]) => {
+      if (vivo) setMisStats(total == null ? null : { total, activas: activas ?? 0, pendientes: pendientes ?? 0 })
+    })
+    return () => { vivo = false }
   }, [token])
 
   // UX-AUDIT P0: el navbar puede cerrar sesión (AuthContext.logout); si este
@@ -257,15 +275,39 @@ export default function Perfil() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* Card Principal: Datos de Perfil y Verificación */}
           <div className="md:col-span-2 card p-6 space-y-6">
-            <div className="flex items-center justify-between border-b border-neutral-150 pb-4">
-              <div>
-                <h2 className="text-base font-semibold text-navy-900">{perfil?.nombre_completo || 'Usuario AlojaU'}</h2>
-                <p className="text-xs text-neutral-500">{perfil?.email}</p>
+            {/* UX: resumen del usuario (antes solo teléfono + confianza) */}
+            <div className="flex items-center gap-4">
+              <span aria-hidden="true" className="w-14 h-14 rounded-full bg-navy-800 text-white text-lg font-bold flex items-center justify-center shrink-0">
+                {inicialesDe(perfil)}
+              </span>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-base font-semibold text-navy-900 truncate">{perfil?.nombre_completo || 'Usuario AlojaU'}</h2>
+                <p className="text-xs text-neutral-500 truncate">{perfil?.email || 'Sin correo'}</p>
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  {perfil?.telefono_whatsapp ? `📱 ${perfil.telefono_whatsapp}` : '📱 Sin teléfono'} · {estaVerificado ? 'verificado' : 'sin verificar'}
+                </p>
               </div>
-              <span className="badge bg-navy-50 text-navy-700 border border-navy-100 font-semibold text-xs">
+              <span className="badge bg-navy-50 text-navy-700 border border-navy-100 font-semibold text-xs shrink-0">
                 {perfil?.rol || 'ARRENDADOR'}
               </span>
             </div>
+            {misStats && (
+              <div className="grid grid-cols-3 gap-2" aria-label="Resumen de mis publicaciones">
+                <Link to="/mis-publicaciones" className="rounded-lg bg-neutral-50 border border-neutral-150 p-3 text-center hover:border-navy-300 transition">
+                  <p className="text-xl font-bold text-navy-800">{misStats.total}</p>
+                  <p className="text-[11px] text-neutral-500">Avisos</p>
+                </Link>
+                <Link to="/mis-publicaciones" className="rounded-lg bg-emerald-50 border border-emerald-200 p-3 text-center hover:border-emerald-300 transition">
+                  <p className="text-xl font-bold text-emerald-700">{misStats.activas}</p>
+                  <p className="text-[11px] text-neutral-500">Publicados</p>
+                </Link>
+                <Link to="/mis-publicaciones" className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-center hover:border-amber-300 transition">
+                  <p className="text-xl font-bold text-amber-700">{misStats.pendientes}</p>
+                  <p className="text-[11px] text-neutral-500">En revisión</p>
+                </Link>
+              </div>
+            )}
+            {/* UX: el resumen (avatar/nombre/email/rol) ya está arriba; aquí solo teléfono */}
 
             {/* Sección Teléfono y Verificación */}
             <div className="space-y-4">

@@ -12,7 +12,7 @@ NFR P95<500ms: query indexada (estado, zona, canon), sin N+1, Haversine en memor
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, Depends, Query, Path, HTTPException, status, Header
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +26,7 @@ from app.schemas.publicacion import (
     PublicacionCreatedOut,
     PublicacionCardOut,
     PublicacionDetailOut,
+    PublicacionUpdate,
     PaginatedPublicaciones,
 )
 from app.core.pagination import paginate_params, build_paginated
@@ -144,13 +145,16 @@ async def list_publicaciones(
         paginated_items = items[offset:offset+size_norm]
         return build_paginated(paginated_items, total, page, size_norm)
 
-@router.get("/mias", response_model=List[PublicacionCardOut], summary="UX Mis publicaciones del dueño (todos los estados)")
+@router.get("/mias", response_model=PaginatedPublicaciones, summary="UX Mis publicaciones del dueño (todos los estados, paginado)")
 async def mis_publicaciones(
+    estado: Optional[str] = Query(None, pattern="^(ACTIVO|PENDIENTE|PAUSADO|RECHAZADO|ARRENDADO|EXPIRADO|DESACTIVADO)$", description="Filtra por estado (default todos)"),
+    page: int = Query(1, ge=1, le=1000, description="Página 1-indexed"),
+    size: int = Query(12, ge=1, le=50, description="Tamaño página"),
     db: AsyncSession = Depends(get_session),
     user: dict = Depends(get_current_user),
 ):
     """Lista las publicaciones del usuario autenticado en TODOS los estados
-    (ACTIVO + PENDIENTE en moderación + otros), más recientes primero.
+    (ACTIVO + PENDIENTE en moderación + otros), más recientes primero, paginado.
     Sin token -> 401. Cada dueño solo ve las suyas (filtro usuario_id).
     NOTA: declarada ANTES de /{pub_id} para que "mias" no caiga en el path param."""
     uid = user.get("id")
@@ -160,6 +164,12 @@ async def mis_publicaciones(
     try:
         from app.models import Publicacion
 
+        conds = [Publicacion.usuario_id == uid]
+        if estado:
+            conds.append(Publicacion.estado == estado)
+        total_stmt = select(func.count()).select_from(Publicacion).where(*conds)
+        total = (await db.execute(total_stmt)).scalar() or 0
+        offset, size_norm = paginate_params(page, size)
         stmt = (
             select(Publicacion)
             .options(
@@ -167,14 +177,16 @@ async def mis_publicaciones(
                 selectinload(Publicacion.servicios),
                 selectinload(Publicacion.zona),
             )
-            .where(Publicacion.usuario_id == uid)
+            .where(*conds)
             .order_by(Publicacion.id.desc())
+            .limit(size_norm)
+            .offset(offset)
         )
         pubs = (await db.execute(stmt)).scalars().unique().all()
         if not pubs:
-            return []
+            return build_paginated([], total, page, size_norm)
         rep_map, users_map, _ = await repo.fetch_page_aggregates(db, pubs, None)
-        return view.cards_for_page(pubs, rep_map, users_map, {}, None)
+        return build_paginated(view.cards_for_page(pubs, rep_map, users_map, {}, None), total, page, size_norm)
     except HTTPException:
         raise
     except Exception as e:
@@ -185,8 +197,15 @@ async def mis_publicaciones(
             pass
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    # Mock fallback solo dev: filtra por dueño (incluye PENDIENTE, es su bandeja).
-    return [view.mock_to_out(p) for p in MOCK_PUBS if p.get("usuario_id") == uid]
+    # Mock fallback solo dev: filtra por dueño (incluye PENDIENTE, es su bandeja) + pagina en memoria.
+    filtradas = [p for p in MOCK_PUBS if p.get("usuario_id") == uid]
+    if estado:
+        filtradas = [p for p in filtradas if p.get("estado") == estado]
+    filtradas.sort(key=lambda p: p["id"], reverse=True)
+    total = len(filtradas)
+    offset, size_norm = paginate_params(page, size)
+    items = [view.mock_to_out(p) for p in filtradas[offset:offset + size_norm]]
+    return build_paginated(items, total, page, size_norm)
 
 @router.get("/{pub_id}", response_model=PublicacionDetailOut, summary="HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp")
 async def get_publicacion(
@@ -229,6 +248,69 @@ async def get_publicacion(
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
     if pub.get("estado") != "ACTIVO" and not _is_owner_or_admin(current_user, pub.get("usuario_id")):
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    return view.mock_to_out(pub)
+
+@router.patch("/{pub_id}", response_model=PublicacionCardOut, summary="UX Editar aviso del dueño (solo owner/ADMIN)")
+async def editar_publicacion(
+    pub_id: int = Path(..., ge=1, le=1000000),
+    payload: PublicacionUpdate = ...,
+    db: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Edición parcial del dueño: titulo/descripcion/tipo/canon/deposito/direccion/reglas.
+    401 sin token o sin id válido, 403 si no es dueño ni ADMIN, 404 si no existe,
+    422 si algún campo viola cotas (iguales a Create) o el body viene vacío.
+    El estado NO cambia (re-moderación llega en T2; cambiarlo aquí sin bandeja
+    escondería el aviso sin forma de re-aprobar). Sin fila de audit: el CHECK de
+    publicaciones_audit no tiene evento EDITED (migración pendiente en T2)."""
+    cambios = {k: v for k, v in payload.model_dump().items() if v is not None}
+    try:
+        from app.models import Publicacion
+
+        p = await db.get(Publicacion, pub_id)
+        if not p:
+            raise HTTPException(status_code=404, detail="Publicación no encontrada")
+        if not _is_owner_or_admin(user, p.usuario_id):
+            raise HTTPException(status_code=403, detail="Solo el dueño puede editar")
+        for k, v in cambios.items():
+            setattr(p, k, v)
+        await db.commit()
+        # Re-lee con eager loading (refresh() no recarga relaciones en async).
+        stmt = (
+            select(Publicacion)
+            .options(
+                selectinload(Publicacion.imagenes),
+                selectinload(Publicacion.servicios),
+                selectinload(Publicacion.zona),
+            )
+            .where(Publicacion.id == pub_id)
+        )
+        p = (await db.execute(stmt)).scalars().unique().one()
+        rep_map, users_map, _ = await repo.fetch_page_aggregates(db, [p], None)
+        return view.cards_for_page([p], rep_map, users_map, {}, None)[0]
+    except HTTPException:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        raise
+    except Exception as e:
+        logger.error(f"[DB fallback] editar {pub_id} falló: {e!r}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    # Mock fallback solo dev.
+    if not _mock_enabled():
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    pub = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
+    if not pub:
+        raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    if not _is_owner_or_admin(user, pub.get("usuario_id")):
+        raise HTTPException(status_code=403, detail="Solo el dueño puede editar")
+    pub.update(cambios)
     return view.mock_to_out(pub)
 
 @router.post("", response_model=PublicacionCreatedOut, status_code=status.HTTP_201_CREATED, summary="HU-005 Publicar oferta estructurada -> PENDIENTE (solo ARRENDADOR)")

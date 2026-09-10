@@ -29,6 +29,30 @@ class PublicacionCreate(BaseModel):
             raise ValueError("latitud y longitud deben ir juntas (both-or-none)")
         return self
 
+
+class PublicacionUpdate(BaseModel):
+    """Edición parcial del dueño (PATCH /api/publicaciones/{id}).
+
+    Solo campos escalares (sin relaciones): servicios/fotos/zona se editan
+    en T3-ciclo-vida. Al menos 1 campo, todos con las mismas cotas que Create.
+    El estado NO cambia con la edición (re-moderación llega en T2).
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    titulo: Optional[str] = Field(default=None, min_length=10, max_length=150)
+    descripcion: Optional[str] = Field(default=None, min_length=20, max_length=2000)
+    tipo_inmueble: Optional[TipoInmueble] = None
+    canon_mensual: Optional[Decimal] = Field(default=None, gt=0, le=10_000_000)
+    deposito_requerido: Optional[Decimal] = Field(default=None, ge=0)
+    direccion_referencial: Optional[str] = Field(default=None, min_length=10, max_length=200)
+    reglas_convivencia: Optional[str] = Field(default=None, min_length=10, max_length=1000)
+
+    @model_validator(mode="after")
+    def at_least_one(self):
+        if all(v is None for v in self.model_dump().values()):
+            raise ValueError("Envía al menos 1 campo para editar")
+        return self
+
 class DesgloseConfianza(BaseModel):
     completitud: int
     telefono: int

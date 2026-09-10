@@ -13,8 +13,22 @@ import { FavoritosProvider, useFavoritos } from './contexts/FavoritosContext'
 import { CompararProvider, useComparar } from './contexts/CompararContext'
 import { AuthProvider, useAuth, inicialesDe } from './contexts/AuthContext'
 
-function Nav() {
-  const { count: favCount } = useFavoritos()
+// UX: cada cambio de ruta abre arriba del todo (antes: abrir Perfil/Publicar
+// desde el fondo del home las dejaba scrolleadas abajo). Solo pathname:
+// paginar en Buscar conserva su propio scroll.
+function ScrollToTop() {
+  const { pathname } = useLocation()
+  useEffect(() => {
+    try {
+      window.scrollTo(0, 0)
+    } catch {
+      // SSR/tests sin scroll
+    }
+  }, [pathname])
+  return null
+}
+
+function Nav() {  const { count: favCount } = useFavoritos()
   const { count: compCount, max: compMax } = useComparar()
   const { token, user, logout } = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -267,6 +281,7 @@ function Footer() {
 function App() {
   return (
     <BrowserRouter>
+      <ScrollToTop />
       <AuthProvider>
       <FavoritosProvider>
         <CompararProvider>
