@@ -154,3 +154,32 @@ describe('Detalle 004 sincronización dinámica del mapa', () => {
     expect(screen.getByText('Distancia al campus')).toBeInTheDocument()
   })
 })
+
+describe('Detalle 004 distancias honestas', () => {
+  const renderDetalleQs = (qs) => render(
+    <MemoryRouter initialEntries={[`/publicacion/1${qs}`]}>
+      <Routes><Route path="/publicacion/:id" element={<Detalle />} /></Routes>
+    </MemoryRouter>
+  )
+
+  it('ref con dist_m null muestra "No informado" (no hereda otro lugar)', async () => {
+    window.scrollTo = vi.fn()
+    api.get.mockImplementation((url) => {
+      if (url === '/api/campus') return Promise.resolve({ data: [] })
+      return Promise.resolve({
+        data: {
+          ...pub, latitud: 2.4451, longitud: -76.6085,
+          distancia_geodesica_m: 900,
+          campus_ref: {
+            campus_id: 5, institucion: 'Terminal de Transportes', nombre_sede: 'Sede Única',
+            latitud: 2.4505, longitud: -76.613, dist_m: null, tiempo_pie_min: null,
+          },
+        },
+      })
+    })
+    renderDetalleQs('?campus_id=5')
+    await waitFor(() => expect(screen.getByText('Distancia a Sede Única')).toBeInTheDocument())
+    // No hereda los 900 m de otro lugar: no aparece ninguna distancia en el bloque.
+    expect(screen.queryByText(/900/)).not.toBeInTheDocument()
+  })
+})

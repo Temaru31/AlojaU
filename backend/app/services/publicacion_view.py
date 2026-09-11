@@ -184,8 +184,15 @@ def filter_mock_pubs(pubs: List[dict], campus_id=None, precio_min=None, precio_m
 
     filtradas = [p for p in pubs if p["estado"] == "ACTIVO"]
     if campus_id:
-        filtradas = [p for p in filtradas if campus_id in p.get("campus_ids", [])]
-        filtradas.sort(key=lambda p: _h(p["latitud"], p["longitud"], MOCK_CAMPUS[campus_id]["lat"], MOCK_CAMPUS[campus_id]["lng"]) if p.get("latitud") is not None and p.get("longitud") is not None else 999999)
+        # Paridad con el trigger 004 (enlaza TODOS los lugares): si ningún pub
+        # lista este lugar (p.ej. POI nuevo en mock), no se filtra por membresía;
+        # se ordena por distancia a él igualmente.
+        con_membresia = [p for p in filtradas if campus_id in p.get("campus_ids", [])]
+        if con_membresia:
+            filtradas = con_membresia
+        if campus_id in MOCK_CAMPUS:
+            c = MOCK_CAMPUS[campus_id]
+            filtradas.sort(key=lambda p: _h(p["latitud"], p["longitud"], c["lat"], c["lng"]) if p.get("latitud") is not None and p.get("longitud") is not None else 999999)
     if precio_min is not None:
         filtradas = [p for p in filtradas if p["canon_mensual"] >= precio_min]
     if precio_max is not None:

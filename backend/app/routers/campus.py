@@ -13,12 +13,20 @@ logger = logging.getLogger("alojau.campus")
 router = APIRouter(prefix="/api/campus", tags=["campus"])
 
 # 004 POIs: caché en proceso del catálogo (lugares casi estáticos).
-# TTL 1h como pide el diseño. Nota escala: con 1 worker (Render free) basta;
-# con múltiples workers cada uno cachea igual (eventual-consistency 1h, OK
-# para un catálogo que solo cambia por migración/ingesta). Redis quedaría
-# para cuando haya escrituras frecuentes de lugares (hoy no hay endpoint).
+# TTL 1h como pide el diseño. Nota escala: con 1 worker (Render free y
+# backend/Dockerfile sin --workers: verificado proceso único) basta; con
+# múltiples workers cada uno cachea igual (eventual-consistency 1h, OK para
+# un catálogo que solo cambia por migración/ingesta). Tras una ingesta en
+# prod, invalidar con redeploy (limpia el proceso) o llamar clear_campus_cache().
+# Redis quedaría para cuando haya escrituras frecuentes de lugares (hoy no hay).
 _CACHE_TTL_S = 3600
 _cache: dict = {"ts": 0.0, "payload": None}
+
+
+def clear_campus_cache() -> None:
+    """Invalida el caché del catálogo (tests + ingesta manual)."""
+    _cache["ts"] = 0.0
+    _cache["payload"] = None
 
 
 def _row_to_out(r) -> dict:

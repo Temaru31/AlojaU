@@ -77,7 +77,8 @@ def to_sql(payload: dict, ciudad_id: int = 1) -> str:
         if clave in vistos:
             continue
         vistos.add(clave)
-        direccion = sql_escape(tags.get("addr:street", "") + " " + tags.get("addr:housenumber", "") or "Popayán")
+        base_dir = f"{tags.get('addr:street', '')} {tags.get('addr:housenumber', '')}".strip() or "Popayán"
+        direccion = sql_escape(base_dir)
         lineas.append(
             "INSERT INTO campus_universitarios "
             "(ciudad_id, institucion, nombre_sede, direccion, latitud, longitud, categoria) VALUES "

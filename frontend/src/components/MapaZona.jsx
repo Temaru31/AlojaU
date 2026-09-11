@@ -46,6 +46,21 @@ function Encuadre({ puntos }) {
   return null
 }
 
+/** Re-centra cuando cambia el centro (MapContainer.center es inmutable tras mount). */
+function Vista({ centro }) {
+  const map = useMap()
+  const clave = JSON.stringify(centro)
+  useEffect(() => {
+    try {
+      map.setView(centro)
+    } catch {
+      // jsdom/tests sin mapa real: no rompe render
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, clave])
+  return null
+}
+
 /**
  * MapaZona — tres casos (004 POIs):
  * - A (aviso + lugar/campus): 2 pines (casa + referencia) + línea punteada +
@@ -126,6 +141,7 @@ export default function MapaZona({
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             attribution="&copy; OpenStreetMap"
           />
+          <Vista centro={centro} />
           {tieneAviso && ref && (
             <Encuadre puntos={[[Number(aviso.lat), Number(aviso.lng)], [Number(ref.lat), Number(ref.lng)]]} />
           )}

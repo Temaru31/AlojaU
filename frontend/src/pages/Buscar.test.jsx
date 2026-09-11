@@ -50,3 +50,15 @@ describe('Buscar Oleada 2 (q)', () => {
     expect(screen.getByRole('button', { name: /Limpiar búsqueda y filtros/ })).toBeInTheDocument()
   })
 })
+
+describe('Buscar 004 campus_id inválido', () => {
+  it('?campus_id=abc equivale a Todos (no envía el param)', async () => {
+    renderBuscar('/?campus_id=abc')
+    await waitFor(() => {
+      const llamadas = api.get.mock.calls.filter(([u]) => u === '/api/publicaciones')
+      expect(llamadas.length).toBeGreaterThan(0)
+      const params = llamadas[0][1]?.params || {}
+      expect(params.campus_id).toBeUndefined()
+    })
+  })
+})

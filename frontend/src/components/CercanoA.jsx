@@ -95,21 +95,23 @@ export default function CercanoA({ lugares = [], value, onChange, inputId = 'cer
             />
           </div>
           <ul role="listbox" aria-label="Lugares de referencia" className="max-h-64 overflow-auto py-1">
-            <li role="option" aria-selected={value == null || value === ''}>
-              <button type="button" onClick={() => elegir(null)} className="flex w-full items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:bg-neutral-50">
+            <li role="presentation">
+              <button type="button" role="option" aria-selected={value == null || value === ''} onClick={() => elegir(null)} className="flex w-full items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:bg-neutral-50">
                 <span aria-hidden="true">🌐</span> Todos los lugares
               </button>
             </li>
             {grupos.map(g => (
-              <li key={g.id}>
+              <li key={g.id} role="presentation">
                 <p className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-400" aria-hidden="true">
                   {g.icono} {g.etiqueta}
                 </p>
-                <ul>
+                <ul role="group" aria-label={g.etiqueta}>
                   {g.items.map(l => (
-                    <li key={l.id} role="option" aria-selected={String(value) === String(l.id)}>
+                    <li key={l.id} role="presentation">
                       <button
                         type="button"
+                        role="option"
+                        aria-selected={String(value) === String(l.id)}
                         onClick={() => elegir(l.id)}
                         className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-navy-50 ${String(value) === String(l.id) ? 'font-semibold text-navy-800 bg-navy-50' : 'text-neutral-700'}`}
                       >

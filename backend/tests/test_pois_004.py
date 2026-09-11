@@ -99,6 +99,8 @@ def test_004_sql_canonico_idempotente():
 
 # --- API (mock sin PG) ------------------------------------------------------
 def test_campus_trae_categoria_y_cache():
+    from app.routers.campus import clear_campus_cache
+    clear_campus_cache()
     r = client.get("/api/campus")
     assert r.status_code == 200
     items = r.json()
@@ -139,3 +141,13 @@ def test_detalle_sin_campus_id_sin_ref():
 def test_detalle_campus_inexistente_404():
     r = client.get("/api/publicaciones/1", params={"campus_id": 999})
     assert r.status_code == 404
+
+
+def test_mock_poi_nuevo_no_vacia_listado():
+    # Paridad trigger: un POI sin membresía explícita ordena por distancia, no filtra todo.
+    r = client.get("/api/publicaciones", params={"campus_id": 3})
+    assert r.status_code == 200
+    pubs = _items(r.json())
+    assert len(pubs) >= 1
+    dists = [p["distancia_geodesica_m"] for p in pubs]
+    assert dists == sorted(d for d in dists if d is not None) or not dists

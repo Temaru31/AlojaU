@@ -180,8 +180,13 @@ export default function Detalle() {
     : (lugarLista
       ? { lat: lugarLista.latitud ?? lugarLista.lat, lng: lugarLista.longitud ?? lugarLista.lng, nombre: nombreLugarLista }
       : null)
-  const distMapa = refApi?.dist_m ?? distBase
-  const etiquetaDist = refApi ? `Distancia a ${refApi.nombre_sede}` : 'Distancia al campus'
+  // Si se pidió una referencia y su distancia es desconocida (sin backfill,
+  // otra ciudad, sin coords), se muestra "No informado": nunca se hereda la
+  // distancia mínima a OTRO lugar bajo la etiqueta del lugar pedido.
+  const distMapa = refApi ? refApi.dist_m : (lugarLista ? null : distBase)
+  const etiquetaDist = refApi
+    ? `Distancia a ${refApi.nombre_sede}`
+    : (lugarLista ? `Distancia a ${nombreLugarLista}` : 'Distancia al campus')
 
   const isActivo = pub.estado === 'ACTIVO'
   const hasTel = !!pub.telefono_whatsapp && isActivo

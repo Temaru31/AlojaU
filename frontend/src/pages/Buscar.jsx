@@ -12,8 +12,10 @@ export default function Buscar() {
   const [campus, setCampus] = useState([])
   const [searchParams, setSearchParams] = useSearchParams()
   // 004 POIs: sin ?campus_id= no hay filtro de cercanía (estado inicial vacío).
+  // NaN-safe: un valor manual inválido (?campus_id=abc) equivale a "Todos".
   const campusIdRaw = searchParams.get('campus_id')
-  const campusId = campusIdRaw ? Number(campusIdRaw) : null
+  const campusIdNum = campusIdRaw != null ? Number(campusIdRaw) : NaN
+  const campusId = Number.isInteger(campusIdNum) && campusIdNum >= 1 ? campusIdNum : null
   const page = Number(searchParams.get('page') || 1)
   const q = searchParams.get('q') || ''
   const [filtros, setFiltros] = useState({
@@ -93,7 +95,7 @@ export default function Buscar() {
     setLoading(true); setError('')
     const q = new URLSearchParams(queryString)
     const params = {
-      campus_id: campusId,
+      campus_id: campusId ?? undefined,
       precio_min: q.get('precio_min') || undefined,
       precio_max: q.get('precio_max') || undefined,
       tipo: q.get('tipo') || undefined,
