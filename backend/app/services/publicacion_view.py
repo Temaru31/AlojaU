@@ -130,7 +130,7 @@ def build_card(p, dist, trust: dict, zona_nombre, tel: Optional[str]) -> dict:
     }
 
 
-def build_detail(p, reportes_activos: int, u, dist) -> dict:
+def build_detail(p, reportes_activos: int, u, dist, campus_ref: Optional[dict] = None) -> dict:
     """Detalle GET /api/publicaciones/{id} (canónicos + alias compat)."""
     tel_ver = bool(u.telefono_verificado) if u else False
     trust = trust_for_row(p, reportes_activos, tel_ver)
@@ -155,6 +155,8 @@ def build_detail(p, reportes_activos: int, u, dist) -> dict:
         # Oleada 2: coords para MapaZona modo aviso + deep-link (eran internas, ahora visibles).
         "latitud": float(p.latitud) if p.latitud is not None else None,
         "longitud": float(p.longitud) if p.longitud is not None else None,
+        # 004 POIs: referencia resuelta con ?campus_id= (mapa dinámico del Detalle).
+        "campus_ref": campus_ref,
     }
 
 
