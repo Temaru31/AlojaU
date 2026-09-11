@@ -168,6 +168,7 @@ export default function Detalle() {
   // 004 POIs: referencia dinámica al lugar buscado (reemplaza el campus hardcodeado).
   // Prioridad: campus_ref del backend > catálogo /api/campus > fallback legacy Tulcán.
   const refApi = pub.campus_ref || null
+  const distBase = pub.distancia_geodesica_m ?? pub.dist_m
   const lugarLista = !refApi && campusIdParam
     ? lugares.find(c => String(c.id) === String(campusIdParam))
     : null
@@ -194,7 +195,6 @@ export default function Detalle() {
   const totalPrimerMes = canon != null && deposito != null ? Number(canon) + Number(deposito) : null
   // BUG-08: fallbacks unificados a "No informado"; num_fotos real (no 3 inventado)
   const zona = pub.zona_nombre || pub.zona || 'No informado'
-  const distBase = pub.distancia_geodesica_m ?? pub.dist_m
   const servicios = pub.servicios || []
   const descripcion = (pub.descripcion || '').trim()
   const tipoHumano = humanizarTipo(pub.tipo_inmueble)

@@ -42,7 +42,7 @@ describe('CercanoA 004 POIs', () => {
     const onChange = vi.fn()
     render(<CercanoA lugares={LUGARES} value={3} onChange={onChange} />)
     fireEvent.click(screen.getByRole('button', { name: /Campanario/ }))
-    fireEvent.click(screen.getByRole('option', { name: /Todos los lugares/ }))
+    fireEvent.click(screen.getByText('Todos los lugares'))
     expect(onChange).toHaveBeenCalledWith(null)
   })
 
