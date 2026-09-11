@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../services/api'
 import Card from '../components/Card'
 import Casa3D from '../components/Casa3D'
+import CercanoA, { etiquetaLugar } from '../components/CercanoA'
 import Filtros from '../components/Filtros'
 import Paginacion from '../components/Paginacion'
 import SearchBar from '../components/SearchBar'
@@ -10,7 +11,9 @@ import SearchBar from '../components/SearchBar'
 export default function Buscar() {
   const [campus, setCampus] = useState([])
   const [searchParams, setSearchParams] = useSearchParams()
-  const campusId = Number(searchParams.get('campus_id') || 1)
+  // 004 POIs: sin ?campus_id= no hay filtro de cercanía (estado inicial vacío).
+  const campusIdRaw = searchParams.get('campus_id')
+  const campusId = campusIdRaw ? Number(campusIdRaw) : null
   const page = Number(searchParams.get('page') || 1)
   const q = searchParams.get('q') || ''
   const [filtros, setFiltros] = useState({
@@ -30,7 +33,8 @@ export default function Buscar() {
 
   const setCampusId = (id) => {
     const params = new URLSearchParams(searchParams)
-    params.set('campus_id', id)
+    if (id == null || id === '') params.delete('campus_id')
+    else params.set('campus_id', id)
     params.set('page', 1)
     setSearchParams(params)
   }
@@ -233,18 +237,8 @@ export default function Buscar() {
               <SearchBar value={q} onChange={setQ} />
             </div>
             <div className="flex-1">
-              <label className="block text-xs font-medium text-neutral-500 mb-1.5">Campus</label>
-              <select
-                value={campusId}
-                onChange={e => setCampusId(e.target.value)}
-                className="select-field"
-              >
-                {campus.map(c => (
-                  <option key={c.id} value={c.id}>
-                    {c.institucion ? `${c.institucion} - ${c.nombre_sede}` : c.nombre_sede}
-                  </option>
-                ))}
-              </select>
+              <label htmlFor="cercano-a" className="block text-xs font-medium text-neutral-500 mb-1.5">Cercano a…</label>
+              <CercanoA lugares={campus} value={campusId} onChange={setCampusId} inputId="cercano-a" />
             </div>
           </div>
         </div>
@@ -294,8 +288,12 @@ export default function Buscar() {
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {pubs.map(p => (
-                <Link key={p.id} to={`/publicacion/${p.id}`} className="block">
-                  <Card pub={p} />
+                <Link
+                  key={p.id}
+                  to={{ pathname: `/publicacion/${p.id}`, search: campusId ? `?campus_id=${campusId}` : '' }}
+                  className="block"
+                >
+                  <Card pub={p} lugarNombre={currentCampus ? etiquetaLugar(currentCampus) : null} />
                 </Link>
               ))}
             </div>

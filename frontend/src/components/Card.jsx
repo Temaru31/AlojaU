@@ -5,7 +5,7 @@ import { notifyToast } from './Toast'
 import { useFavoritos } from '../contexts/FavoritosContext'
 import { useComparar } from '../contexts/CompararContext'
 
-export default function Card({ pub }) {
+export default function Card({ pub, lugarNombre = null }) {
   const favHook = useFavoritos()
   const compHook = useComparar()
   // NUEVO(<=3ln): indice null -> 0 para no mostrar "— Básico"
@@ -33,8 +33,12 @@ export default function Card({ pub }) {
   const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? (typeof pub.fotos === 'number' ? pub.fotos : 0))
   const cover = Array.isArray(pub.fotos) ? pub.fotos[0] : null
   const tiempo = formatTiempoCaminando(dist)
-  // BUG-10: usa formatDistancia (null -> "No informado")
+  // 004 POIs: badge destacado "A X m · Y min a pie de [Lugar]" cuando hay
+  // contexto de cercanía; sin lugar se conserva el texto legado.
   const distText = dist != null ? `${formatDistancia(dist)}${tiempo ? ` · ${tiempo}` : ''}` : 'No informado'
+  const badgeCercania = lugarNombre && dist != null
+    ? `A ${formatDistancia(dist)}${tiempo ? ` · ${tiempo}` : ''} de ${lugarNombre}`
+    : null
   const isFav = favHook.isFav(pub.id)
   const isComp = compHook.isSelected(pub.id)
 
@@ -120,7 +124,9 @@ export default function Card({ pub }) {
             <svg className="w-3.5 h-3.5 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
             </svg>
-            {distText}
+            {badgeCercania ? (
+              <span className="font-semibold text-navy-700">{badgeCercania}</span>
+            ) : distText}
           </span>
         </div>
 

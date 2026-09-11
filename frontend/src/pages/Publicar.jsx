@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import UploadFotos from '../components/UploadFotos'
 import MapPicker from '../components/MapPicker'
+import { notifyToast } from '../components/Toast'
 import { emitAuthChange } from '../contexts/AuthContext'
 
 const SERVICIOS = [
@@ -357,6 +358,7 @@ export default function Publicar() {
 
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Ubicación en mapa <span className="text-neutral-400 font-normal">(opcional, guarda coords directo)</span></label>
+            <p className="text-[11px] text-neutral-400 mb-2">La ubicación del pin prevalece sobre el texto: lo que midas en el mapa es lo que verán los estudiantes.</p>
             <MapPicker
               lat={form.latitud}
               lng={form.longitud}
@@ -365,6 +367,7 @@ export default function Publicar() {
                 ...f,
                 direccion_referencial: f.direccion_referencial.trim().length >= 10 ? f.direccion_referencial : dir.slice(0, 200),
               }))}
+              onGeoError={(msg) => notifyToast(msg)}
             />
           </div>
 

@@ -29,7 +29,7 @@ function ClickParaMover({ onPick }) {
  * Al soltar, reverse-geocode ligero (Nominatim + caché 30d) sugiere la
  * dirección textual; si falla, el usuario la digita manual.
  */
-export default function MapPicker({ lat, lng, onChange, onAddressSuggestion }) {
+export default function MapPicker({ lat, lng, onChange, onAddressSuggestion, onGeoError }) {
   const tienePunto = lat !== '' && lng !== '' && !Number.isNaN(Number(lat)) && !Number.isNaN(Number(lng))
   const centro = tienePunto ? [Number(lat), Number(lng)] : [POPAYAN.lat, POPAYAN.lng]
   const [sugerencia, setSugerencia] = useState('')
@@ -56,11 +56,16 @@ export default function MapPicker({ lat, lng, onChange, onAddressSuggestion }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lat, lng])
 
+  // Edge case GPS denegado: toast elegante del padre; el pin manual sigue disponible.
+  const GEO_ERROR_MSG = 'No se pudo obtener tu ubicación. Por favor ubica el pin manualmente en el mapa.'
   const usarUbicacion = () => {
-    if (!('geolocation' in navigator)) return
+    if (!('geolocation' in navigator)) {
+      if (onGeoError) onGeoError(GEO_ERROR_MSG)
+      return
+    }
     navigator.geolocation.getCurrentPosition(
       (pos) => pick(pos.coords.latitude, pos.coords.longitude),
-      () => {},
+      () => { if (onGeoError) onGeoError(GEO_ERROR_MSG) },
       { timeout: 8000 }
     )
   }
