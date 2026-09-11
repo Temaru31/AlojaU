@@ -20,4 +20,18 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> int:
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return haversine_m(lat1, lon1, lat2, lon2) / 1000.0
 
+
+# 004 POIs: minutos a pie desde distancia geodésica.
+# Factor 1.3 = la ruta real a pie es ~30% más larga que la línea recta
+# (cuadras de Popayán); 80 m/min = paso estándar (igual que el frontend).
+# Fuente única backend de "Y min a pie" (ver view.build_detail campus_ref).
+def tiempo_pie_min(dist_m: int | None) -> int | None:
+    """Minutos a pie (mínimo 1) o None si la distancia es desconocida."""
+    if dist_m is None:
+        return None
+    try:
+        return max(1, round(float(dist_m) * 1.3 / 80))
+    except (TypeError, ValueError):
+        return None
+
 # Llamado en: list/crear publicaciones para distancia a campus.

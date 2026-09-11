@@ -3,13 +3,38 @@ AlojaU API - FastAPI + Uvicorn (Tabla14 stack oficial)
 Sprint1: HU-001,002,003,005,007,008
 Responsables: Backend/Arquitectura-BD (Sprint1: Adrian, luego rotación)
 """
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from fastapi.staticfiles import StaticFiles
+import logging
 import os
+import uuid
 from app.core.config import settings
 from app.routers import publicaciones, campus, auth, uploads, reportes, admin
+
+logger = logging.getLogger("alojau")
+
+# OLA5-M7: CSP base restrictiva (la API sirve JSON + estáticos; sin JS propio).
+# Nota Vite: la CSP vive en las RESPUESTAS de la API, no afecta al dev server
+# de Vite (origen distinto) ni a los fetch del frontend (los gobierna la CSP
+# de la página). /docs (Swagger UI con inline JS + CDN jsdelivr) usa CSP_DOCS.
+CSP_BASE = (
+    "default-src 'none'; "
+    "base-uri 'none'; "
+    "frame-ancestors 'none'; "
+    "form-action 'none'; "
+    "img-src 'self'"
+)
+CSP_DOCS = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "img-src 'self' data: https:; "
+    "frame-ancestors 'none'"
+)
+PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=()"
 
 app = FastAPI(
     title="AlojaU API",
@@ -35,7 +60,42 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["X-XSS-Protection"] = "0"  # deshabilitado, CSP es mejor
+    # OLA5-M7: CSP + Permissions-Policy (/docs con política propia por Swagger UI)
+    if request.url.path == "/docs":
+        response.headers["Content-Security-Policy"] = CSP_DOCS
+    else:
+        response.headers["Content-Security-Policy"] = CSP_BASE
+    response.headers["Permissions-Policy"] = PERMISSIONS_POLICY
     return response
+
+# OLA5-M7: request_id de punta a punta (logs + header de respuesta).
+# Se registra DESPUÉS de security_headers para correr ANTES (outermost).
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+# OLA5-M7: handler global 500 con traza estructurada + request_id.
+# HTTPException (401/403/404/...) pasa INTACTA (mismo status/detail/headers):
+# Starlette también la dirigiría a un handler de `Exception` por MRO, así que
+# el passthrough explícito es obligatorio para no romper el contrato API.
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    if isinstance(exc, HTTPException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+            headers=exc.headers,
+        )
+    request_id = getattr(getattr(request, "state", None), "request_id", None) or "-"
+    logger.exception("[500] request_id=%s path=%s", request_id, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Error interno del servidor", "request_id": request_id},
+    )
 
 @app.get("/health", tags=["infra"])
 def health():

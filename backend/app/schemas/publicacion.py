@@ -94,12 +94,31 @@ class DesgloseOut(BaseModel):
 
 
 class CampusOut(BaseModel):
-    """Campus para GET /api/campus. Ej: {"id": 1, "nombre_sede": "Campus Tulcán", ...}."""
+    """Campus/lugar para GET /api/campus. Ej: {"id": 1, "nombre_sede": "Campus Tulcán", ...}."""
     id: int
     institucion: str
     nombre_sede: str
     latitud: float
     longitud: float
+    # 004 POIs (aditivos con default: respuestas viejas/tests sin categoria siguen validando).
+    categoria: str = "UNIVERSIDAD"
+    direccion: Optional[str] = None
+    ciudad_id: Optional[int] = None
+
+
+class CampusRefOut(BaseModel):
+    """Punto de referencia resuelto para GET /api/publicaciones/{id}?campus_id=.
+
+    Permite al Detalle sincronizar el mapa con el lugar buscado (2 pines +
+    línea + fitBounds) sin hardcodear coords en el frontend.
+    """
+    campus_id: int
+    institucion: str
+    nombre_sede: str
+    latitud: float
+    longitud: float
+    dist_m: Optional[int] = None
+    tiempo_pie_min: Optional[int] = None
 
 
 class PublicacionCardOut(BaseModel):
@@ -177,6 +196,11 @@ class PublicacionDetailOut(BaseModel):
     advertencia: Optional[str] = None
     telefono_whatsapp: Optional[str] = None
     whatsapp_url: Optional[str] = None
+    # Oleada 2: coords del aviso (para mapa + deep-link; null si el dueño no las informó).
+    latitud: Optional[float] = None
+    longitud: Optional[float] = None
+    # 004 POIs: referencia resuelta cuando se pide ?campus_id= (mapa dinámico).
+    campus_ref: Optional[CampusRefOut] = None
 
 
 class PublicacionCreatedOut(BaseModel):

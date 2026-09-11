@@ -129,18 +129,21 @@ export default function MisPublicaciones() {
   const [editando, setEditando] = useState(null)
   const [renovando, setRenovando] = useState(null)
 
-  // Consulta al montar o recargar
+  // OLA4: AbortController — cambiar de filtro/página aborta la petición anterior
+  // para que una respuesta tardía no pise los resultados actuales.
   useEffect(() => {
     if (!token) {
       setItems([])
       setLoading(false)
       return
     }
+    const controller = new AbortController()
     setLoading(true)
     setError('')
     api.get('/api/publicaciones/mias', {
       params: { page, size: PAGE_SIZE, ...(filtro ? { estado: filtro } : {}) },
       headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
     })
       .then(r => {
         const data = r.data
@@ -151,6 +154,7 @@ export default function MisPublicaciones() {
         }
       })
       .catch(err => {
+        if (err?.code === 'ERR_CANCELED') return
         const status = err?.response?.status
         setError(status === 401
           ? 'Sesión vencida. Inicia sesión de nuevo.'
@@ -159,7 +163,8 @@ export default function MisPublicaciones() {
             : 'No se pudieron cargar tus publicaciones.')
         setItems([])
       })
-      .finally(() => setLoading(false))
+      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    return () => controller.abort()
   }, [token, page, filtro, reloadKey])
 
   const cambiarFiltro = (v) => { setFiltro(v); setPage(1) }
@@ -196,7 +201,7 @@ export default function MisPublicaciones() {
       {/* Filtros por estado */}
       <div className="flex flex-wrap gap-2 mb-4" role="group" aria-label="Filtrar por estado">
         {FILTROS.map(f => (
-          <button
+          <button type="button"
             key={f.value}
             onClick={() => cambiarFiltro(f.value)}
             aria-pressed={filtro === f.value}
@@ -215,7 +220,7 @@ export default function MisPublicaciones() {
       {error && (
         <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-3" role="alert">
           <p className="text-xs text-red-700 flex-1">{error}</p>
-          <button onClick={() => setReloadKey(k => k + 1)} className="text-xs font-semibold text-red-700 hover:text-red-800 underline shrink-0">
+          <button type="button" onClick={() => setReloadKey(k => k + 1)} className="text-xs font-semibold text-red-700 hover:text-red-800 underline shrink-0">
             Reintentar
           </button>
         </div>

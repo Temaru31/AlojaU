@@ -12,14 +12,17 @@ afterEach(() => {
 })
 
 describe('Perfil - Perfil verificable + confianza clara', () => {
-  it('muestra inicio de sesión si no hay token', () => {
+  it('muestra inicio de sesión si no hay token (sin credenciales demo expuestas)', () => {
     render(
       <BrowserRouter>
         <Perfil />
       </BrowserRouter>
     )
     expect(screen.getByText(/Debes iniciar sesión/i)).toBeInTheDocument()
-    expect(screen.getByText(/Usar mock-token-arrendador/i)).toBeInTheDocument()
+    // D-20: ni credenciales ni mock-token visibles en UI
+    expect(screen.queryByText(/Usar mock-token-arrendador/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/arrendador@alojau\.com/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/AlojaU123/i)).not.toBeInTheDocument()
   })
 
   it('carga y muestra perfil con teléfono sin verificar (0 pts)', async () => {
@@ -45,10 +48,12 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
       expect(screen.getByText('arrendador@alojau.com')).toBeInTheDocument()
     })
     expect(screen.getByText(/Sin verificar \(0 pts\)/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Verificar teléfono/i })).toBeInTheDocument()
+    // OLA2-M4: sin botón de auto-verificación; la verificación la otorga un administrador
+    expect(screen.queryByRole('button', { name: /Verificar teléfono/i })).not.toBeInTheDocument()
+    expect(screen.getByText(/Un administrador debe verificar tu línea/i)).toBeInTheDocument()
   })
 
-  it('permite verificar teléfono en 1 clic y sube a verificado (+20 pts)', async () => {
+  it('al guardar NO envía telefono_verificado al backend (solo-lectura OLA2-M4)', async () => {
     const user = userEvent.setup()
     localStorage.setItem('alojau_token', 'mock-token-test')
     vi.spyOn(api, 'get').mockResolvedValueOnce({
@@ -67,7 +72,7 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
         email: 'arrendador@alojau.com',
         nombre_completo: 'Arrendador Demo',
         telefono_whatsapp: '573001234567',
-        telefono_verificado: true,
+        telefono_verificado: false,
         rol: 'ARRENDADOR',
       }
     })
@@ -82,13 +87,12 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
       expect(screen.getByText(/Sin verificar \(0 pts\)/i)).toBeInTheDocument()
     })
 
-    const verifyBtn = screen.getByRole('button', { name: /Verificar teléfono/i })
-    await user.click(verifyBtn)
+    const saveBtn = screen.getByRole('button', { name: /Guardar número/i })
+    await user.click(saveBtn)
 
-    expect(patchSpy).toHaveBeenCalledWith('/api/auth/perfil', { telefono_verificado: true }, expect.anything())
-    await waitFor(() => {
-      expect(screen.getByText(/Verificado \(\+20 pts\)/i)).toBeInTheDocument()
-    })
+    expect(patchSpy).toHaveBeenCalledOnce()
+    const sentBody = patchSpy.mock.calls[0][1]
+    expect(sentBody).not.toHaveProperty('telefono_verificado')
   })
 
   it('rol ADMIN ve banner maestro + acceso al dashboard', async () => {

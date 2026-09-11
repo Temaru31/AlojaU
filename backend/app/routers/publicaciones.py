@@ -102,6 +102,7 @@ async def list_publicaciones(
     precio_max: Optional[int] = Query(None, ge=0, le=10_000_000, description="COP máximo"),
     tipo: Optional[str] = Query(None, pattern="^(HABITACION_FAMILIAR|HABITACION_INDEPENDIENTE|APARTAESTUDIO|COMPARTIDO)$"),
     servicios: Optional[str] = Query(None, max_length=50, description="IDs coma separados, ej: 1,3"),
+    q: Optional[str] = Query(None, min_length=2, max_length=100, description="Texto libre: FTS español + fallback trigramas (Oleada 2)"),
     page: int = Query(1, ge=1, le=1000, description="Página 1-indexed"),
     size: int = Query(9, ge=1, le=50, description="Tamaño página"),
     db: AsyncSession = Depends(get_session),
@@ -125,7 +126,7 @@ async def list_publicaciones(
     # Intento DB real con fallback mock solo en dev (B0-2 fail-closed 503 en prod)
     try:
         total, pubs, rep_map, user_map, dist_map, size_norm = await repo.query_lista(
-            db, campus_id, precio_min, precio_max, tipo, servicios_ids, page, size
+            db, campus_id, precio_min, precio_max, tipo, servicios_ids, page, size, q
         )
         items = view.cards_for_page(pubs, rep_map, user_map, dist_map, campus_id)
         return build_paginated(items, total, page, size_norm)
@@ -141,7 +142,7 @@ async def list_publicaciones(
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         print(f"[Sprint1 mock fallback] DB no disponible: {e!r}")
-        filtradas = view.filter_mock_pubs(MOCK_PUBS, campus_id, precio_min, precio_max, tipo, servicios_ids)
+        filtradas = view.filter_mock_pubs(MOCK_PUBS, campus_id, precio_min, precio_max, tipo, servicios_ids, q)
         items = [view.mock_to_out(p, campus_id) for p in filtradas]
         total = len(items)
         offset, size_norm = paginate_params(page, size)
@@ -213,6 +214,7 @@ async def mis_publicaciones(
 @router.get("/{pub_id}", response_model=PublicacionDetailOut, summary="HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp")
 async def get_publicacion(
     pub_id: int = Path(..., ge=1, le=1000000),
+    campus_id: Optional[int] = Query(None, ge=1, le=1000000, description="004 POIs: resuelve campus_ref (distancia a ESTE lugar) para sincronizar el mapa del Detalle"),
     db: AsyncSession = Depends(get_session),
     authorization: Optional[str] = Header(None),
 ):
@@ -230,7 +232,24 @@ async def get_publicacion(
             # B0-6: detalle no-ACTIVO privado (404 para no filtrar existencia).
             if p.estado != "ACTIVO" and not _is_owner_or_admin(current_user, p.usuario_id):
                 raise HTTPException(status_code=404, detail="Publicación no encontrada")
-            return view.build_detail(p, reportes_activos, u, dist_detalle)
+            # 004 POIs: referencia al lugar buscado (el mapa del Detalle se
+            # sincroniza a ESTE punto; sin campus_id se usa la distancia mínima).
+            campus_ref = None
+            dist = dist_detalle
+            if campus_id is not None:
+                from app.services.haversine import tiempo_pie_min
+                dist_ref, lugar = await repo.fetch_detail_campus_ref(db, pub_id, campus_id)
+                dist = dist_ref
+                campus_ref = {
+                    "campus_id": lugar.id,
+                    "institucion": lugar.institucion,
+                    "nombre_sede": lugar.nombre_sede,
+                    "latitud": float(lugar.latitud),
+                    "longitud": float(lugar.longitud),
+                    "dist_m": dist_ref,
+                    "tiempo_pie_min": tiempo_pie_min(dist_ref),
+                }
+            return view.build_detail(p, reportes_activos, u, dist, campus_ref)
     except HTTPException:
         raise
     except Exception as e:
@@ -251,6 +270,27 @@ async def get_publicacion(
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
     if pub.get("estado") != "ACTIVO" and not _is_owner_or_admin(current_user, pub.get("usuario_id")):
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    # 004 POIs mock: misma forma que la rama DB (distancia a ESTE lugar + ref).
+    if campus_id is not None:
+        from app.fixtures.demo import MOCK_CAMPUS
+        from app.services.haversine import haversine_m, tiempo_pie_min
+        if campus_id not in MOCK_CAMPUS:
+            raise HTTPException(status_code=404, detail=f"campus_id {campus_id} no existe o inactivo")
+        lugar = MOCK_CAMPUS[campus_id]
+        dist_ref = None
+        if pub.get("latitud") is not None and pub.get("longitud") is not None:
+            dist_ref = haversine_m(pub["latitud"], pub["longitud"], lugar["lat"], lugar["lng"])
+        out = view.mock_to_out(pub, campus_id)
+        out["campus_ref"] = {
+            "campus_id": campus_id,
+            "institucion": lugar["institucion"],
+            "nombre_sede": lugar["nombre_sede"],
+            "latitud": float(lugar["latitud"]),
+            "longitud": float(lugar["longitud"]),
+            "dist_m": dist_ref,
+            "tiempo_pie_min": tiempo_pie_min(dist_ref),
+        }
+        return out
     return view.mock_to_out(pub)
 
 @router.patch("/{pub_id}", response_model=PublicacionCardOut, summary="UX Editar aviso del dueño (solo owner/ADMIN)")

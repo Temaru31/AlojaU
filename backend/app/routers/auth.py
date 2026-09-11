@@ -56,9 +56,11 @@ class PerfilOut(BaseModel):
 
 
 class PerfilUpdateIn(BaseModel):
+    # OLA2-M4: telefono_verificado es SOLO-LECTURA (lo calcula/muestra el backend).
+    # Se removió del esquema para que ningún usuario pueda auto-otorgarse +20 de
+    # confianza ni desbloquear su WhatsApp (antes: PATCH {telefono_verificado:true}).
     nombre_completo: Optional[str] = Field(default=None, min_length=3, max_length=150)
     telefono_whatsapp: Optional[str] = Field(default=None, min_length=7, max_length=20)
-    telefono_verificado: Optional[bool] = None
 
 
 class RegisterOut(BaseModel):
@@ -224,7 +226,7 @@ async def get_perfil(
         rol=m.get("rol", "ARRENDADOR"),
     )
 
-@router.patch("/perfil", response_model=PerfilOut, summary="Actualizar teléfono y verificar perfil")
+@router.patch("/perfil", response_model=PerfilOut, summary="Actualizar nombre y teléfono (verificación solo-lectura)")
 async def update_perfil(
     data: PerfilUpdateIn,
     user: dict = Depends(get_current_user),
@@ -245,8 +247,7 @@ async def update_perfil(
                 u.nombre_completo = data.nombre_completo
             if data.telefono_whatsapp is not None:
                 u.telefono_whatsapp = data.telefono_whatsapp
-            if data.telefono_verificado is not None:
-                u.telefono_verificado = data.telefono_verificado
+            # OLA2-M4: sin escritura de telefono_verificado (solo-lectura).
             await db.commit()
             await db.refresh(u)
             return PerfilOut(
@@ -293,18 +294,15 @@ async def update_perfil(
         m["nombre_completo"] = data.nombre_completo
     if data.telefono_whatsapp is not None:
         m["telefono_whatsapp"] = data.telefono_whatsapp
-    if data.telefono_verificado is not None:
-        m["telefono_verificado"] = data.telefono_verificado
+    # OLA2-M4: sin escritura de telefono_verificado (solo-lectura).
 
-    # Sincronizar con publicaciones mock del usuario para que el puntaje y contacto reflejen la verificación
+    # Sincronizar con publicaciones mock del usuario para que el contacto refleje el teléfono
     try:
         from .publicaciones import MOCK_PUBS
         for pub in MOCK_PUBS:
             if pub.get("usuario_id") == m.get("id"):
                 if data.telefono_whatsapp is not None:
                     pub["telefono_whatsapp"] = data.telefono_whatsapp
-                if data.telefono_verificado is not None:
-                    pub["telefono_verificado"] = data.telefono_verificado
     except Exception:
         pass
 

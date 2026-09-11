@@ -1,10 +1,11 @@
 import { getLabelIndice, formatDistancia } from '../utils/formatters'
 import { formatTiempoCaminando } from '../utils/formatters'
 import SmartImage from './SmartImage'
+import { notifyToast } from './Toast'
 import { useFavoritos } from '../contexts/FavoritosContext'
 import { useComparar } from '../contexts/CompararContext'
 
-export default function Card({ pub }) {
+export default function Card({ pub, lugarNombre = null }) {
   const favHook = useFavoritos()
   const compHook = useComparar()
   // NUEVO(<=3ln): indice null -> 0 para no mostrar "— Básico"
@@ -32,8 +33,12 @@ export default function Card({ pub }) {
   const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? (typeof pub.fotos === 'number' ? pub.fotos : 0))
   const cover = Array.isArray(pub.fotos) ? pub.fotos[0] : null
   const tiempo = formatTiempoCaminando(dist)
-  // BUG-10: usa formatDistancia (null -> "No informado")
+  // 004 POIs: badge destacado "A X m · Y min a pie de [Lugar]" cuando hay
+  // contexto de cercanía; sin lugar se conserva el texto legado.
   const distText = dist != null ? `${formatDistancia(dist)}${tiempo ? ` · ${tiempo}` : ''}` : 'No informado'
+  const badgeCercania = lugarNombre && dist != null
+    ? `A ${formatDistancia(dist)}${tiempo ? ` · ${tiempo}` : ''} de ${lugarNombre}`
+    : null
   const isFav = favHook.isFav(pub.id)
   const isComp = compHook.isSelected(pub.id)
 
@@ -65,8 +70,12 @@ export default function Card({ pub }) {
           type="button"
           aria-label={isFav ? 'Quitar de favoritos' : 'Añadir a favoritos'}
           aria-pressed={isFav}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); favHook.toggle(pub.id) }}
-          className={`absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center text-sm backdrop-blur-sm border transition ${isFav ? 'bg-red-500 text-white border-red-500' : 'bg-white/90 text-neutral-600 border-white hover:bg-white'}`}
+          onClick={(e) => {
+            e.preventDefault(); e.stopPropagation()
+            favHook.toggle(pub.id)
+            notifyToast(isFav ? 'Quitado de favoritos' : 'Guardado en favoritos', isFav ? undefined : '/favoritos')
+          }}
+          className={`absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center text-sm backdrop-blur-sm border transition active:scale-90 ${isFav ? 'bg-red-500 text-white border-red-500' : 'bg-white/90 text-neutral-600 border-white hover:bg-white'}`}
           title={isFav ? 'En favoritos' : 'Añadir a favoritos'}
         >
           {isFav ? '♥' : '♡'}
@@ -76,8 +85,12 @@ export default function Card({ pub }) {
           type="button"
           aria-label={isComp ? 'Quitar de comparar' : 'Añadir a comparar'}
           aria-pressed={isComp}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); compHook.toggle(pub.id) }}
-          className={`absolute bottom-3 right-3 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold backdrop-blur-sm border transition ${isComp ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white/90 text-neutral-600 border-white hover:bg-white'}`}
+          onClick={(e) => {
+            e.preventDefault(); e.stopPropagation()
+            compHook.toggle(pub.id)
+            if (!isComp) notifyToast('Añadido a comparar', '/comparar')
+          }}
+          className={`absolute bottom-3 right-3 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold backdrop-blur-sm border transition active:scale-90 ${isComp ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white/90 text-neutral-600 border-white hover:bg-white'}`}
           title={isComp ? 'En comparar' : 'Añadir a comparar (máx 3)'}
         >
           {isComp ? '✓' : '+'}
@@ -111,7 +124,9 @@ export default function Card({ pub }) {
             <svg className="w-3.5 h-3.5 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
             </svg>
-            {distText}
+            {badgeCercania ? (
+              <span className="font-semibold text-navy-700">{badgeCercania}</span>
+            ) : distText}
           </span>
         </div>
 

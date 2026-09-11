@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import UploadFotos from '../components/UploadFotos'
+import MapPicker from '../components/MapPicker'
+import { notifyToast } from '../components/Toast'
 import { emitAuthChange } from '../contexts/AuthContext'
 
 const SERVICIOS = [
@@ -20,8 +22,8 @@ const ZONAS = [
 export default function Publicar() {
   const [campus, setCampus] = useState([])
   const [token, setToken] = useState(() => localStorage.getItem('alojau_token') || '')
-  const [loginEmail, setLoginEmail] = useState('arrendador@alojau.com')
-  const [loginPass, setLoginPass] = useState('AlojaU123')
+  const [loginEmail, setLoginEmail] = useState('')
+  const [loginPass, setLoginPass] = useState('')
   const [loginError, setLoginError] = useState('')
   const [loginLoading, setLoginLoading] = useState(false)
 
@@ -75,7 +77,7 @@ export default function Publicar() {
       setToken(t)
       emitAuthChange()
     } catch (err) {
-      setLoginError(err.response?.data?.detail || 'Credenciales inválidas (usa arrendador@alojau.com / AlojaU123)')
+      setLoginError(err.response?.data?.detail || 'Credenciales inválidas')
     } finally { setLoginLoading(false) }
   }
 
@@ -181,11 +183,6 @@ export default function Publicar() {
               Debes iniciar sesión como <b>ARRENDADOR</b> para publicar. Estado inicial siempre <span className="font-medium text-gold-600">PENDIENTE</span> hasta ser revisada.
             </p>
 
-            <div className="bg-gold-50 border border-gold-200 rounded-md p-3 mb-4 text-xs sm:text-sm">
-              <p className="font-medium text-gold-700">Demo:</p>
-              <p className="text-gold-600">Email: <code>arrendador@alojau.com</code> / Pass: <code>AlojaU123</code></p>
-            </div>
-
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-navy-800 mb-1.5">Email</label>
@@ -208,21 +205,10 @@ export default function Publicar() {
                 />
               </div>
               {loginError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-2">{loginError}</p>}
-              <button disabled={loginLoading} className="btn-accent w-full justify-center">
+              <button type="submit" disabled={loginLoading} className="btn-accent w-full justify-center">
                 {loginLoading ? 'Ingresando...' : 'Iniciar sesión como ARRENDADOR'}
               </button>
             </form>
-
-            <div className="mt-3 text-xs">
-              <button
-                onClick={() => {
-                  const t = 'mock-token-arrendador'; localStorage.setItem('alojau_token', t); setToken(t); emitAuthChange()
-                }}
-                className="text-navy-600 hover:text-navy-700 hover:underline"
-              >
-                Usar mock-token-arrendador sin password (solo dev)
-              </button>
-            </div>
           </div>
         </div>
       </div>
@@ -245,7 +231,7 @@ export default function Publicar() {
             <h1 className="font-display text-2xl md:text-3xl font-bold text-navy-900 tracking-tight mb-0">
               Publicar vivienda
             </h1>
-            <button onClick={handleLogout} className="text-xs sm:text-sm text-neutral-500 hover:text-red-600">Cerrar sesión</button>
+            <button type="button" onClick={handleLogout} className="text-xs sm:text-sm text-neutral-500 hover:text-red-600">Cerrar sesión</button>
           </div>
           <p className="text-sm text-neutral-500 mt-1">
             Completa los datos. La publicacion pasara a estado PENDIENTE hasta ser revisada.
@@ -368,6 +354,21 @@ export default function Publicar() {
               className={`input-field resize-none ${errors.reglas_convivencia ? '!border-red-300 !shadow-none' : ''}`}
             />
             {errors.reglas_convivencia && <p className="text-xs text-red-600 mt-1">{errors.reglas_convivencia}</p>}
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-navy-800 mb-1.5">Ubicación en mapa <span className="text-neutral-400 font-normal">(opcional, guarda coords directo)</span></label>
+            <p className="text-[11px] text-neutral-400 mb-2">La ubicación del pin prevalece sobre el texto: lo que midas en el mapa es lo que verán los estudiantes.</p>
+            <MapPicker
+              lat={form.latitud}
+              lng={form.longitud}
+              onChange={(nuevaLat, nuevaLng) => setForm(f => ({ ...f, latitud: nuevaLat, longitud: nuevaLng }))}
+              onAddressSuggestion={(dir) => setForm(f => ({
+                ...f,
+                direccion_referencial: f.direccion_referencial.trim().length >= 10 ? f.direccion_referencial : dir.slice(0, 200),
+              }))}
+              onGeoError={(msg) => notifyToast(msg)}
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-4">

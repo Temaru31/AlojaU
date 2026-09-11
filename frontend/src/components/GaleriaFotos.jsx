@@ -49,7 +49,7 @@ export default function GaleriaFotos({ fotos = [], titulo = '' }) {
             eager
           />
           {total > mobileVisible && (
-            <button onClick={(e)=>{ e.stopPropagation(); openAt(mobileVisible) }} aria-label={`Ver ${mobileExtra} fotos más`} className="absolute bottom-2 left-2 bg-black/60 hover:bg-black/70 text-white text-xs px-2.5 py-1 rounded-full backdrop-blur-sm transition">
+            <button type="button" onClick={(e)=>{ e.stopPropagation(); openAt(mobileVisible) }} aria-label={`Ver ${mobileExtra} fotos más`} className="absolute bottom-2 left-2 bg-black/60 hover:bg-black/70 text-white text-xs px-2.5 py-1 rounded-full backdrop-blur-sm transition">
               +{mobileExtra} ver más
             </button>
           )}
@@ -96,7 +96,7 @@ export default function GaleriaFotos({ fotos = [], titulo = '' }) {
                 className="w-full h-full object-cover group-hover:scale-[1.03] transition"
               />
               {showExtra && (
-                <button onClick={(e)=>{ e.stopPropagation(); openAt(desktopVisible) }} aria-label={`Ver ${desktopExtra} fotos más`} className="absolute bottom-2 left-2 bg-black/60 hover:bg-black/70 text-white text-xs sm:text-sm px-2.5 py-1 rounded-full backdrop-blur-sm transition">
+                <button type="button" onClick={(e)=>{ e.stopPropagation(); openAt(desktopVisible) }} aria-label={`Ver ${desktopExtra} fotos más`} className="absolute bottom-2 left-2 bg-black/60 hover:bg-black/70 text-white text-xs sm:text-sm px-2.5 py-1 rounded-full backdrop-blur-sm transition">
                   +{desktopExtra} fotos
                 </button>
               )}

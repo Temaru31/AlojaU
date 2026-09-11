@@ -27,7 +27,7 @@ export default function ProtectedAdminRoute({ children }) {
         <div className="card p-12 max-w-md mx-auto">
           <p className="font-medium text-neutral-700 mb-1">No pudimos verificar tu rol</p>
           <p className="text-xs text-neutral-400 mb-4">Revisa tu conexión e intenta de nuevo.</p>
-          <button onClick={() => refresh?.()} className="btn-accent text-sm">Reintentar</button>
+          <button type="button" onClick={() => refresh?.()} className="btn-accent text-sm">Reintentar</button>
         </div>
       </div>
     )

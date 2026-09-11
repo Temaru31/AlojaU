@@ -16,8 +16,8 @@ export default function Perfil() {
   const [nombre, setNombre] = useState('')
 
   // Formulario de login si no hay token
-  const [loginEmail, setLoginEmail] = useState('arrendador@alojau.com')
-  const [loginPass, setLoginPass] = useState('AlojaU123')
+  const [loginEmail, setLoginEmail] = useState('')
+  const [loginPass, setLoginPass] = useState('')
   const [loginLoading, setLoginLoading] = useState(false)
 
   // Resumen del dueño (totales vía /mias; si falla se oculta en silencio).
@@ -108,13 +108,6 @@ export default function Perfil() {
     }
   }
 
-  const handleUsarMock = () => {
-    const t = 'mock-token-arrendador'
-    localStorage.setItem('alojau_token', t)
-    setToken(t)
-    emitAuthChange()
-  }
-
   // Nota UX: el cierre de sesión vive en el dropdown del navbar (AuthContext.logout).
 
   const handleGuardarDatos = async (e) => {
@@ -137,28 +130,8 @@ export default function Perfil() {
     }
   }
 
-  const handleVerificarToggle = async (nuevoEstado) => {
-    setSaving(true)
-    setError('')
-    setSuccessMsg('')
-    try {
-      const res = await api.patch(
-        '/api/auth/perfil',
-        { telefono_verificado: nuevoEstado },
-        { headers: { Authorization: `Bearer ${token}` } }
-      )
-      setPerfil(res.data)
-      if (nuevoEstado) {
-        setSuccessMsg('¡Teléfono verificado con éxito! Tus publicaciones ahora suman +20 puntos de confianza.')
-      } else {
-        setSuccessMsg('Verificación desactivada (0 puntos por teléfono).')
-      }
-    } catch (err) {
-      setError(err?.response?.data?.detail || 'Error al cambiar la verificación')
-    } finally {
-      setSaving(false)
-    }
-  }
+  // OLA2-M4: la verificación es solo-lectura (la otorga un administrador).
+  // Se removió el toggle de auto-verificación: PATCH /perfil ya no acepta telefono_verificado.
 
   if (!token) {
     return (
@@ -182,13 +155,8 @@ export default function Perfil() {
               Mi Perfil
             </h1>
             <p className="text-sm text-neutral-500 mb-6">
-              Debes iniciar sesión para ver y editar tu información de contacto y verificar tu teléfono.
+              Debes iniciar sesión para ver y editar tu información de contacto.
             </p>
-
-            <div className="bg-gold-50 border border-gold-200 rounded-md p-3 mb-4 text-xs sm:text-sm">
-              <p className="font-medium text-gold-700">Cuenta demo rápida:</p>
-              <p className="text-gold-600">Email: <code>arrendador@alojau.com</code> / Pass: <code>AlojaU123</code></p>
-            </div>
 
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
@@ -212,20 +180,10 @@ export default function Perfil() {
                 />
               </div>
               {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-2">{error}</p>}
-              <button disabled={loginLoading} className="btn-accent w-full justify-center">
+              <button type="submit" disabled={loginLoading} className="btn-accent w-full justify-center">
                 {loginLoading ? 'Ingresando...' : 'Iniciar sesión'}
               </button>
             </form>
-
-            <div className="mt-4 pt-4 border-t border-neutral-150 text-center">
-              <button
-                type="button"
-                onClick={handleUsarMock}
-                className="text-xs text-navy-600 hover:text-navy-800 hover:underline font-medium"
-              >
-                Usar mock-token-arrendador sin password (solo dev)
-              </button>
-            </div>
           </div>
         </div>
       </div>
@@ -263,7 +221,7 @@ export default function Perfil() {
               Perfil y Confianza
             </h1>
             <p className="text-xs sm:text-sm text-neutral-500">
-              Gestiona tu teléfono de contacto y verifica tu cuenta para maximizar el índice de confianza.
+              Gestiona tu teléfono de contacto. Un administrador verifica tu cuenta para maximizar el índice de confianza.
             </p>
           </div>
         </div>
@@ -383,36 +341,19 @@ export default function Perfil() {
                 </div>
               </form>
 
-              {/* Acciones de Verificación en 1 Clic */}
+              {/* OLA2-M4: verificación solo-lectura (la otorga un administrador) */}
               <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-4 space-y-3 mt-4">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
                     <h3 className="text-xs sm:text-sm font-semibold text-navy-900">
-                      Verificación en 1 Clic (Mock)
+                      Verificación de teléfono
                     </h3>
                     <p className="text-xs text-neutral-500">
-                      Valida tu línea de WhatsApp. Otorga +20 puntos al índice de confianza y habilita el botón directo de contacto.
+                      {estaVerificado
+                        ? 'Tu línea está verificada: +20 puntos al índice de confianza y contacto directo habilitado.'
+                        : 'Un administrador debe verificar tu línea para otorgar +20 puntos y habilitar el contacto directo.'}
                     </p>
                   </div>
-                  {estaVerificado ? (
-                    <button
-                      type="button"
-                      disabled={saving}
-                      onClick={() => handleVerificarToggle(false)}
-                      className="shrink-0 px-3 py-1.5 text-xs text-neutral-600 bg-white border border-neutral-300 rounded-md hover:bg-neutral-100 transition"
-                    >
-                      Desmarcar verificación
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={saving}
-                      onClick={() => handleVerificarToggle(true)}
-                      className="shrink-0 px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 rounded-md shadow-sm transition"
-                    >
-                      Verificar teléfono
-                    </button>
-                  )}
                 </div>
               </div>
             </div>

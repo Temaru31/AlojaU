@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isRetryableError, retryDelayMs, API_MAX_RETRIES, API_TIMEOUT_MS } from './api'
+import { isRetryableError, retryDelayMs, API_MAX_RETRIES, API_TIMEOUT_MS, isCancelError } from './api'
 
 describe('api retry cold-start', () => {
   it('timeout amplio para Render (30-50s)', () => {
@@ -27,5 +27,13 @@ describe('api retry cold-start', () => {
     expect(retryDelayMs(0)).toBe(2000)
     expect(retryDelayMs(1)).toBe(4000)
     expect(retryDelayMs(5)).toBeLessThanOrEqual(5000)
+  })
+
+  it('OLA4: abort (ERR_CANCELED) nunca se reintenta', () => {
+    expect(isCancelError({ code: 'ERR_CANCELED' })).toBe(true)
+    expect(isCancelError({ name: 'CanceledError' })).toBe(true)
+    expect(isCancelError({})).toBe(false)
+    expect(isCancelError({ code: 'ECONNABORTED' })).toBe(false)
+    expect(isRetryableError({ code: 'ERR_CANCELED' })).toBe(false)
   })
 })
