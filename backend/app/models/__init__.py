@@ -50,7 +50,13 @@ class CampusUniversitario(Base):
         UniqueConstraint("ciudad_id", "institucion", "nombre_sede", name="uq_campus_ciudad_sede"),
         CheckConstraint("latitud BETWEEN -90 AND 90", name="chk_campus_lat"),
         CheckConstraint("longitud BETWEEN -180 AND 180", name="chk_campus_lon"),
+        # 004 POIs: categoría del lugar (era solo universidades; el contrato no cambia).
+        CheckConstraint(
+            "categoria IN ('UNIVERSIDAD','CENTRO_COMERCIAL','SALUD','TRANSPORTE','OTRO')",
+            name="chk_campus_categoria",
+        ),
         Index("idx_campus_ciudad", "ciudad_id"),
+        Index("idx_campus_ciudad_categoria", "ciudad_id", "categoria"),
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     ciudad_id: Mapped[int] = mapped_column(ForeignKey("ciudades.id", ondelete="CASCADE"), nullable=False)
@@ -59,6 +65,7 @@ class CampusUniversitario(Base):
     direccion: Mapped[str] = mapped_column(String(200), nullable=False)
     latitud: Mapped[float] = mapped_column(Numeric(10,7), nullable=False)
     longitud: Mapped[float] = mapped_column(Numeric(10,7), nullable=False)
+    categoria: Mapped[str] = mapped_column(String(50), default="UNIVERSIDAD", nullable=False)
     activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     ciudad: Mapped["Ciudad"] = relationship(back_populates="campuses")

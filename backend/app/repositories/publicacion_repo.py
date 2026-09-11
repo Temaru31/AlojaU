@@ -239,6 +239,25 @@ async def fetch_detail_bundle(db: AsyncSession, pub_id: int):
     return p, (r.scalar() or 0), u, (pc_min.distancia_geodesica_m if pc_min else None)
 
 
+async def fetch_detail_campus_ref(db: AsyncSession, pub_id: int, campus_id: int):
+    """Fila publicacion_campus + lugar para GET detalle ?campus_id= (004 POIs).
+
+    Retorna (dist_m, campus) o (None, None) si el aviso no tiene coords
+    (edge case: la fila existe con dist NULL por B0-5/trigger). Lanza 404 si
+    el lugar no existe o está inactivo. Uso: routers/publicaciones.py.
+    """
+    from fastapi import HTTPException
+
+    from app.models import CampusUniversitario, PublicacionCampus
+
+    campus = await db.get(CampusUniversitario, campus_id)
+    if not campus or not campus.activo:
+        raise HTTPException(status_code=404, detail=f"campus_id {campus_id} no existe o inactivo")
+    row = await db.get(PublicacionCampus, (pub_id, campus_id))
+    dist = row.distancia_geodesica_m if row else None
+    return dist, campus
+
+
 async def validate_fks(db: AsyncSession, zona_id: int, campus_ids: List[int], servicios_ids: List[int]):
     """FK estrictas + dedup (404 si zona/campus inactivo/servicio falta).
     Uso: routers/publicaciones.py::crear_publicacion. Ej: cids, sids = await validate_fks(db, 1, [1, 1], [1])."""
@@ -293,6 +312,16 @@ async def create_persisted(db, payload, user_id: int, trust: dict, campus_ids, s
     )
     db.add(nueva)
     await db.flush()
+    # 004 POIs: el trigger trg_publicacion_recalcular_distancias ya insertó
+    # filas para TODOS los lugares activos en el flush anterior. Reescribir las
+    # elegidas (mismo valor) evita violar la PK (publicacion_id, campus_id).
+    from sqlalchemy import delete as sa_delete
+    await db.execute(
+        sa_delete(PublicacionCampus).where(
+            PublicacionCampus.publicacion_id == nueva.id,
+            PublicacionCampus.campus_id.in_(campus_ids),
+        )
+    )
     for cid in campus_ids:
         dist = None
         if payload.latitud is not None and payload.longitud is not None:

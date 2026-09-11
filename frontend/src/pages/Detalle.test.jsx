@@ -6,7 +6,7 @@ import { api } from '../services/api'
 
 vi.mock('../services/api', () => ({ api: { get: vi.fn() } }))
 // Leaflet no corre en jsdom: se mockean hijos visuales (el scroll/botones se prueban aquí).
-vi.mock('../components/MapaZona', () => ({ default: (props) => <div data-testid="mapa" data-aviso={props.aviso ? JSON.stringify(props.aviso) : ''} /> }))
+vi.mock('../components/MapaZona', () => ({ default: (props) => <div data-testid="mapa" data-aviso={props.aviso ? JSON.stringify(props.aviso) : ''} data-lugar={props.lugar ? JSON.stringify(props.lugar) : ''} /> }))
 vi.mock('../components/GaleriaFotos', () => ({ default: () => <div data-testid="galeria" /> }))
 vi.mock('../components/IndiceConfianza', () => ({ default: () => <div data-testid="indice" /> }))
 vi.mock('../components/ReportarModal', () => ({ default: () => <div data-testid="reportar" /> }))
@@ -112,5 +112,74 @@ describe('Detalle UX', () => {
     renderDetalle()
     await waitFor(() => expect(screen.getByTestId('mapa')).toBeInTheDocument())
     expect(screen.getByTestId('mapa').dataset.aviso).toBe('')
+  })
+})
+
+describe('Detalle 004 sincronización dinámica del mapa', () => {
+  const renderDetalleQs = (qs) => render(
+    <MemoryRouter initialEntries={[`/publicacion/1${qs}`]}>
+      <Routes><Route path="/publicacion/:id" element={<Detalle />} /></Routes>
+    </MemoryRouter>
+  )
+
+  it('con ?campus_id= pide el detalle con ese param y sincroniza el lugar', async () => {
+    window.scrollTo = vi.fn()
+    api.get.mockImplementation((url) => {
+      if (url === '/api/campus') return Promise.resolve({ data: [] })
+      return Promise.resolve({
+        data: {
+          ...pub, latitud: 2.4451, longitud: -76.6085,
+          distancia_geodesica_m: 900,
+          campus_ref: {
+            campus_id: 3, institucion: 'Centro Comercial Campanario', nombre_sede: 'Sede Única',
+            latitud: 2.4467, longitud: -76.6014, dist_m: 900, tiempo_pie_min: 15,
+          },
+        },
+      })
+    })
+    renderDetalleQs('?campus_id=3')
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith('/api/publicaciones/1?campus_id=3'))
+    const mapa = await screen.findByTestId('mapa')
+    expect(mapa.dataset.lugar).toContain('Campanario')
+    expect(mapa.dataset.lugar).toContain('2.4467')
+    expect(screen.getByText(/Distancia a Sede Única/)).toBeInTheDocument()
+  })
+
+  it('sin ?campus_id= mantiene el comportamiento legacy (sin lugar, etiqueta genérica)', async () => {
+    window.scrollTo = vi.fn()
+    api.get.mockResolvedValue({ data: { ...pub, distancia_geodesica_m: 320 } })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText('Descripción')).toBeInTheDocument())
+    expect(screen.getByTestId('mapa').dataset.lugar).toBe('')
+    expect(screen.getByText('Distancia al campus')).toBeInTheDocument()
+  })
+})
+
+describe('Detalle 004 distancias honestas', () => {
+  const renderDetalleQs = (qs) => render(
+    <MemoryRouter initialEntries={[`/publicacion/1${qs}`]}>
+      <Routes><Route path="/publicacion/:id" element={<Detalle />} /></Routes>
+    </MemoryRouter>
+  )
+
+  it('ref con dist_m null muestra "No informado" (no hereda otro lugar)', async () => {
+    window.scrollTo = vi.fn()
+    api.get.mockImplementation((url) => {
+      if (url === '/api/campus') return Promise.resolve({ data: [] })
+      return Promise.resolve({
+        data: {
+          ...pub, latitud: 2.4451, longitud: -76.6085,
+          distancia_geodesica_m: 900,
+          campus_ref: {
+            campus_id: 5, institucion: 'Terminal de Transportes', nombre_sede: 'Sede Única',
+            latitud: 2.4505, longitud: -76.613, dist_m: null, tiempo_pie_min: null,
+          },
+        },
+      })
+    })
+    renderDetalleQs('?campus_id=5')
+    await waitFor(() => expect(screen.getByText('Distancia a Sede Única')).toBeInTheDocument())
+    // No hereda los 900 m de otro lugar: no aparece ninguna distancia en el bloque.
+    expect(screen.queryByText(/900/)).not.toBeInTheDocument()
   })
 })

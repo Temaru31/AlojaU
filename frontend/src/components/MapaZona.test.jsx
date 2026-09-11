@@ -10,6 +10,7 @@ vi.mock('react-leaflet', () => ({
   Marker: ({ children, position }) => <div data-testid="marker" data-position={JSON.stringify(position)}>{children}</div>,
   Popup: ({ children }) => <div>{children}</div>,
   Polyline: () => <div data-testid="linea-ruta" />,
+  useMap: () => ({ fitBounds: vi.fn() }),
 }))
 
 afterEach(cleanup)
@@ -95,5 +96,60 @@ describe('MapaZona Oleada 2', () => {
     expect(cta.getAttribute('href')).toContain('travelmode=driving')
     // El icono va en span aria-hidden (no cuenta en el nombre accesible).
     expect(cta.textContent).toContain('🚗')
+  })
+})
+
+describe('MapaZona 004 POIs dinámico', () => {
+  const AVISO = { lat: 2.4451, lng: -76.6085 }
+  const LUGAR = { lat: 2.4467, lng: -76.6014, nombre: 'Centro Comercial Campanario' }
+
+  it('lugar dinámico precede al campus legacy (2 pines + nombre del lugar)', () => {
+    render(
+      <MemoryRouter>
+        <MapaZona
+          campus={{ lat: 2.443, lng: -76.606 }}
+          lugar={LUGAR}
+          aviso={AVISO}
+          dist_m={900}
+        />
+      </MemoryRouter>
+    )
+    const markers = screen.getAllByTestId('marker')
+    expect(markers.length).toBe(2)
+    // El pin de referencia usa las coords del lugar, no las del campus legacy.
+    expect(markers[1].dataset.position).toContain('2.4467')
+    expect(screen.getByText('Centro Comercial Campanario')).toBeInTheDocument()
+    expect(screen.getByTestId('linea-ruta')).toBeInTheDocument()
+  })
+
+  it('aviso sin referencia: solo pin de la casa (sin línea ni pin extra)', () => {
+    render(
+      <MemoryRouter>
+        <MapaZona campus={null} aviso={AVISO} dist_m={null} direccion="" />
+      </MemoryRouter>
+    )
+    expect(screen.getAllByTestId('marker').length).toBe(1)
+    expect(screen.queryByTestId('linea-ruta')).not.toBeInTheDocument()
+  })
+
+  it('GPS denegado llama onGeoError y conserva la ruta por defecto', () => {
+    const onGeoError = vi.fn()
+    // Sin geolocation en el navegador.
+    const geo = navigator.geolocation
+    // @ts-expect-error simulación jsdom
+    delete navigator.geolocation
+    try {
+      render(
+        <MemoryRouter>
+          <MapaZona campus={{ lat: 2.443, lng: -76.606 }} aviso={AVISO} onGeoError={onGeoError} />
+        </MemoryRouter>
+      )
+      fireEvent.click(screen.getByRole('button', { name: /desde mi ubicación/ }))
+      expect(onGeoError).toHaveBeenCalledTimes(1)
+      // La ruta por defecto (origen = campus) sigue disponible.
+      expect(screen.getByRole('link', { name: /Cómo llegar en Google Maps/ }).getAttribute('href')).toContain('origin=2.443')
+    } finally {
+      Object.defineProperty(navigator, 'geolocation', { value: geo, configurable: true })
+    }
   })
 })

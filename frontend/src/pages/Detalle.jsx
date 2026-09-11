@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { api } from '../services/api'
 import Indice from '../components/IndiceConfianza'
 import MapaZona from '../components/MapaZona'
@@ -43,6 +43,10 @@ function guardarContacto(id, titulo) {
 
 export default function Detalle() {
   const { id } = useParams()
+  const [searchParams] = useSearchParams()
+  // 004 POIs: el mapa se sincroniza al lugar buscado (?campus_id= viene de Buscar).
+  const campusIdParam = searchParams.get('campus_id')
+  const [lugares, setLugares] = useState([])
   const [pub, setPub] = useState(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
@@ -67,7 +71,8 @@ export default function Detalle() {
     let cancelled = false
     setLoading(true)
     setLoadError('')
-    api.get(`/api/publicaciones/${id}`)
+    const qs = campusIdParam ? `?campus_id=${encodeURIComponent(campusIdParam)}` : ''
+    api.get(`/api/publicaciones/${id}${qs}`)
       .then(r => { if (!cancelled) setPub(r.data) })
       .catch((err) => {
         if (cancelled) return
@@ -79,7 +84,17 @@ export default function Detalle() {
       .finally(() => { if (!cancelled) setLoading(false) })
     // UX/perf: cambio rápido de aviso no pisa el detalle con respuesta tardía.
     return () => { cancelled = true }
-  }, [id])
+  }, [id, campusIdParam])
+
+  // Catálogo de lugares para resolver ?campus_id= aunque el backend no traiga campus_ref.
+  useEffect(() => {
+    if (!campusIdParam) return
+    let cancelled = false
+    api.get('/api/campus')
+      .then(r => { if (!cancelled && Array.isArray(r.data)) setLugares(r.data) })
+      .catch(() => { /* sin catálogo: se usa campus_ref o fallback legacy */ })
+    return () => { cancelled = true }
+  }, [campusIdParam])
 
   // P-04: tracking local de contacto + historial de vistos (retención, sin backend).
   useEffect(() => {
@@ -150,6 +165,29 @@ export default function Detalle() {
     )
   }
 
+  // 004 POIs: referencia dinámica al lugar buscado (reemplaza el campus hardcodeado).
+  // Prioridad: campus_ref del backend > catálogo /api/campus > fallback legacy Tulcán.
+  const refApi = pub.campus_ref || null
+  const distBase = pub.distancia_geodesica_m ?? pub.dist_m
+  const lugarLista = !refApi && campusIdParam
+    ? lugares.find(c => String(c.id) === String(campusIdParam))
+    : null
+  const nombreLugarLista = lugarLista
+    ? `${lugarLista.institucion || ''}${lugarLista.nombre_sede && lugarLista.nombre_sede !== 'Sede Única' ? ` - ${lugarLista.nombre_sede}` : ''}`.trim() || 'Lugar de referencia'
+    : null
+  const lugar = refApi
+    ? { lat: refApi.latitud, lng: refApi.longitud, nombre: `${refApi.institucion} - ${refApi.nombre_sede}` }
+    : (lugarLista
+      ? { lat: lugarLista.latitud ?? lugarLista.lat, lng: lugarLista.longitud ?? lugarLista.lng, nombre: nombreLugarLista }
+      : null)
+  // Si se pidió una referencia y su distancia es desconocida (sin backfill,
+  // otra ciudad, sin coords), se muestra "No informado": nunca se hereda la
+  // distancia mínima a OTRO lugar bajo la etiqueta del lugar pedido.
+  const distMapa = refApi ? refApi.dist_m : (lugarLista ? null : distBase)
+  const etiquetaDist = refApi
+    ? `Distancia a ${refApi.nombre_sede}`
+    : (lugarLista ? `Distancia a ${nombreLugarLista}` : 'Distancia al campus')
+
   const isActivo = pub.estado === 'ACTIVO'
   const hasTel = !!pub.telefono_whatsapp && isActivo
   const wa = hasTel
@@ -162,12 +200,10 @@ export default function Detalle() {
   const totalPrimerMes = canon != null && deposito != null ? Number(canon) + Number(deposito) : null
   // BUG-08: fallbacks unificados a "No informado"; num_fotos real (no 3 inventado)
   const zona = pub.zona_nombre || pub.zona || 'No informado'
-  const dist = pub.distancia_geodesica_m ?? pub.dist_m
   const servicios = pub.servicios || []
   const descripcion = (pub.descripcion || '').trim()
   const tipoHumano = humanizarTipo(pub.tipo_inmueble)
   const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? 0)
-  const tiempo = formatTiempoCaminando(dist)
   const isFav = favHook.isFav(pub.id)
   const isComp = compHook.isSelected(pub.id)
   const mensajeWa = `Hola, vi ${pub.titulo} (ID ${pub.id}) en AlojaU y me interesa.`
@@ -368,8 +404,8 @@ export default function Detalle() {
               {/* UX: sin columna "Estado" (ACTIVO/PENDIENTE es interno de BD, no del estudiante) */}
               <div className="flex items-center gap-4">
                 <div>
-                  <p className="text-xs text-neutral-400 mb-0.5">Distancia al campus</p>
-                   <p className="text-sm font-semibold text-navy-800">{dist != null ? formatDistancia(dist) : 'No informado'}{tiempo ? ` · ${tiempo}` : ''}</p>
+                  <p className="text-xs text-neutral-400 mb-0.5">{etiquetaDist}</p>
+                    <p className="text-sm font-semibold text-navy-800">{distMapa != null ? formatDistancia(distMapa) : 'No informado'}{distMapa != null && formatTiempoCaminando(distMapa) ? ` · ${formatTiempoCaminando(distMapa)}` : ''}</p>
                 </div>
                 <div className="w-px h-8 bg-neutral-150" />
                 <div>
@@ -384,11 +420,13 @@ export default function Detalle() {
             <h3 className="text-sm font-semibold text-navy-800 mb-3">Ubicación referencial</h3>
             <MapaZona
               zona={zona}
-              dist_m={dist}
+              dist_m={distMapa}
               campus={{ lat: 2.443, lng: -76.606 }}
+              lugar={lugar}
               aviso={pub.latitud != null && pub.longitud != null ? { lat: pub.latitud, lng: pub.longitud } : null}
               direccion={pub.direccion_referencial || ''}
               titulo={pub.titulo}
+              onGeoError={mostrarToast}
             />
           </div>
 

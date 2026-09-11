@@ -1,4 +1,4 @@
--- AlojaU Seed mínimo viable - idempotente - 6 pubs ACTIVO + 4 campus
+-- AlojaU Seed mínimo viable - idempotente - 6 pubs ACTIVO + 6 lugares (2 campus + 4 POIs 004)
 TRUNCATE publicaciones_audit, reportes_publicacion, imagenes_publicacion, publicacion_campus, publicacion_servicios, publicaciones, servicios_catalogo, campus_universitarios, zonas_barrios, ciudades, usuarios RESTART IDENTITY CASCADE;
 
 -- 1 ciudad
@@ -10,9 +10,15 @@ INSERT INTO zonas_barrios (id, ciudad_id, nombre, estrato) VALUES
 ON CONFLICT DO NOTHING;
 
 -- 2 campus validados (Tulcán 2.443/-76.606, Centro 2.441/-76.606)
-INSERT INTO campus_universitarios (id, ciudad_id, institucion, nombre_sede, direccion, latitud, longitud) VALUES
-(1, 1, 'Universidad del Cauca', 'Campus Tulcán', 'Calle 5 # 4-70', 2.4430000, -76.6060000),
-(2, 1, 'Unicomfacauca', 'Claustro Centro', 'Calle 4 # 8-30', 2.4410000, -76.6060000)
+-- 004 POIs: 4 lugares nuevos (coords aproximadas centro Popayán; recalibrar con
+-- backend/scripts/ingest_pois_osm.py que trae coords exactas de OpenStreetMap).
+INSERT INTO campus_universitarios (id, ciudad_id, institucion, nombre_sede, direccion, latitud, longitud, categoria) VALUES
+(1, 1, 'Universidad del Cauca', 'Campus Tulcán', 'Calle 5 # 4-70', 2.4430000, -76.6060000, 'UNIVERSIDAD'),
+(2, 1, 'Unicomfacauca', 'Claustro Centro', 'Calle 4 # 8-30', 2.4410000, -76.6060000, 'UNIVERSIDAD'),
+(3, 1, 'Centro Comercial Campanario', 'Sede Única', 'Carrera 9 # 24N-43', 2.4467000, -76.6014000, 'CENTRO_COMERCIAL'),
+(4, 1, 'Hospital Universitario San José', 'Sede Principal', 'Carrera 6 # 10N-142', 2.4510000, -76.5990000, 'SALUD'),
+(5, 1, 'Terminal de Transportes', 'Sede Única', 'Transversal 9 # 4N-125', 2.4505000, -76.6130000, 'TRANSPORTE'),
+(6, 1, 'Parque Caldas', 'Centro Histórico', 'Parque Caldas Centro', 2.4418000, -76.6064000, 'OTRO')
 ON CONFLICT DO NOTHING;
 
 -- 5 servicios
@@ -57,6 +63,14 @@ INSERT INTO publicacion_campus (publicacion_id, campus_id, distancia_geodesica_m
 (5, 2, haversine_m(2.4455000, -76.6030000, 2.4410000, -76.6060000)),
 (6, 1, haversine_m(2.4360000, -76.6065000, 2.4430000, -76.6060000)),
 (6, 2, haversine_m(2.4360000, -76.6065000, 2.4410000, -76.6060000))
+ON CONFLICT DO NOTHING;
+
+-- 004 POIs: distancias de las 6 pubs demo a los lugares 3-6 (NULL-safe: sin
+-- coords no hay fila calculada; el trigger 004 las mantiene al publicar/mover).
+INSERT INTO publicacion_campus (publicacion_id, campus_id, distancia_geodesica_m)
+SELECT p.id, c.id, haversine_m(p.latitud, p.longitud, c.latitud, c.longitud)
+FROM publicaciones p CROSS JOIN campus_universitarios c
+WHERE c.id >= 3 AND p.latitud IS NOT NULL AND p.longitud IS NOT NULL
 ON CONFLICT DO NOTHING;
 
 -- 20 imágenes reales (Unsplash + placehold) - siempre cargan, sin 404 (picsum a veces 522)
