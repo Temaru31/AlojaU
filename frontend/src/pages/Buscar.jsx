@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../services/api'
 import Card from '../components/Card'
+import Casa3D from '../components/Casa3D'
 import Filtros from '../components/Filtros'
 import Paginacion from '../components/Paginacion'
 import SearchBar from '../components/SearchBar'
@@ -126,18 +127,21 @@ export default function Buscar() {
           }}
         />
         <div className="container-main relative py-14 md:py-20">
-          <div className="max-w-2xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-full mb-5">
-              <div className="w-1.5 h-1.5 bg-gold-400 rounded-full" />
-              <span className="text-xs font-medium text-gold-300 tracking-wide uppercase">Popayan, Cauca</span>
+          <div className="grid items-center gap-8 lg:grid-cols-[1.05fr_0.95fr]">
+            <div className="max-w-2xl">
+              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-full mb-5">
+                <div className="w-1.5 h-1.5 bg-gold-400 rounded-full" />
+                <span className="text-xs font-medium text-gold-300 tracking-wide uppercase">Popayan, Cauca</span>
+              </div>
+              <h1 className="font-display text-3xl md:text-[2.75rem] font-extrabold text-white leading-tight tracking-tight mb-4 text-balance">
+                Encuentra tu vivienda<br />
+                <span className="text-gold-400">cerca del campus</span>
+              </h1>
+              <p className="text-navy-300 text-base md:text-lg leading-relaxed max-w-lg">
+                Compara opciones, revisa el indice de confianza y contacta directamente por WhatsApp.
+              </p>
             </div>
-            <h1 className="font-display text-3xl md:text-[2.75rem] font-extrabold text-white leading-tight tracking-tight mb-4 text-balance">
-              Encuentra tu vivienda<br />
-              <span className="text-gold-400">cerca del campus</span>
-            </h1>
-            <p className="text-navy-300 text-base md:text-lg leading-relaxed max-w-lg">
-              Compara opciones, revisa el indice de confianza y contacta directamente por WhatsApp.
-            </p>
+            <Casa3D />
           </div>
         </div>
       </section>
