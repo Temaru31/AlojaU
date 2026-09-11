@@ -51,8 +51,7 @@ export default function Casa3D() {
 
         const escena = new THREE.Scene()
         const camara = new THREE.PerspectiveCamera(35, ancho / alto, 0.1, 100)
-        camara.position.set(4.4, 3.1, 6.2)
-        camara.lookAt(0, 0.9, 0)
+        const direccionVista = new THREE.Vector3(0.54, 0.38, 0.75).normalize()
 
         escena.add(new THREE.HemisphereLight(0xffffff, 0x1e2a4a, 0.9))
         const clave = new THREE.DirectionalLight(0xffffff, 2.2)
@@ -99,6 +98,23 @@ export default function Casa3D() {
         grupo.position.y = 0.15
         escena.add(grupo)
 
+        // Encuadre: distancia según el tamaño real del modelo (esfera
+        // envolvente + margen para la flotación y la sombra), considerando
+        // el fov vertical y horizontal para que nada se recorte.
+        const esfera = new THREE.Box3().setFromObject(grupo).getBoundingSphere(new THREE.Sphere())
+        const radioEncuadre = esfera.radius + 0.45
+        const encuadrar = () => {
+          const mitadVFov = THREE.MathUtils.degToRad(camara.fov) / 2
+          const mitadHFov = Math.atan(Math.tan(mitadVFov) * camara.aspect)
+          const dist = Math.max(
+            radioEncuadre / Math.sin(mitadVFov),
+            radioEncuadre / Math.sin(mitadHFov)
+          )
+          camara.position.copy(esfera.center).addScaledVector(direccionVista, dist)
+          camara.lookAt(esfera.center)
+        }
+        encuadrar()
+
         const movimientoReducido = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
         setEstado('listo')
 
@@ -128,6 +144,7 @@ export default function Casa3D() {
           camara.aspect = w / h
           camara.updateProjectionMatrix()
           renderer.setSize(w, h)
+          encuadrar()
         }
         RO = new ResizeObserver(reajustar)
         RO.observe(contenedor)
