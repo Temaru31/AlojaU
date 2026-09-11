@@ -12,7 +12,6 @@ const Favoritos = lazy(() => import('./pages/Favoritos'))
 const AdminReportes = lazy(() => import('./pages/AdminReportes'))
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'))
 import ProtectedAdminRoute from './components/ProtectedAdminRoute'
-import MisPublicaciones from './pages/MisPublicaciones'
 import ColdStartBanner from './components/ColdStartBanner'
 import Toaster from './components/Toast'
 import BrandMark from './components/BrandMark'
