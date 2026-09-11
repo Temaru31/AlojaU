@@ -1,10 +1,12 @@
 """
-routers/publicaciones.py - HU-001,002,003,005,007 (Sprint1) + Mis publicaciones (UX)
+routers/publicaciones.py - HU-001,002,003,005,007 (Sprint1) + Mis publicaciones (UX) + PA-01 Renovación
 Endpoints:
-  GET  /api/publicaciones?campus_id=&precio_min=&precio_max=&tipo=&servicios=  (HU-001+002)
-  GET  /api/publicaciones/mias                                                (UX: dueño, todos los estados)
-  GET  /api/publicaciones/{id}                                                (HU-003+007)
-  POST /api/publicaciones                                                      (HU-005 -> PENDIENTE, solo ARRENDADOR)
+  GET   /api/publicaciones?campus_id=&precio_min=&precio_max=&tipo=&servicios=  (HU-001+002)
+  GET   /api/publicaciones/mias                                                 (UX: dueño, todos los estados)
+  GET   /api/publicaciones/{id}                                                 (HU-003+007)
+  POST  /api/publicaciones                                                      (HU-005 -> PENDIENTE, solo ARRENDADOR)
+  PATCH /api/publicaciones/{id}                                                 (UX editar aviso del dueño)
+  PATCH /api/publicaciones/{id}/renovar                                         (PA-01 renovación 30 días)
 
 Sprint1: mock lista en memoria si no hay PG (frontend no se bloquea). Si hay PG, query real con Haversine + TrustScoreEngine.
 NFR P95<500ms: query indexada (estado, zona, canon), sin N+1, Haversine en memoria/Python.
@@ -28,6 +30,7 @@ from app.schemas.publicacion import (
     PublicacionDetailOut,
     PublicacionUpdate,
     PaginatedPublicaciones,
+    RenovacionOut,
 )
 from app.core.pagination import paginate_params, build_paginated
 import logging
@@ -352,6 +355,79 @@ async def editar_publicacion(
         raise HTTPException(status_code=403, detail="Solo el dueño puede editar")
     pub.update(cambios)
     return view.mock_to_out(pub)
+
+@router.patch("/{pub_id}/renovar", response_model=RenovacionOut, summary="PA-01 Renovar vigencia 30 días (solo propietario)")
+async def renovar_publicacion(
+    pub_id: int = Path(..., ge=1, le=1000000),
+    db: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """
+    PA-01: Renueva la vigencia de una publicación por 30 días calendario exactos.
+
+    Reglas:
+    - 401 sin token válido.
+    - 403 si el usuario autenticado no es el dueño de la publicación.
+    - 404 si la publicación no existe.
+    - Vigente:  nueva_expiracion = fecha_expiracion_actual + 30 días.
+    - Vencida:  nueva_expiracion = ahora + 30 días.
+    - EXPIRADO → pasa a ACTIVO. RECHAZADO/DESACTIVADO conservan su estado.
+    - Genera fila en publicaciones_audit con evento='RENEWED'.
+    """
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    try:
+        datos = await repo.renovar_publicacion(db, pub_id, uid)
+        return datos
+    except HTTPException:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        raise
+    except Exception as e:
+        logger.error(f"[DB] renovar_publicacion {pub_id} falló: {e!r}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+
+    # Mock fallback solo dev (sin PG)
+    pub = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
+    if not pub:
+        raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    if pub.get("usuario_id") != uid:
+        raise HTTPException(status_code=403, detail="No tienes permisos para renovar esta publicación.")
+
+    now = datetime.now(timezone.utc)
+    fecha_anterior = pub.get("fecha_expiracion") or now
+    if isinstance(fecha_anterior, str):
+        fecha_anterior = datetime.fromisoformat(fecha_anterior.replace("Z", "+00:00"))
+    if getattr(fecha_anterior, "tzinfo", None) is None:
+        fecha_anterior = fecha_anterior.replace(tzinfo=timezone.utc)
+
+    if fecha_anterior > now:
+        fecha_nueva = fecha_anterior + timedelta(days=30)
+    else:
+        fecha_nueva = now + timedelta(days=30)
+
+    pub["fecha_expiracion"] = fecha_nueva
+    pub["fecha_renovacion"] = now
+    if pub.get("estado") == "EXPIRADO":
+        pub["estado"] = "ACTIVO"
+
+    return {
+        "id": pub["id"],
+        "estado": pub.get("estado", "ACTIVO"),
+        "fecha_expiracion_anterior": fecha_anterior,
+        "fecha_expiracion_nueva": fecha_nueva,
+        "dias_agregados": 30,
+        "mensaje": "La publicación fue renovada exitosamente.",
+    }
+
 
 @router.post("", response_model=PublicacionCreatedOut, status_code=status.HTTP_201_CREATED, summary="HU-005 Publicar oferta estructurada -> PENDIENTE (solo ARRENDADOR)")
 async def crear_publicacion(

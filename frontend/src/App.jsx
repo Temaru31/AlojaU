@@ -12,6 +12,7 @@ const Favoritos = lazy(() => import('./pages/Favoritos'))
 const AdminReportes = lazy(() => import('./pages/AdminReportes'))
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'))
 import ProtectedAdminRoute from './components/ProtectedAdminRoute'
+import MisPublicaciones from './pages/MisPublicaciones'
 import ColdStartBanner from './components/ColdStartBanner'
 import Toaster from './components/Toast'
 import BrandMark from './components/BrandMark'
@@ -34,7 +35,8 @@ function ScrollToTop() {
   return null
 }
 
-function Nav() {  const { count: favCount } = useFavoritos()
+function Nav() {
+  const { count: favCount } = useFavoritos()
   const { count: compCount, max: compMax } = useComparar()
   const { token, user, logout } = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -58,8 +60,7 @@ function Nav() {  const { count: favCount } = useFavoritos()
   useEffect(() => { closeUser() }, [location.pathname])
 
   const mobileLinkCls = (active) =>
-    `flex items-center justify-between px-3 py-2.5 text-sm font-medium rounded-md transition-colors duration-200 ${
-      active ? 'text-navy-800 bg-navy-50' : 'text-neutral-600 hover:bg-neutral-100'
+    `flex items-center justify-between px-3 py-2.5 text-sm font-medium rounded-md transition-colors duration-200 ${active ? 'text-navy-800 bg-navy-50' : 'text-neutral-600 hover:bg-neutral-100'
     }`
 
   return (
@@ -73,43 +74,39 @@ function Nav() {  const { count: favCount } = useFavoritos()
             <div className="hidden md:flex items-center gap-1">
               <Link
                 to="/"
-                className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${
-                  isActive('/') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
-                }`}
+                className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive('/') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
+                  }`}
               >
                 Buscar
               </Link>
               <Link
                 to="/comparar"
-                className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${
-                  isActive('/comparar') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
-                }`}
+                className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive('/comparar') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
+                  }`}
               >
                 Comparar {compCount > 0 && <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full ml-1">{compCount}/{compMax}</span>}
               </Link>
               <Link
-                to="/favoritos"
-                className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${
-                  isActive('/favoritos') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
-                }`}
-              >
-                Favoritos {favCount > 0 && <span className="bg-red-100 text-red-700 text-[11px] px-1.5 py-0.5 rounded-full ml-1">{favCount}</span>}
-              </Link>
-              <Link
                 to="/perfil"
-                className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${
-                  isActive('/perfil') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
-                }`}
+                className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive('/perfil') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
+                  }`}
               >
                 Mi Perfil
               </Link>
+              {token && (
+                <Link
+                  to="/mis-publicaciones"
+                  className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive('/mis-publicaciones') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
+                    }`}
+                >
+                  Mis publicaciones
+                </Link>
+              )}
             </div>
           </div>
 
           <div className="hidden md:flex items-center gap-3">
-            <Link to="/favoritos" className="text-sm text-neutral-500 hover:text-red-600 transition-colors" aria-label={`${favCount} favoritos`}>
-              ♡ {favCount}
-            </Link>
+            {favCount > 0 && <span className="text-sm text-neutral-500" aria-label={`${favCount} favoritos`}>♡ {favCount}</span>}
             {/* UX: navbar según sesión */}
             {!token ? (
               <Link to="/perfil" className="px-3 py-2 text-sm font-medium rounded-md text-neutral-500 hover:text-navy-700 hover:bg-neutral-100 transition-colors">
@@ -209,16 +206,9 @@ function Nav() {  const { count: favCount } = useFavoritos()
               <span>Comparar</span>
               <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${compCount} de ${compMax} para comparar`}>{compCount}/{compMax}</span>
             </Link>
-            {/* P-02: Favoritos ya tiene página propia (antes enlace muerto a "/"). */}
-            <Link
-              to="/favoritos"
-              onClick={closeMenu}
-              aria-current={isActive('/favoritos') ? 'page' : undefined}
-              className={mobileLinkCls(isActive('/favoritos'))}
-            >
-              <span>Favoritos</span>
-              <span className="bg-red-100 text-red-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${favCount} favoritos`}>{favCount}</span>
-            </Link>
+            {/* UX-AUDIT P1: se elimina el item "Favoritos" (apuntaba a "/" = Buscar,
+                enlace muerto). La página /favoritos llega en T3 (BUG-07); el contador
+                ♡ del navbar desktop sigue visible. */}
             <Link
               to="/perfil"
               onClick={closeMenu}
@@ -322,41 +312,42 @@ function App() {
     <BrowserRouter>
       <ScrollToTop />
       <AuthProvider>
-      <FavoritosProvider>
-        <CompararProvider>
-          <div className="min-h-screen flex flex-col bg-neutral-50">
-            <Nav />
-            <ColdStartBanner />
-            <main className="flex-1">
-              {/* OLA4: fallback skeleton coherente con el resto de la app */}
-              <Suspense fallback={
-                <div className="container-main py-12">
-                  <div className="max-w-2xl mx-auto card p-8 animate-pulse space-y-4">
-                    <div className="h-6 bg-neutral-200 rounded w-1/3" />
-                    <div className="h-4 bg-neutral-200 rounded w-1/2" />
-                    <div className="h-32 bg-neutral-100 rounded" />
+        <FavoritosProvider>
+          <CompararProvider>
+            <div className="min-h-screen flex flex-col bg-neutral-50">
+              <Nav />
+              <ColdStartBanner />
+              <main className="flex-1">
+                {/* OLA4: fallback skeleton coherente con el resto de la app */}
+                <Suspense fallback={
+                  <div className="container-main py-12">
+                    <div className="max-w-2xl mx-auto card p-8 animate-pulse space-y-4">
+                      <div className="h-6 bg-neutral-200 rounded w-1/3" />
+                      <div className="h-4 bg-neutral-200 rounded w-1/2" />
+                      <div className="h-32 bg-neutral-100 rounded" />
+                    </div>
                   </div>
-                </div>
-              }>
-              <Routes>
-                <Route path="/" element={<Buscar />} />
-                <Route path="/publicacion/:id" element={<Detalle />} />
-                <Route path="/favoritos" element={<Favoritos />} />
-                <Route path="/comparar" element={<Comparar />} />
-                <Route path="/publicar" element={<Publicar />} />
-                <Route path="/perfil" element={<Perfil />} />
-                <Route path="/mis-publicaciones" element={<MisPublicaciones />} />
-                <Route path="/admin/dashboard" element={<ProtectedAdminRoute><AdminDashboard /></ProtectedAdminRoute>} />
-                <Route path="/admin/reportes" element={<ProtectedAdminRoute><AdminReportes /></ProtectedAdminRoute>} />
-              </Routes>
-              </Suspense>
-              <Toaster />
+                }>
+                  <Routes>
+                    <Route path="/" element={<Buscar />} />
+                    <Route path="/publicacion/:id" element={<Detalle />} />
+                    <Route path="/favoritos" element={<Favoritos />} />
+                    <Route path="/comparar" element={<Comparar />} />
+                    <Route path="/publicar" element={<Publicar />} />
+                    <Route path="/perfil" element={<Perfil />} />
+                    <Route path="/mis-publicaciones" element={<MisPublicaciones />} />
+                    <Route path="/favoritos" element={<Favoritos />} />
+                    <Route path="/admin/dashboard" element={<ProtectedAdminRoute><AdminDashboard /></ProtectedAdminRoute>} />
+                    <Route path="/admin/reportes" element={<ProtectedAdminRoute><AdminReportes /></ProtectedAdminRoute>} />
+                  </Routes>
+                </Suspense>
+                <Toaster />
 
-            </main>
-            <Footer />
-          </div>
-        </CompararProvider>
-      </FavoritosProvider>
+              </main>
+              <Footer />
+            </div>
+          </CompararProvider>
+        </FavoritosProvider>
       </AuthProvider>
     </BrowserRouter>
   )

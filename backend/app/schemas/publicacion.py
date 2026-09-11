@@ -211,3 +211,13 @@ class PublicacionCreatedOut(BaseModel):
     desglose: DesgloseOut
     advertencia: Optional[str] = None
     mensaje: Optional[str] = None
+
+
+class RenovacionOut(BaseModel):
+    """Respuesta PATCH /api/publicaciones/{id}/renovar (PA-01)."""
+    id: int
+    estado: str
+    fecha_expiracion_anterior: datetime
+    fecha_expiracion_nueva: datetime
+    dias_agregados: int
+    mensaje: str
