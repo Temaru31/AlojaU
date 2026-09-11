@@ -39,3 +39,9 @@ ROLLBACK;
 -- 5. Edge case NULL: aviso sin coords conserva filas con dist NULL (no desaparece).
 SELECT publicacion_id, campus_id, distancia_geodesica_m
 FROM publicacion_campus WHERE distancia_geodesica_m IS NULL LIMIT 5;
+
+-- 6. RLS: el catálogo debe seguir legible públicamente con la columna nueva
+--    (sin este SELECT anónimo, el filtro "Cercano a..." sale vacío en prod).
+SELECT policyname, cmd, roles
+FROM pg_policies
+WHERE tablename = 'campus_universitarios';
