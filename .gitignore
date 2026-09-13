@@ -12,8 +12,9 @@ dist/
 .DS_Store
 # DB
 pgdata/
-# Uploads (Render ephemeral)
-backend/uploads/
+# Uploads (Render ephemeral; solo se trackea .gitkeep para preservar la carpeta)
+backend/uploads/*
+!backend/uploads/.gitkeep
 # IDE
 .vscode/
 .idea/

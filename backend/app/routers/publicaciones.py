@@ -1,37 +1,59 @@
 """
-routers/publicaciones.py - HU-001,002,003,005,007 (Sprint1)
+routers/publicaciones.py - HU-001,002,003,005,007 (Sprint1) + Mis publicaciones (UX) + PA-01 Renovación
 Endpoints:
-  GET  /api/publicaciones?campus_id=&precio_min=&precio_max=&tipo=&servicios=  (HU-001+002)
-  GET  /api/publicaciones/{id}                                                (HU-003+007)
-  POST /api/publicaciones                                                      (HU-005 -> PENDIENTE, solo ARRENDADOR)
+  GET   /api/publicaciones?campus_id=&precio_min=&precio_max=&tipo=&servicios=  (HU-001+002)
+  GET   /api/publicaciones/mias                                                 (UX: dueño, todos los estados)
+  GET   /api/publicaciones/{id}                                                 (HU-003+007)
+  POST  /api/publicaciones                                                      (HU-005 -> PENDIENTE, solo ARRENDADOR)
+  PATCH /api/publicaciones/{id}                                                 (UX editar aviso del dueño)
+  PATCH /api/publicaciones/{id}/renovar                                         (PA-01 renovación 30 días)
 
 Sprint1: mock lista en memoria si no hay PG (frontend no se bloquea). Si hay PG, query real con Haversine + TrustScoreEngine.
 NFR P95<500ms: query indexada (estado, zona, canon), sin N+1, Haversine en memoria/Python.
 """
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
-from fastapi import APIRouter, Depends, Query, Path, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from fastapi import APIRouter, Depends, Query, Path, HTTPException, status, Header
+from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_session, AsyncSession
-from app.core.security import get_current_user, require_arrendador
-from app.schemas.publicacion import PublicacionCreate, PublicacionOut, DesgloseConfianza
-from app.services.haversine import haversine_m
-from app.services.trust import calcular_indice, dias_desde, DISCLAIMER
+from app.db.session import get_session
+from app.core.config import settings
+from app.core.security import get_current_user, get_optional_user, require_arrendador
+from app.repositories import publicacion_repo as repo
+from app.services import publicacion_view as view
+from app.schemas.publicacion import (
+    PublicacionCreate,
+    PublicacionCreatedOut,
+    PublicacionCardOut,
+    PublicacionDetailOut,
+    PublicacionUpdate,
+    PaginatedPublicaciones,
+    RenovacionOut,
+)
 from app.core.pagination import paginate_params, build_paginated
 import logging
 logger = logging.getLogger("alojau.publicaciones")
 
 router = APIRouter(prefix="/api/publicaciones", tags=["publicaciones"])
 
-# --- MOCK Sprint1 (si no hay PG) ---
-# Datos coherentes con main.py legacy + HU-007 desglose + distancia Haversine
-MOCK_CAMPUS = {
-    1: {"id": 1, "institucion": "Universidad del Cauca", "nombre_sede": "Campus Tulcán", "lat": 2.443, "lng": -76.606},
-    2: {"id": 2, "institucion": "Unicomfacauca", "nombre_sede": "Claustro", "lat": 2.441, "lng": -76.602},
-}
+def _mock_enabled() -> bool:
+    # B0-2 fail-closed: mock solo en dev/test con flag True.
+    return bool(getattr(settings, "mock_enabled", False))
+
+def _is_owner_or_admin(user: dict | None, owner_id: int | None) -> bool:
+    if not user:
+        return False
+    if user.get("rol") == "ADMIN":
+        return True
+    try:
+        return int(user.get("id")) == int(owner_id) if owner_id is not None else False
+    except Exception:
+        return False
+
+# --- MOCK Sprint1 (si no hay PG, solo dev) ---
+# MOCK_CAMPUS canónico en app/fixtures/demo.py. MOCK_PUBS simula filas.
 # Cada mock simula fila Publicacion + relaciones
 MOCK_PUBS = [
     {
@@ -72,165 +94,15 @@ MOCK_PUBS = [
     },
 ]
 
-def _to_out(pub: dict, campus_id: Optional[int] = None) -> dict:
-    """Convierte dict mock/DB a PublicacionOut payload (incluye Haversine + Trust)"""
-    # Haversine si campus_id
-    dist = None
-    if campus_id and campus_id in MOCK_CAMPUS and pub.get("latitud") and pub.get("longitud"):
-        c = MOCK_CAMPUS[campus_id]
-        dist = haversine_m(pub["latitud"], pub["longitud"], c["lat"], c["lng"])
-
-    # TrustScoreEngine
-    dias_vig = dias_desde(pub.get("fecha_renovacion"))
-    trust = calcular_indice(
-        canon_mensual=pub.get("canon_mensual"),
-        deposito_requerido=pub.get("deposito_requerido"),
-        tipo_inmueble=pub.get("tipo_inmueble"),
-        reglas_convivencia=pub.get("reglas_convivencia"),
-        direccion_referencial=pub.get("direccion_referencial"),
-        servicios_ids=pub.get("servicios_ids"),
-        telefono_verificado=pub.get("telefono_verificado", False),
-        num_fotos=len(pub.get("fotos", [])),
-        dias_vigencia=dias_vig,
-        reportes_activos=pub.get("reportes_activos", 0),
-    )
-    fotos = pub.get("fotos", [])
-    # HU-008: wa.me solo si verificado, si no None (frontend muestra alerta)
-    tel = pub.get("telefono_whatsapp") if pub.get("telefono_verificado") else None
-    wa_url = f"https://wa.me/{tel}?text=Hola%2C%20vi%20{pub['titulo']}%20(ID%20{pub['id']})%20en%20AlojaU" if tel else None
-
-    return {
-        "id": pub["id"],
-        "titulo": pub["titulo"],
-        "descripcion": pub.get("descripcion"),
-        "tipo_inmueble": pub["tipo_inmueble"],
-        "canon_mensual": pub["canon_mensual"],
-        "deposito_requerido": pub.get("deposito_requerido", 0),
-        "zona_barrio_id": pub["zona_barrio_id"],
-        "zona_nombre": pub.get("zona_nombre"),
-        "direccion_referencial": pub["direccion_referencial"],
-        "reglas_convivencia": pub.get("reglas_convivencia"),
-        "estado": pub["estado"],
-        "fecha_publicacion": pub.get("fecha_publicacion"),
-        "fecha_renovacion": pub.get("fecha_renovacion"),
-        "fecha_expiracion": pub.get("fecha_expiracion"),
-        "servicios": pub.get("servicios", []),
-        "servicios_ids": pub.get("servicios_ids", []),
-        "fotos": fotos,
-        "num_fotos": len(fotos),
-        "distancia_geodesica_m": dist,
-        "campus_distancias": [{"campus_id": cid, "dist_m": haversine_m(pub["latitud"], pub["longitud"], MOCK_CAMPUS[cid]["lat"], MOCK_CAMPUS[cid]["lng"])} for cid in pub.get("campus_ids", []) if cid in MOCK_CAMPUS and pub.get("latitud")] if pub.get("latitud") else None,
-        "indice_confianza": trust["indice"],
-        "desglose": trust["desglose"],
-        "nivel_confianza": trust["nivel"],
-        "advertencia_confianza": trust["advertencia"],
-        "telefono_whatsapp": tel,
-        "whatsapp_url": wa_url,
-        "usuario_id": pub.get("usuario_id"),
-    }
-
-# --- Helpers DB real (si PG disponible) ---
-async def _query_db_lista(
-    db: AsyncSession,
-    campus_id: Optional[int],
-    precio_min: Optional[int],
-    precio_max: Optional[int],
-    tipo: Optional[str],
-    servicios: Optional[List[int]],
-    page: int = 1,
-    size: int = 9,
-):
-    """
-    Sprint1 real DB: SELECT + JOIN publicacion_campus + cálculo distancia.
-    Si campus_id, ordenar por distancia (Haversine precalculado en publicacion_campus.distancia_geodesica_m)
-    Filtros combinables (HU-002 C1-3).
-    Paginación: page 1-indexed, size 1-50.
-    """
-    # Lazy import para evitar ciclo
-    from app.models import Publicacion, PublicacionCampus, Usuario
-    from sqlalchemy import func, select as sel
-
-    stmt = select(Publicacion).options(selectinload(Publicacion.imagenes), selectinload(Publicacion.servicios)).where(Publicacion.estado == "ACTIVO")
-
-    if precio_min is not None:
-        stmt = stmt.where(Publicacion.canon_mensual >= precio_min)
-    if precio_max is not None:
-        if precio_min is not None and precio_max < precio_min:
-            raise HTTPException(status_code=400, detail="precio_min no puede superar precio_max (HU-002 C1)")
-        stmt = stmt.where(Publicacion.canon_mensual <= precio_max)
-    if tipo:
-        stmt = stmt.where(Publicacion.tipo_inmueble == tipo)
-    # servicios: AND (debe contener todos los solicitados)
-    if servicios:
-        for sid in servicios:
-            stmt = stmt.where(Publicacion.servicios.any(id=sid))
-
-    # Campus filter: join publicacion_campus
-    if campus_id:
-        stmt = stmt.join(PublicacionCampus, PublicacionCampus.publicacion_id == Publicacion.id).where(PublicacionCampus.campus_id == campus_id).order_by(PublicacionCampus.distancia_geodesica_m)
-
-    result = await db.execute(stmt)
-    pubs = result.scalars().unique().all()
-
-    # Mapear a dict para Trust (evita N+1 reportes con subquery)
-    out = []
-    for p in pubs:
-        # reportes activos bug fix: COUNT WHERE estado IN ('PENDIENTE','CONFIRMADO')
-        # Sprint1 simplificado: query ad-hoc si no eager
-        from sqlalchemy import func, select as sel
-        from app.models import ReportePublicacion
-        r = await db.execute(sel(func.count()).select_from(ReportePublicacion).where(ReportePublicacion.publicacion_id==p.id, ReportePublicacion.estado.in_(["PENDIENTE","CONFIRMADO"])))
-        reportes_activos = r.scalar() or 0
-
-        # usuario telefono_verificado
-        u = await db.get(Usuario, p.usuario_id)
-        tel_ver = bool(u.telefono_verificado) if u else False
-
-        dist = None
-        if campus_id:
-            # leer distancia precalculada
-            pc = await db.execute(sel(PublicacionCampus).where(PublicacionCampus.publicacion_id==p.id, PublicacionCampus.campus_id==campus_id))
-            pc = pc.scalar_one_or_none()
-            dist = pc.distancia_geodesica_m if pc else None
-
-        dias_vig = dias_desde(p.fecha_renovacion)
-        trust = calcular_indice(
-            canon_mensual=float(p.canon_mensual), deposito_requerido=float(p.deposito_requerido),
-            tipo_inmueble=p.tipo_inmueble, reglas_convivencia=p.reglas_convivencia,
-            direccion_referencial=p.direccion_referencial, servicios_ids=[s.id for s in p.servicios],
-            telefono_verificado=tel_ver, num_fotos=len(p.imagenes), dias_vigencia=dias_vig, reportes_activos=reportes_activos
-        )
-        # zona nombre via relationship (lazy joined)
-        zona_nombre = p.zona.nombre if hasattr(p, 'zona') and p.zona else None
-        # construir out (simplificado)
-        out.append({
-            "id": p.id, "titulo": p.titulo, "descripcion": p.descripcion,
-            "tipo_inmueble": p.tipo_inmueble, "canon_mensual": float(p.canon_mensual), "deposito_requerido": float(p.deposito_requerido),
-            "zona_barrio_id": p.zona_barrio_id, "zona": zona_nombre, "zona_nombre": zona_nombre, "direccion_referencial": p.direccion_referencial,
-            "reglas_convivencia": p.reglas_convivencia, "estado": p.estado,
-            "fecha_renovacion": p.fecha_renovacion, "fecha_expiracion": p.fecha_expiracion,
-            "servicios": [s.nombre for s in p.servicios], "servicios_ids": [s.id for s in p.servicios],
-            "fotos": [im.url for im in p.imagenes], "num_fotos": len(p.imagenes),
-            "distancia_geodesica_m": dist, "dist_m": dist,
-            "indice_confianza": trust["indice"], "desglose": trust["desglose"], "nivel_confianza": trust["nivel"],
-            "telefono_whatsapp": u.telefono_whatsapp if tel_ver else None,
-            "usuario_id": p.usuario_id,
-        })
-    # Paginación en memoria (para MVP, dataset pequeño; para >100 usar LIMIT/OFFSET en SQL)
-    total = len(out)
-    # si campus_id, ya está ordenado por distancia; si no, mantiene orden por id
-    offset, size_norm = paginate_params(page, size)
-    paginated_items = out[offset:offset+size_norm]
-    return build_paginated(paginated_items, total, page, size_norm)
-
 # --- Endpoints Sprint1 ---
-@router.get("", summary="HU-001 Buscar por sede + HU-002 Filtros combinables")
+@router.get("", response_model=PaginatedPublicaciones, summary="HU-001 Buscar por sede + HU-002 Filtros combinables")
 async def list_publicaciones(
     campus_id: Optional[int] = Query(None, ge=1, le=1000, description="FK campus_universitarios.id - calcula Haversine y filtra publicaciones asociadas"),
     precio_min: Optional[int] = Query(None, ge=0, le=10_000_000, description="COP mínimo"),
     precio_max: Optional[int] = Query(None, ge=0, le=10_000_000, description="COP máximo"),
     tipo: Optional[str] = Query(None, pattern="^(HABITACION_FAMILIAR|HABITACION_INDEPENDIENTE|APARTAESTUDIO|COMPARTIDO)$"),
     servicios: Optional[str] = Query(None, max_length=50, description="IDs coma separados, ej: 1,3"),
+    q: Optional[str] = Query(None, min_length=2, max_length=100, description="Texto libre: FTS español + fallback trigramas (Oleada 2)"),
     page: int = Query(1, ge=1, le=1000, description="Página 1-indexed"),
     size: int = Query(9, ge=1, le=50, description="Tamaño página"),
     db: AsyncSession = Depends(get_session),
@@ -249,106 +121,315 @@ async def list_publicaciones(
     if precio_min is not None and precio_max is not None and precio_min > precio_max:
         raise HTTPException(status_code=400, detail="precio_min no puede superar precio_max")
 
-    servicios_ids = None
-    if servicios:
-        if len(servicios) > 50:
-            raise HTTPException(status_code=400, detail="servicios parámetro demasiado largo")
-        try:
-            servicios_ids = [int(s.strip()) for s in servicios.split(",") if s.strip()]
-            if len(servicios_ids) > 10:
-                raise HTTPException(status_code=400, detail="máximo 10 servicios")
-            for sid in servicios_ids:
-                if sid < 1 or sid > 1000:
-                    raise HTTPException(status_code=400, detail=f"servicio_id {sid} fuera de rango")
-        except ValueError:
-            raise HTTPException(status_code=400, detail="servicios debe ser lista de ints coma separada")
+    servicios_ids = view.parse_servicios_param(servicios)
 
-    # Intento DB real con fallback mock
+    # Intento DB real con fallback mock solo en dev (B0-2 fail-closed 503 en prod)
     try:
-        paginated = await _query_db_lista(db, campus_id, precio_min, precio_max, tipo, servicios_ids, page, size)
-        return paginated
+        total, pubs, rep_map, user_map, dist_map, size_norm = await repo.query_lista(
+            db, campus_id, precio_min, precio_max, tipo, servicios_ids, page, size, q
+        )
+        items = view.cards_for_page(pubs, rep_map, user_map, dist_map, campus_id)
+        return build_paginated(items, total, page, size_norm)
+    except HTTPException:
+        raise
     except Exception as e:
         # Log real para diagnóstico en Render (no ocultar excepción)
-        logger.error(f"[DB fallback] _query_db_lista falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] query_lista falló: {e!r}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
         print(f"[Sprint1 mock fallback] DB no disponible: {e!r}")
-        filtradas = [p for p in MOCK_PUBS if p["estado"] == "ACTIVO"]
-
-        if campus_id:
-            filtradas = [p for p in filtradas if campus_id in p.get("campus_ids", [])]
-            filtradas.sort(key=lambda p: haversine_m(p["latitud"], p["longitud"], MOCK_CAMPUS[campus_id]["lat"], MOCK_CAMPUS[campus_id]["lng"]) if p.get("latitud") else 999999)
-
-        if precio_min is not None:
-            filtradas = [p for p in filtradas if p["canon_mensual"] >= precio_min]
-        if precio_max is not None:
-            filtradas = [p for p in filtradas if p["canon_mensual"] <= precio_max]
-        if tipo:
-            filtradas = [p for p in filtradas if p["tipo_inmueble"] == tipo]
-        if servicios_ids:
-            filtradas = [p for p in filtradas if all(s in p.get("servicios_ids", []) for s in servicios_ids)]
-
-        items = [_to_out(p, campus_id) for p in filtradas]
+        filtradas = view.filter_mock_pubs(MOCK_PUBS, campus_id, precio_min, precio_max, tipo, servicios_ids, q)
+        items = [view.mock_to_out(p, campus_id) for p in filtradas]
         total = len(items)
         offset, size_norm = paginate_params(page, size)
         paginated_items = items[offset:offset+size_norm]
         return build_paginated(paginated_items, total, page, size_norm)
 
-@router.get("/{pub_id}", summary="HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp")
-async def get_publicacion(pub_id: int = Path(..., ge=1, le=1000000), db: AsyncSession = Depends(get_session)):
+@router.get("/mias", response_model=PaginatedPublicaciones, summary="UX Mis publicaciones del dueño (todos los estados, paginado)")
+async def mis_publicaciones(
+    estado: Optional[str] = Query(None, pattern="^(ACTIVO|PENDIENTE|PAUSADO|RECHAZADO|ARRENDADO|EXPIRADO|DESACTIVADO)$", description="Filtra por estado (default todos)"),
+    page: int = Query(1, ge=1, le=1000, description="Página 1-indexed"),
+    size: int = Query(12, ge=1, le=50, description="Tamaño página"),
+    db: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Lista las publicaciones del usuario autenticado en TODOS los estados
+    (ACTIVO + PENDIENTE en moderación + otros), más recientes primero, paginado.
+    Sin token -> 401. Cada dueño solo ve las suyas (filtro usuario_id).
+    NOTA: declarada ANTES de /{pub_id} para que "mias" no caiga en el path param."""
+    uid = user.get("id")
+    # F1: token sin id entero válido -> 401 (nunca filtrar por dueño ajeno).
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    try:
+        from app.models import Publicacion
+
+        conds = [Publicacion.usuario_id == uid]
+        if estado:
+            conds.append(Publicacion.estado == estado)
+        total_stmt = select(func.count()).select_from(Publicacion).where(*conds)
+        total = (await db.execute(total_stmt)).scalar() or 0
+        offset, size_norm = paginate_params(page, size)
+        stmt = (
+            select(Publicacion)
+            .options(
+                selectinload(Publicacion.imagenes),
+                selectinload(Publicacion.servicios),
+                selectinload(Publicacion.zona),
+            )
+            .where(*conds)
+            .order_by(Publicacion.id.desc())
+            .limit(size_norm)
+            .offset(offset)
+        )
+        pubs = (await db.execute(stmt)).scalars().unique().all()
+        if not pubs:
+            return build_paginated([], total, page, size_norm)
+        rep_map, users_map, _ = await repo.fetch_page_aggregates(db, pubs, None)
+        return build_paginated(view.cards_for_page(pubs, rep_map, users_map, {}, None), total, page, size_norm)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[DB fallback] mis_publicaciones {uid} falló: {e!r}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    # Mock fallback solo dev: filtra por dueño (incluye PENDIENTE, es su bandeja) + pagina en memoria.
+    filtradas = [p for p in MOCK_PUBS if p.get("usuario_id") == uid]
+    if estado:
+        filtradas = [p for p in filtradas if p.get("estado") == estado]
+    filtradas.sort(key=lambda p: p["id"], reverse=True)
+    total = len(filtradas)
+    offset, size_norm = paginate_params(page, size)
+    items = [view.mock_to_out(p) for p in filtradas[offset:offset + size_norm]]
+    return build_paginated(items, total, page, size_norm)
+
+@router.get("/{pub_id}", response_model=PublicacionDetailOut, summary="HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp")
+async def get_publicacion(
+    pub_id: int = Path(..., ge=1, le=1000000),
+    campus_id: Optional[int] = Query(None, ge=1, le=1000000, description="004 POIs: resuelve campus_ref (distancia a ESTE lugar) para sincronizar el mapa del Detalle"),
+    db: AsyncSession = Depends(get_session),
+    authorization: Optional[str] = Header(None),
+):
     """
     HU-003: muestra canon, servicios, fotos, zona, condiciones, vigencia
             No expone datos que no deban ser públicos (email propietario, etc)
     HU-007: incluye indice_confianza 0-100 + desglose 40+20+15+15+10 + disclaimer
     HU-008: telefono_whatsapp solo si verificado + whatsapp_url wa.me
+    B0-6: PENDIENTE (y no-ACTIVO) privado -> 404 salvo owner/admin.
     """
+    current_user = get_optional_user(authorization)
     try:
-        from app.models import Publicacion, ReportePublicacion, Usuario
-        from sqlalchemy import func, select as sel
-        p = await db.get(Publicacion, pub_id, options=[selectinload(Publicacion.imagenes), selectinload(Publicacion.servicios)])
+        p, reportes_activos, u, dist_detalle = await repo.fetch_detail_bundle(db, pub_id)
         if p:
-            # Trust real
-            r = await db.execute(sel(func.count()).select_from(ReportePublicacion).where(ReportePublicacion.publicacion_id==p.id, ReportePublicacion.estado.in_(["PENDIENTE","CONFIRMADO"])))
-            reportes_activos = r.scalar() or 0
-            u = await db.get(Usuario, p.usuario_id)
-            tel_ver = bool(u.telefono_verificado) if u else False
-            trust = calcular_indice(
-                canon_mensual=float(p.canon_mensual), deposito_requerido=float(p.deposito_requerido),
-                tipo_inmueble=p.tipo_inmueble, reglas_convivencia=p.reglas_convivencia,
-                direccion_referencial=p.direccion_referencial, servicios_ids=[s.id for s in p.servicios],
-                telefono_verificado=tel_ver, num_fotos=len(p.imagenes), dias_vigencia=dias_desde(p.fecha_renovacion), reportes_activos=reportes_activos
-            )
-            fotos = [im.url for im in p.imagenes]
-            tel = u.telefono_whatsapp if tel_ver and u else None
-            wa = f"https://wa.me/{tel}?text={__import__('urllib.parse').parse.quote(f'Hola, vi {p.titulo} (ID {p.id}) en AlojaU y me interesa.')}" if tel else None
-            zona_nombre = p.zona.nombre if hasattr(p, 'zona') and p.zona else "Pandiguando"
-            # distancia en detalle: si no hay campus_id, mostrar la más cercana
-            from app.models import PublicacionCampus as PC
-            # buscar distancia mínima si no hay una específica
-            pc_min = await db.execute(sel(PC).where(PC.publicacion_id==p.id).order_by(PC.distancia_geodesica_m))
-            pc_min = pc_min.scalars().first()
-            dist_detalle = pc_min.distancia_geodesica_m if pc_min else None
-            return {
-                "id": p.id, "titulo": p.titulo, "descripcion": p.descripcion,
-                "tipo_inmueble": p.tipo_inmueble, "canon_mensual": float(p.canon_mensual), "canon": float(p.canon_mensual),
-                "deposito": float(p.deposito_requerido), "deposito_requerido": float(p.deposito_requerido),
-                "zona_barrio_id": p.zona_barrio_id, "zona": zona_nombre, "zona_nombre": zona_nombre,
-                "direccion_referencial": p.direccion_referencial, "reglas": p.reglas_convivencia, "reglas_convivencia": p.reglas_convivencia,
-                "estado": p.estado, "fecha_renovacion": p.fecha_renovacion, "fecha_expiracion": p.fecha_expiracion,
-                "servicios": [s.nombre for s in p.servicios], "fotos": fotos, "num_fotos": len(fotos),
-                "distancia_geodesica_m": dist_detalle, "dist_m": dist_detalle,
-                "indice_confianza": trust["indice"], "indice": trust["indice"], "desglose": trust["desglose"], "nivel": trust["nivel"],
-                "advertencia": trust["advertencia"], "telefono_whatsapp": tel, "whatsapp_url": wa,
-            }
+            # B0-6: detalle no-ACTIVO privado (404 para no filtrar existencia).
+            if p.estado != "ACTIVO" and not _is_owner_or_admin(current_user, p.usuario_id):
+                raise HTTPException(status_code=404, detail="Publicación no encontrada")
+            # 004 POIs: referencia al lugar buscado (el mapa del Detalle se
+            # sincroniza a ESTE punto; sin campus_id se usa la distancia mínima).
+            campus_ref = None
+            dist = dist_detalle
+            if campus_id is not None:
+                from app.services.haversine import tiempo_pie_min
+                dist_ref, lugar = await repo.fetch_detail_campus_ref(db, pub_id, campus_id)
+                dist = dist_ref
+                campus_ref = {
+                    "campus_id": lugar.id,
+                    "institucion": lugar.institucion,
+                    "nombre_sede": lugar.nombre_sede,
+                    "latitud": float(lugar.latitud),
+                    "longitud": float(lugar.longitud),
+                    "dist_m": dist_ref,
+                    "tiempo_pie_min": tiempo_pie_min(dist_ref),
+                }
+            return view.build_detail(p, reportes_activos, u, dist, campus_ref)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[DB fallback] get_publicacion {pub_id} falló: {e!r}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
         print(f"[DB fallback] get_publicacion {pub_id}: {e!r}")
 
-    # Mock fallback
+    # Mock fallback solo dev (B0-2). B0-6: no-ACTIVO privado también en mock.
+    if not _mock_enabled():
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
     pub = next((p for p in MOCK_PUBS if p["id"] == pub_id), None)
     if not pub:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    return _to_out(pub)
+    if pub.get("estado") != "ACTIVO" and not _is_owner_or_admin(current_user, pub.get("usuario_id")):
+        raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    # 004 POIs mock: misma forma que la rama DB (distancia a ESTE lugar + ref).
+    if campus_id is not None:
+        from app.fixtures.demo import MOCK_CAMPUS
+        from app.services.haversine import haversine_m, tiempo_pie_min
+        if campus_id not in MOCK_CAMPUS:
+            raise HTTPException(status_code=404, detail=f"campus_id {campus_id} no existe o inactivo")
+        lugar = MOCK_CAMPUS[campus_id]
+        dist_ref = None
+        if pub.get("latitud") is not None and pub.get("longitud") is not None:
+            dist_ref = haversine_m(pub["latitud"], pub["longitud"], lugar["lat"], lugar["lng"])
+        out = view.mock_to_out(pub, campus_id)
+        out["campus_ref"] = {
+            "campus_id": campus_id,
+            "institucion": lugar["institucion"],
+            "nombre_sede": lugar["nombre_sede"],
+            "latitud": float(lugar["latitud"]),
+            "longitud": float(lugar["longitud"]),
+            "dist_m": dist_ref,
+            "tiempo_pie_min": tiempo_pie_min(dist_ref),
+        }
+        return out
+    return view.mock_to_out(pub)
 
-@router.post("", status_code=status.HTTP_201_CREATED, summary="HU-005 Publicar oferta estructurada -> PENDIENTE (solo ARRENDADOR)")
+@router.patch("/{pub_id}", response_model=PublicacionCardOut, summary="UX Editar aviso del dueño (solo owner/ADMIN)")
+async def editar_publicacion(
+    pub_id: int = Path(..., ge=1, le=1000000),
+    payload: PublicacionUpdate = ...,
+    db: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Edición parcial del dueño: titulo/descripcion/tipo/canon/deposito/direccion/reglas.
+    401 sin token o sin id válido, 403 si no es dueño ni ADMIN, 404 si no existe,
+    422 si algún campo viola cotas (iguales a Create) o el body viene vacío.
+    El estado NO cambia (re-moderación llega en T2; cambiarlo aquí sin bandeja
+    escondería el aviso sin forma de re-aprobar). Sin fila de audit: el CHECK de
+    publicaciones_audit no tiene evento EDITED (migración pendiente en T2)."""
+    cambios = {k: v for k, v in payload.model_dump().items() if v is not None}
+    try:
+        from app.models import Publicacion
+
+        p = await db.get(Publicacion, pub_id)
+        if not p:
+            raise HTTPException(status_code=404, detail="Publicación no encontrada")
+        if not _is_owner_or_admin(user, p.usuario_id):
+            raise HTTPException(status_code=403, detail="Solo el dueño puede editar")
+        for k, v in cambios.items():
+            setattr(p, k, v)
+        await db.commit()
+        # Re-lee con eager loading (refresh() no recarga relaciones en async).
+        stmt = (
+            select(Publicacion)
+            .options(
+                selectinload(Publicacion.imagenes),
+                selectinload(Publicacion.servicios),
+                selectinload(Publicacion.zona),
+            )
+            .where(Publicacion.id == pub_id)
+        )
+        p = (await db.execute(stmt)).scalars().unique().one()
+        rep_map, users_map, _ = await repo.fetch_page_aggregates(db, [p], None)
+        return view.cards_for_page([p], rep_map, users_map, {}, None)[0]
+    except HTTPException:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        raise
+    except Exception as e:
+        logger.error(f"[DB fallback] editar {pub_id} falló: {e!r}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    # Mock fallback solo dev.
+    if not _mock_enabled():
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    pub = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
+    if not pub:
+        raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    if not _is_owner_or_admin(user, pub.get("usuario_id")):
+        raise HTTPException(status_code=403, detail="Solo el dueño puede editar")
+    pub.update(cambios)
+    return view.mock_to_out(pub)
+
+@router.patch("/{pub_id}/renovar", response_model=RenovacionOut, summary="PA-01 Renovar vigencia 30 días (solo propietario)")
+async def renovar_publicacion(
+    pub_id: int = Path(..., ge=1, le=1000000),
+    db: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """
+    PA-01: Renueva la vigencia de una publicación por 30 días calendario exactos.
+
+    Reglas:
+    - 401 sin token válido.
+    - 403 si el usuario autenticado no es el dueño de la publicación.
+    - 404 si la publicación no existe.
+    - Vigente:  nueva_expiracion = fecha_expiracion_actual + 30 días.
+    - Vencida:  nueva_expiracion = ahora + 30 días.
+    - EXPIRADO → pasa a ACTIVO. RECHAZADO/DESACTIVADO conservan su estado.
+    - Genera fila en publicaciones_audit con evento='RENEWED'.
+    """
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    try:
+        datos = await repo.renovar_publicacion(db, pub_id, uid)
+        return datos
+    except HTTPException:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        raise
+    except Exception as e:
+        logger.error(f"[DB] renovar_publicacion {pub_id} falló: {e!r}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+
+    # Mock fallback solo dev (sin PG)
+    pub = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
+    if not pub:
+        raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    if pub.get("usuario_id") != uid:
+        raise HTTPException(status_code=403, detail="No tienes permisos para renovar esta publicación.")
+
+    now = datetime.now(timezone.utc)
+    fecha_anterior = pub.get("fecha_expiracion") or now
+    if isinstance(fecha_anterior, str):
+        fecha_anterior = datetime.fromisoformat(fecha_anterior.replace("Z", "+00:00"))
+    if getattr(fecha_anterior, "tzinfo", None) is None:
+        fecha_anterior = fecha_anterior.replace(tzinfo=timezone.utc)
+
+    if fecha_anterior > now:
+        fecha_nueva = fecha_anterior + timedelta(days=30)
+    else:
+        fecha_nueva = now + timedelta(days=30)
+
+    pub["fecha_expiracion"] = fecha_nueva
+    pub["fecha_renovacion"] = now
+    if pub.get("estado") == "EXPIRADO":
+        pub["estado"] = "ACTIVO"
+
+    return {
+        "id": pub["id"],
+        "estado": pub.get("estado", "ACTIVO"),
+        "fecha_expiracion_anterior": fecha_anterior,
+        "fecha_expiracion_nueva": fecha_nueva,
+        "dias_agregados": 30,
+        "mensaje": "La publicación fue renovada exitosamente.",
+    }
+
+
+@router.post("", response_model=PublicacionCreatedOut, status_code=status.HTTP_201_CREATED, summary="HU-005 Publicar oferta estructurada -> PENDIENTE (solo ARRENDADOR)")
 async def crear_publicacion(
     payload: PublicacionCreate,
     user: dict = Depends(require_arrendador),
@@ -362,73 +443,39 @@ async def crear_publicacion(
 
     Sprint1: si no hay DB, retorna mock PENDIENTE + calcula índice inicial (no persiste) para demo frontend.
     Con DB: persiste publicación + publicacion_campus (con Haversine) + imagenes + calcula índice.
+    B0-4: FK estricta zona/campus/servicios -> 404 con rollback. B0-5: dist NULL si sin coords.
     """
     # Validación extra: si lat/lng no provistas, warning pero no bloquea (Sprint1)
-    # Calcular índice inicial (asumiendo teléfono verificado del user)
-    trust = calcular_indice(
-        canon_mensual=float(payload.canon_mensual),
-        deposito_requerido=float(payload.deposito_requerido),
-        tipo_inmueble=payload.tipo_inmueble,
-        reglas_convivencia=payload.reglas_convivencia,
-        direccion_referencial=payload.direccion_referencial,
-        servicios_ids=payload.servicios_ids,
-        telefono_verificado=user.get("telefono_verificado", True),
-        num_fotos=len(payload.fotos),
-        dias_vigencia=0,  # recién creada
-        reportes_activos=0,
-    )
+    # Calcular índice inicial (B0-6: default telefono_verificado False si ausente).
+    trust = view.initial_trust(payload, bool(user.get("telefono_verificado", False)))
 
     # Intentar persistir en DB
     try:
-        from app.models import Publicacion, PublicacionCampus, ImagenPublicacion, PublicacionServicio, PublicacionesAudit as PublicacionAudit
-        # Crear publicación
-        nueva = Publicacion(
-            usuario_id=user["id"] if isinstance(user["id"], int) else 1,
-            zona_barrio_id=payload.zona_barrio_id,
-            titulo=payload.titulo,
-            descripcion=payload.descripcion,
-            tipo_inmueble=payload.tipo_inmueble,
-            canon_mensual=payload.canon_mensual,
-            deposito_requerido=payload.deposito_requerido,
-            reglas_convivencia=payload.reglas_convivencia,
-            direccion_referencial=payload.direccion_referencial,
-            latitud=payload.latitud,
-            longitud=payload.longitud,
-            estado="PENDIENTE",
-            indice_confianza=trust["indice"],
-            fecha_expiracion=datetime.now(timezone.utc) + timedelta(days=30),
+        # F1: token sin id entero válido -> 401 (nunca suplantar dueño id=1).
+        if not isinstance(user.get("id"), int):
+            raise HTTPException(status_code=401, detail="Token sin propietario válido")
+        campus_ids, servicios_ids = await repo.validate_fks(
+            db, payload.zona_barrio_id, payload.campus_ids, payload.servicios_ids
         )
-        db.add(nueva)
-        await db.flush()  # obtiene id
-
-        # Relaciones N:M campus (con Haversine)
-        for cid in payload.campus_ids:
-            dist = 0
-            if payload.latitud and payload.longitud and cid in MOCK_CAMPUS:
-                c = MOCK_CAMPUS[cid]
-                dist = haversine_m(payload.latitud, payload.longitud, c["lat"], c["lng"])
-            db.add(PublicacionCampus(publicacion_id=nueva.id, campus_id=cid, distancia_geodesica_m=dist))
-
-        for sid in payload.servicios_ids:
-            db.add(PublicacionServicio(publicacion_id=nueva.id, servicio_id=sid))
-
-        for idx, url in enumerate(payload.fotos, start=1):
-            db.add(ImagenPublicacion(publicacion_id=nueva.id, url=str(url), orden=idx))
-
-        db.add(PublicacionAudit(publicacion_id=nueva.id, usuario_id=nueva.usuario_id, evento="CREATED", detalle="PENDIENTE"))
-
-        await db.commit()
-        await db.refresh(nueva)
+        nueva = await repo.create_persisted(db, payload, user["id"], trust, campus_ids, servicios_ids)
         return {"id": nueva.id, "estado": "PENDIENTE", "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "mensaje": "Publicación en PENDIENTE, pendiente de moderación"}
 
+    except HTTPException:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        raise
     except Exception as e:
-        # Mock fallback Sprint1: no hay PG, simular creación (usa id 10000+ para no colisionar con DB ids 1-6)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[DB crear] falló: {e!r}", exc_info=True)
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+        # Mock fallback Sprint1 solo dev: no hay PG, simular creación (usa id 10000+ para no colisionar con DB ids 1-6)
         mock_id = max(max(p["id"] for p in MOCK_PUBS), 10000) + 1
-        nueva_mock = {
-            "id": mock_id, "titulo": payload.titulo, "tipo_inmueble": payload.tipo_inmueble,
-            "canon_mensual": float(payload.canon_mensual), "estado": "PENDIENTE",
-            "fotos": [str(u) for u in payload.fotos],
-        }
         MOCK_PUBS.append({
             "id": mock_id, "titulo": payload.titulo, "descripcion": payload.descripcion,
             "tipo_inmueble": payload.tipo_inmueble, "canon_mensual": float(payload.canon_mensual),
@@ -436,9 +483,9 @@ async def crear_publicacion(
             "direccion_referencial": payload.direccion_referencial, "reglas_convivencia": payload.reglas_convivencia,
             "estado": "PENDIENTE", "fecha_renovacion": datetime.now(timezone.utc),
             "fecha_expiracion": datetime.now(timezone.utc) + timedelta(days=30),
-            "servicios_ids": payload.servicios_ids, "servicios": [],
+            "servicios_ids": list(dict.fromkeys(payload.servicios_ids)), "servicios": [],
             "fotos": [str(u) for u in payload.fotos], "latitud": payload.latitud, "longitud": payload.longitud,
-            "campus_ids": payload.campus_ids, "usuario_id": user["id"] if isinstance(user["id"], int) else 1,
-            "telefono_verificado": user.get("telefono_verificado", True), "reportes_activos": 0,
+            "campus_ids": list(dict.fromkeys(payload.campus_ids)), "usuario_id": user["id"],
+            "telefono_verificado": bool(user.get("telefono_verificado", False)), "reportes_activos": 0,
         })
-        return {"id": mock_id, "estado": "PENDIENTE (MOCK - sin PG)", "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": DISCLAIMER, "detalle_mock": f"DB no disponible ({e}), se usó mock en memoria"}
+        return {"id": mock_id, "estado": "PENDIENTE (MOCK - sin PG)", "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "detalle_mock": f"DB no disponible ({e}), se usó mock en memoria"}

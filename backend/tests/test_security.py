@@ -119,3 +119,56 @@ def test_health_no_sensible():
     assert r.status_code == 200
     assert "password" not in str(r.json()).lower()
     assert "secret" not in str(r.json()).lower()
+
+# --- OLA5-M7: CSP + Permissions-Policy + request_id + handler global ---
+
+def test_csp_base_en_api():
+    r = client.get("/health")
+    csp = r.headers.get("content-security-policy", "")
+    assert "default-src 'none'" in csp
+    assert "frame-ancestors 'none'" in csp
+    assert "unsafe-inline" not in csp
+
+def test_csp_docs_permite_swagger():
+    r = client.get("/docs")
+    assert r.status_code == 200
+    csp = r.headers.get("content-security-policy", "")
+    assert "cdn.jsdelivr.net" in csp  # JS/CSS de Swagger UI
+
+def test_permissions_policy():
+    r = client.get("/health")
+    pp = r.headers.get("permissions-policy", "")
+    assert "camera=()" in pp and "microphone=()" in pp and "geolocation=()" in pp
+
+def test_request_id_in_out():
+    r = client.get("/health")
+    rid = r.headers.get("x-request-id")
+    assert rid, "toda respuesta debe traer X-Request-ID"
+    r2 = client.get("/health", headers={"X-Request-ID": "abc123"})
+    assert r2.headers.get("x-request-id") == "abc123"  # se propaga el del cliente
+
+def test_handler_global_pasa_http_exception_intacta():
+    # El handler de Exception NO debe tragarse 401/404 (contrato API intacto).
+    import asyncio
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app.main import unhandled_exception_handler
+
+    req = SimpleNamespace(state=SimpleNamespace(request_id="t1"), url=SimpleNamespace(path="/x"))
+    resp = asyncio.run(unhandled_exception_handler(req, HTTPException(status_code=404, detail="Nope")))
+    assert resp.status_code == 404
+    import json
+    assert json.loads(resp.body) == {"detail": "Nope"}
+
+def test_handler_global_500_con_request_id():
+    import asyncio
+    import json
+    from types import SimpleNamespace
+    from app.main import unhandled_exception_handler
+
+    req = SimpleNamespace(state=SimpleNamespace(request_id="t500"), url=SimpleNamespace(path="/boom"))
+    resp = asyncio.run(unhandled_exception_handler(req, RuntimeError("boom")))
+    assert resp.status_code == 500
+    body = json.loads(resp.body)
+    assert body["request_id"] == "t500"
+    assert "boom" not in str(body)  # sin filtrar trazas al cliente

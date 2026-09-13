@@ -1,11 +1,8 @@
-"""Recalcula publicacion_campus.distancia_geodesica_m con Haversine"""
-import math, asyncio, os
-R=6371000
-def haversine_m(lat1,lon1,lat2,lon2):
-    phi1,phi2=math.radians(lat1),math.radians(lat2)
-    dphi, dlam=math.radians(lat2-lat1), math.radians(lon2-lon1)
-    a=math.sin(dphi/2)**2+math.cos(phi1)*math.cos(phi2)*math.sin(dlam/2)**2
-    return int(round(2*R*math.asin(math.sqrt(min(1,max(0,a))))))
+"""Recalcula publicacion_campus.distancia_geodesica_m con Haversine canónico."""
+import asyncio, os, sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from app.services.haversine import haversine_m  # canónico (no duplicar fórmula)
 async def main():
     try:
         import asyncpg

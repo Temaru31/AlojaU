@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import { useComparar } from '../contexts/CompararContext'
-import { formatTiempoCaminando } from '../utils/formatters'
+import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
 
 function NoInformado() {
   return <span className="text-neutral-400 italic text-xs">No informado</span>
@@ -29,23 +29,23 @@ export default function Comparar() {
     {
       label: 'Depósito', key: 'deposito', render: (p) => {
         const dep = p.deposito_requerido ?? p.deposito
-        if (dep == null || dep === 0) return <span className="text-neutral-500 text-xs">0 (No informado si 0)</span>
+        if (dep == null || dep === 0) return <NoInformado />
         return `$${Number(dep).toLocaleString('es-CO')}`
       }
     },
     { label: 'Tipo', key: 'tipo', render: (p) => p.tipo_inmueble || <NoInformado /> },
     { label: 'Zona', key: 'zona', render: (p) => p.zona_nombre || p.zona || <NoInformado /> },
     {
-      label: 'Distancia geodésica', key: 'dist', render: (p) => {
+      label: 'Distancia al campus', key: 'dist', render: (p) => {
         const d = p.distancia_geodesica_m ?? p.dist_m
-        return d != null ? `${d} m` : <NoInformado />
+        return d != null ? formatDistancia(d) : <NoInformado />
       }
     },
-    { label: 'Tiempo caminando', key: 'tiempo', render: (p) => formatTiempoCaminando(p.distancia_geodesica_m ?? p.dist_m) || <NoInformado /> },
+    { label: 'Tiempo a pie', key: 'tiempo', render: (p) => formatTiempoCaminando(p.distancia_geodesica_m ?? p.dist_m) || <NoInformado /> },
     { label: 'Índice confianza', key: 'indice', render: (p) => p.indice_confianza != null ? `${p.indice_confianza}/100` : <NoInformado /> },
     { label: 'Servicios', key: 'servicios', render: (p) => p.servicios?.length ? p.servicios.join(' · ') : <NoInformado /> },
-    { label: 'Fotos', key: 'fotos', render: (p) => `${Array.isArray(p.fotos) ? p.fotos.length : (p.num_fotos || 0)} fotos` },
-    { label: 'Estado', key: 'estado', render: (p) => p.estado || <NoInformado /> },
+    { label: 'Fotos', key: 'fotos', render: (p) => `${Array.isArray(p.fotos) ? p.fotos.length : (p.num_fotos ?? 0)} fotos` },
+    { label: 'Estado', key: 'estado', render: (p) => p.estado === 'PENDIENTE' ? 'En revisión' : p.estado === 'ACTIVO' ? 'Publicada' : (p.estado || <NoInformado />) },
     { label: 'Dirección ref.', key: 'direccion', render: (p) => p.direccion_referencial || <NoInformado /> },
   ]
 
@@ -93,7 +93,7 @@ export default function Comparar() {
         {pubs.length > 0 && (
           <>
             <div className="flex items-center gap-3 mb-4">
-              <button onClick={clear} className="btn-secondary text-xs">
+              <button type="button" onClick={clear} className="btn-secondary text-xs">
                 Limpiar comparación
               </button>
               <span className="text-xs text-neutral-400">{comparar.length}/3 seleccionadas</span>
@@ -103,12 +103,12 @@ export default function Comparar() {
                 <table className="min-w-full text-sm">
                   <thead>
                     <tr className="bg-navy-50">
-                      <th className="text-left px-4 py-3 text-xs font-medium text-navy-700 sticky left-0 bg-navy-50">Característica</th>
+                      <th className="text-left px-4 py-3 text-xs font-medium text-navy-700 sticky left-0 z-10 bg-navy-50">Característica</th>
                       {pubs.map(p => (
                         <th key={p.id} className="text-left px-4 py-3 min-w-[180px] max-w-[260px]">
                           <div className="flex flex-col gap-1">
-                            <Link to={`/publicacion/${p.id}`} className="text-navy-600 hover:text-navy-800 font-semibold line-clamp-2 break-words text-xs">{p.titulo}</Link>
-                            <button onClick={() => toggle(p.id)} className="text-[11px] text-red-500 hover:text-red-600 hover:underline text-left">Quitar</button>
+                            <Link to={`/publicacion/${p.id}`} className="text-navy-600 hover:text-navy-800 font-semibold line-clamp-2 break-words text-xs">{p.titulo || 'No informado'}</Link>
+                            <button type="button" onClick={() => toggle(p.id)} className="text-[11px] text-red-500 hover:text-red-600 hover:underline text-left">Quitar</button>
                           </div>
                         </th>
                       ))}
@@ -117,7 +117,7 @@ export default function Comparar() {
                   <tbody>
                     {rows.map(row => (
                       <tr key={row.key} className="border-t border-neutral-100">
-                        <td className="px-4 py-3 font-medium text-xs bg-neutral-50 sticky left-0 text-neutral-600">{row.label}</td>
+                        <td className="px-4 py-3 font-medium text-xs bg-neutral-50 sticky left-0 z-10 text-neutral-600">{row.label}</td>
                         {pubs.map(p => (
                           <td key={p.id} className="px-4 py-3 text-xs sm:text-sm break-words text-neutral-800">{row.render(p)}</td>
                         ))}
@@ -128,7 +128,7 @@ export default function Comparar() {
               </div>
               <div className="p-4 bg-neutral-50 border-t border-neutral-150">
                 <p className="text-xs text-neutral-400 text-center">
-                  * Distancia geodésica Haversine, no tiempo ruteado. Índice informativo, no garantiza seguridad.
+                  * Distancia estimada a pie desde el campus. Índice informativo, no garantiza seguridad.
                 </p>
               </div>
             </div>

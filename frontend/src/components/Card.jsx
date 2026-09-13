@@ -1,47 +1,57 @@
-import { getLabelIndice } from '../utils/formatters'
+import { getLabelIndice, formatDistancia } from '../utils/formatters'
 import { formatTiempoCaminando } from '../utils/formatters'
+import SmartImage from './SmartImage'
+import { notifyToast } from './Toast'
 import { useFavoritos } from '../contexts/FavoritosContext'
 import { useComparar } from '../contexts/CompararContext'
 
-export default function Card({ pub }) {
+export default function Card({ pub, lugarNombre = null }) {
   const favHook = useFavoritos()
   const compHook = useComparar()
-  const level = pub.indice_confianza >= 80 ? 'high' : pub.indice_confianza >= 50 ? 'mid' : 'low'
+  // NUEVO(<=3ln): indice null -> 0 para no mostrar "— Básico"
+  const indice = pub.indice_confianza ?? 0
+  const level = indice >= 80 ? 'high' : indice >= 50 ? 'mid' : 'low'
 
+  // UX: semántica visual Alto=verde, Medio=naranja (no amarillo: es el corporativo), Bajo=rojo.
   const badgeStyles = {
     high: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
-    mid: 'bg-gold-50 text-gold-700 border border-gold-200',
-    low: 'bg-orange-50 text-orange-700 border border-orange-200',
+    mid: 'bg-orange-50 text-orange-700 border border-orange-200',
+    low: 'bg-red-50 text-red-700 border border-red-200',
   }
 
   const dotStyles = {
     high: 'bg-emerald-500',
-    mid: 'bg-gold-500',
-    low: 'bg-orange-500',
+    mid: 'bg-orange-500',
+    low: 'bg-red-500',
   }
 
   const canon = pub.canon_mensual ?? pub.canon
-  const zona = pub.zona_nombre || pub.zona || '—'
+  // BUG-08: fallback unificado a "No informado"
+  const zona = pub.zona_nombre || pub.zona || 'No informado'
   const dist = pub.distancia_geodesica_m ?? pub.dist_m
-  const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? pub.fotos ?? 0)
+  // BUG-08: num_fotos real (??, no valor inventado)
+  const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? (typeof pub.fotos === 'number' ? pub.fotos : 0))
   const cover = Array.isArray(pub.fotos) ? pub.fotos[0] : null
-  const fallbackCover = `https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600&h=400&fit=crop`
   const tiempo = formatTiempoCaminando(dist)
-  const distText = dist != null ? `${typeof dist === 'number' ? dist.toLocaleString('es-CO') : dist}m${tiempo ? ` · ${tiempo}` : ''}` : '—'
+  // 004 POIs: badge destacado "A X m · Y min a pie de [Lugar]" cuando hay
+  // contexto de cercanía; sin lugar se conserva el texto legado.
+  const distText = dist != null ? `${formatDistancia(dist)}${tiempo ? ` · ${tiempo}` : ''}` : 'No informado'
+  const badgeCercania = lugarNombre && dist != null
+    ? `A ${formatDistancia(dist)}${tiempo ? ` · ${tiempo}` : ''} de ${lugarNombre}`
+    : null
   const isFav = favHook.isFav(pub.id)
   const isComp = compHook.isSelected(pub.id)
 
   return (
-    <div className="card-hover group p-0 overflow-hidden">
+    <div className="card-hover group p-0 overflow-hidden min-w-0">
       {/* Image */}
       <div className="h-36 sm:h-40 w-full overflow-hidden bg-gradient-to-br from-navy-50 to-neutral-100 relative">
         {cover ? (
-          <img
+          <SmartImage
             src={cover}
             alt={pub.titulo}
             className="w-full h-full object-cover group-hover:scale-[1.02] transition"
-            loading="lazy"
-            onError={(e) => { e.currentTarget.src = fallbackCover; e.currentTarget.onerror = null }}
+            eager={false}
           />
         ) : (
           <div className="absolute inset-0 flex items-center justify-center">
@@ -53,15 +63,19 @@ export default function Card({ pub }) {
         {/* Confidence badge */}
         <div className={`absolute top-3 left-3 badge ${badgeStyles[level]}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${dotStyles[level]}`} />
-          {pub.indice_confianza} — {getLabelIndice(pub.indice_confianza)}
+          {indice} — {getLabelIndice(indice)}
         </div>
         {/* Favorito */}
         <button
           type="button"
           aria-label={isFav ? 'Quitar de favoritos' : 'Añadir a favoritos'}
           aria-pressed={isFav}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); favHook.toggle(pub.id) }}
-          className={`absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center text-sm backdrop-blur-sm border transition ${isFav ? 'bg-red-500 text-white border-red-500' : 'bg-white/90 text-neutral-600 border-white hover:bg-white'}`}
+          onClick={(e) => {
+            e.preventDefault(); e.stopPropagation()
+            favHook.toggle(pub.id)
+            notifyToast(isFav ? 'Quitado de favoritos' : 'Guardado en favoritos', isFav ? undefined : '/favoritos')
+          }}
+          className={`absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center text-sm backdrop-blur-sm border transition active:scale-90 ${isFav ? 'bg-red-500 text-white border-red-500' : 'bg-white/90 text-neutral-600 border-white hover:bg-white'}`}
           title={isFav ? 'En favoritos' : 'Añadir a favoritos'}
         >
           {isFav ? '♥' : '♡'}
@@ -71,8 +85,12 @@ export default function Card({ pub }) {
           type="button"
           aria-label={isComp ? 'Quitar de comparar' : 'Añadir a comparar'}
           aria-pressed={isComp}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); compHook.toggle(pub.id) }}
-          className={`absolute bottom-3 right-3 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold backdrop-blur-sm border transition ${isComp ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white/90 text-neutral-600 border-white hover:bg-white'}`}
+          onClick={(e) => {
+            e.preventDefault(); e.stopPropagation()
+            compHook.toggle(pub.id)
+            if (!isComp) notifyToast('Añadido a comparar', '/comparar')
+          }}
+          className={`absolute bottom-3 right-3 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold backdrop-blur-sm border transition active:scale-90 ${isComp ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white/90 text-neutral-600 border-white hover:bg-white'}`}
           title={isComp ? 'En comparar' : 'Añadir a comparar (máx 3)'}
         >
           {isComp ? '✓' : '+'}
@@ -81,13 +99,16 @@ export default function Card({ pub }) {
 
       <div className="p-4">
         <div className="flex items-start justify-between gap-2 mb-1.5">
-          <h3 className="font-display font-semibold text-navy-900 text-sm leading-snug line-clamp-2 group-hover:text-navy-600 transition-colors">
+          <h3 className="font-display font-semibold text-navy-900 text-sm leading-snug line-clamp-2 break-words group-hover:text-navy-600 transition-colors">
             {pub.titulo}
           </h3>
         </div>
 
+        {/* UX-AUDIT P0: canon null -> "No informado" (Detalle ya lo hace; $0 engaña) */}
         <p className="text-lg font-bold text-navy-800 mb-2">
-          ${Number(canon ?? 0).toLocaleString('es-CO')} <span className="text-xs font-normal text-neutral-400">COP/mes</span>
+          {canon != null
+            ? <>${Number(canon).toLocaleString('es-CO')} <span className="text-xs font-normal text-neutral-400">COP/mes</span></>
+            : <span className="text-sm font-medium text-neutral-400">No informado</span>}
         </p>
 
         <div className="flex items-center gap-3 text-xs text-neutral-500">
@@ -103,14 +124,15 @@ export default function Card({ pub }) {
             <svg className="w-3.5 h-3.5 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
             </svg>
-            {distText}
+            {badgeCercania ? (
+              <span className="font-semibold text-navy-700">{badgeCercania}</span>
+            ) : distText}
           </span>
         </div>
 
+        {/* UX: sin etiqueta de estado interno (ACTIVO/PENDIENTE es de BD, no del estudiante) */}
         <div className="flex items-center gap-2 mt-3 pt-3 border-t border-neutral-100">
           <span className="text-xs text-neutral-400">{numFotos} fotos</span>
-          <span className="text-neutral-300">·</span>
-          <span className="text-xs text-emerald-600 font-medium">{pub.estado || 'ACTIVO'}</span>
         </div>
       </div>
     </div>

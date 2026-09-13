@@ -131,6 +131,12 @@
   border-radius: 0.75rem;
   border: 1px solid #E5E7EB;
   width: 100%;
+  /* BUG-01: el mapa crea su propio stacking context; los panes internos
+     de Leaflet (.leaflet-pane z-400, controles z-1000) quedan contenidos
+     y por debajo del nav sticky (z-50) y del visor en portal (z-[2000]) */
+  position: relative;
+  z-index: 0;
+  isolation: isolate;
 }
 @media (max-width: 640px) {
   .leaflet-container {

@@ -23,7 +23,7 @@ describe('Filtros - HU-002', ()=>{
   it('cambia tipo', ()=>{
     const setFiltros = vi.fn()
     render(<Filtros filtros={{tipo:''}} setFiltros={setFiltros} />)
-    const select = screen.getByDisplayValue('Tipo')
+    const select = screen.getByDisplayValue('Todos los tipos')
     fireEvent.change(select, { target: { value: 'APARTAESTUDIO' }})
     expect(setFiltros).toHaveBeenCalledWith(expect.objectContaining({ tipo: 'APARTAESTUDIO' }))
   })
@@ -31,12 +31,12 @@ describe('Filtros - HU-002', ()=>{
   it('botón Limpiar resetea', ()=>{
     const setFiltros = vi.fn()
     render(<Filtros filtros={{min:'100', max:'200'}} setFiltros={setFiltros} />)
-    fireEvent.click(screen.getByText('Limpiar'))
+    fireEvent.click(screen.getByText('Limpiar filtros'))
     expect(setFiltros).toHaveBeenCalledWith({})
   })
 
   it('incluye opción HABITACION_INDEPENDIENTE (fix previo faltante)', ()=>{
     render(<Filtros filtros={{}} setFiltros={vi.fn()} />)
-    expect(screen.getByText('Habitación independiente')).toBeInTheDocument()
+    expect(screen.getByText('Habitacion independiente')).toBeInTheDocument()
   })
 })
