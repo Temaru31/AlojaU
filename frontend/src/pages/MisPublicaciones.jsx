@@ -87,6 +87,8 @@ const ESTADO_LABEL = {
   PENDIENTE: 'En revisión',
   EXPIRADO: 'Vencida',
   PAUSADO: 'Pausada',
+  PAUSADO_POR_REPORTE: 'Pausada por reportes',
+  REVISION_REQUERIDA: 'Revisión requerida',
   RECHAZADO: 'Rechazada',
   ARRENDADO: 'Arrendada',
   DESACTIVADO: 'Desactivada',
@@ -97,6 +99,8 @@ const ESTADO_STYLE = {
   PENDIENTE: 'bg-amber-50 text-amber-700 border-amber-200',
   EXPIRADO: 'bg-red-50 text-red-700 border-red-200',
   PAUSADO: 'bg-neutral-50 text-neutral-600 border-neutral-200',
+  PAUSADO_POR_REPORTE: 'bg-red-50 text-red-700 border-red-200',
+  REVISION_REQUERIDA: 'bg-orange-50 text-orange-700 border-orange-200',
   RECHAZADO: 'bg-rose-50 text-rose-700 border-rose-200',
 }
 

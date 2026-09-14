@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import UploadFotos from '../components/UploadFotos'
 import MapPicker from '../components/MapPicker'
+import ZonaSelect from '../components/ZonaSelect'
 import { notifyToast } from '../components/Toast'
 import { emitAuthChange } from '../contexts/AuthContext'
 
@@ -13,14 +14,8 @@ const SERVICIOS = [
   { id: 4, nombre: 'Amoblado' },
   { id: 5, nombre: 'Lavadora' },
 ]
-const ZONAS = [
-  { id: 1, nombre: 'Centro' },
-  { id: 2, nombre: 'Pandiguando' },
-  { id: 3, nombre: 'Tulcán' },
-]
 
 export default function Publicar() {
-  const [campus, setCampus] = useState([])
   const [token, setToken] = useState(() => localStorage.getItem('alojau_token') || '')
   const [loginEmail, setLoginEmail] = useState('')
   const [loginPass, setLoginPass] = useState('')
@@ -34,24 +29,19 @@ export default function Publicar() {
     canon_mensual: '',
     deposito_requerido: '0',
     zona_barrio_id: 3,
+    barrio_texto: null,
     direccion_referencial: '',
     reglas_convivencia: '',
     latitud: '',
     longitud: '',
     servicios_ids: [1],
-    campus_ids: [1],
-    fotos: ['https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600&h=400&fit=crop', 'https://images.unsplash.com/photo-1484154218962-a197022b5858?w=600&h=400&fit=crop', 'https://images.unsplash.com/photo-1493809842364-78817add58d1?w=600&h=400&fit=crop'],
+    campus_ids: [],
+    fotos: ['https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?auto=format&fit=crop&w=800&q=80', 'https://images.unsplash.com/photo-1484154218962-a197022b5858?auto=format&fit=crop&w=800&q=80', 'https://images.unsplash.com/photo-1493809842364-78817add58d1?auto=format&fit=crop&w=800&q=80'],
   })
   const [errors, setErrors] = useState({})
   const [submitError, setSubmitError] = useState('')
   const [submitOk, setSubmitOk] = useState(null)
   const [submitting, setSubmitting] = useState(false)
-
-  useEffect(() => {
-    api.get('/api/campus')
-      .then(r => setCampus(r.data))
-      .catch(() => setCampus([{ id: 1, institucion: 'Universidad del Cauca', nombre_sede: 'Campus Tulcán' }]))
-  }, [])
 
   // UX-AUDIT P0: igual que Perfil — el navbar puede cerrar sesión; re-sincroniza
   // el token local para no mostrar el formulario con un token muerto (401).
@@ -98,7 +88,10 @@ export default function Publicar() {
     if (!form.direccion_referencial || form.direccion_referencial.trim().length < 10) e.direccion_referencial = 'Mínimo 10 caracteres'
     if (!form.reglas_convivencia || form.reglas_convivencia.trim().length < 10) e.reglas_convivencia = 'Mínimo 10 caracteres'
     if (form.servicios_ids.length === 0) e.servicios_ids = 'Selecciona al menos 1 servicio'
-    if (form.campus_ids.length === 0) e.campus_ids = 'Selecciona al menos 1 campus'
+    // Tarea 3 (v10): zona del catálogo o barrio libre (mínimo uno).
+    if (form.zona_barrio_id == null && !(form.barrio_texto || '').trim()) {
+      e.zona = 'Elige tu barrio de la lista o escríbelo'
+    }
     const fotosValid = form.fotos.filter(f => f.trim() !== '')
     if (fotosValid.length < 3) e.fotos = 'Mínimo 3 fotos (URLs válidas)'
     else {
@@ -128,13 +121,14 @@ export default function Publicar() {
       tipo_inmueble: form.tipo_inmueble,
       canon_mensual: Number(form.canon_mensual),
       deposito_requerido: Number(form.deposito_requerido),
-      zona_barrio_id: Number(form.zona_barrio_id),
+      zona_barrio_id: form.zona_barrio_id != null ? Number(form.zona_barrio_id) : null,
+      barrio_texto: (form.barrio_texto || '').trim() || null,
       direccion_referencial: form.direccion_referencial.trim(),
       reglas_convivencia: form.reglas_convivencia.trim(),
       latitud: form.latitud === '' ? null : Number(form.latitud),
       longitud: form.longitud === '' ? null : Number(form.longitud),
       servicios_ids: form.servicios_ids,
-      campus_ids: form.campus_ids,
+      campus_ids: [],
       fotos: fotosValid,
     }
     try {
@@ -234,7 +228,7 @@ export default function Publicar() {
             <button type="button" onClick={handleLogout} className="text-xs sm:text-sm text-neutral-500 hover:text-red-600">Cerrar sesión</button>
           </div>
           <p className="text-sm text-neutral-500 mt-1">
-            Completa los datos. La publicacion pasara a estado PENDIENTE hasta ser revisada.
+            Publicar es gratis y toma menos de 2 minutos. Tu anuncio estará visible tan pronto confirmes la ubicación en el mapa.
           </p>
         </div>
 
@@ -307,6 +301,11 @@ export default function Publicar() {
                 required
               />
               {errors.canon_mensual && <p className="text-xs text-red-600 mt-1">{errors.canon_mensual}</p>}
+              {!errors.canon_mensual && form.canon_mensual !== '' && Number(form.canon_mensual) > 0 && Number(form.canon_mensual) < 100000 && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5 mt-1.5" role="status">
+                  ¿El precio es correcto? Recuerda ingresar el monto total mensual.
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-navy-800 mb-1.5">Deposito (0 si no aplica)</label>
@@ -322,14 +321,13 @@ export default function Publicar() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-navy-800 mb-1.5">Zona / barrio *</label>
-            <select
-              value={form.zona_barrio_id}
-              onChange={e => setForm({ ...form, zona_barrio_id: Number(e.target.value) })}
-              className="select-field"
-            >
-              {ZONAS.map(z => <option key={z.id} value={z.id}>{z.nombre}</option>)}
-            </select>
+            <label className="block text-sm font-medium text-navy-800 mb-1.5" htmlFor="zona-barrio">Zona / barrio *</label>
+            <ZonaSelect
+              value={{ zona_barrio_id: form.zona_barrio_id, barrio_texto: form.barrio_texto }}
+              onChange={(z) => setForm({ ...form, zona_barrio_id: z.zona_barrio_id, barrio_texto: z.barrio_texto })}
+              inputId="zona-barrio"
+              error={errors.zona}
+            />
           </div>
 
           <div>
@@ -358,7 +356,7 @@ export default function Publicar() {
 
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Ubicación en mapa <span className="text-neutral-400 font-normal">(opcional, guarda coords directo)</span></label>
-            <p className="text-[11px] text-neutral-400 mb-2">La ubicación del pin prevalece sobre el texto: lo que midas en el mapa es lo que verán los estudiantes.</p>
+            <p className="text-[11px] text-neutral-400 mb-2">Ubicación de referencia en mapa detectada. Si el nombre del sector no coincide exactamente, selecciona o escribe el nombre correcto de tu barrio abajo.</p>
             <MapPicker
               lat={form.latitud}
               lng={form.longitud}
@@ -371,31 +369,29 @@ export default function Publicar() {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-navy-800 mb-1.5">Latitud <span className="text-neutral-400 font-normal">(opcional)</span></label>
-              <input
-                type="number"
-                step="any"
-                value={form.latitud}
-                onChange={e => setForm({ ...form, latitud: e.target.value })}
-                placeholder="2.443"
-                className={`input-field ${errors.latitud ? '!border-red-300 !shadow-none' : ''}`}
-              />
-              {errors.latitud && <p className="text-xs text-red-600 mt-1">{errors.latitud}</p>}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-navy-800 mb-1.5">Longitud <span className="text-neutral-400 font-normal">(opcional)</span></label>
-              <input
-                type="number"
-                step="any"
-                value={form.longitud}
-                onChange={e => setForm({ ...form, longitud: e.target.value })}
-                placeholder="-76.606"
-                className={`input-field ${errors.longitud ? '!border-red-300 !shadow-none' : ''}`}
-              />
-              {errors.longitud && <p className="text-xs text-red-600 mt-1">{errors.longitud}</p>}
-            </div>
+          {/* Tarea 2 (v8): coords vinculadas al mapa, sin cajas numéricas visibles. */}
+          <div aria-live="polite">
+            {form.latitud !== '' && form.longitud !== '' ? (
+              <div className="flex items-center justify-between gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2">
+                <p className="text-xs text-emerald-800">
+                  📍 Ubicación confirmada: <b>{form.latitud}, {form.longitud}</b>
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, latitud: '', longitud: '' }))}
+                  className="text-xs font-medium text-emerald-700 hover:text-red-600 hover:underline shrink-0"
+                >
+                  Quitar
+                </button>
+              </div>
+            ) : (
+              <p className="text-xs text-neutral-400">
+                Sin ubicación marcada: usa el mapa de arriba para fijar el punto (opcional).
+              </p>
+            )}
+            {(errors.latitud || errors.longitud) && (
+              <p className="text-xs text-red-600 mt-1">{errors.latitud || errors.longitud}</p>
+            )}
           </div>
 
           <div>
@@ -411,19 +407,11 @@ export default function Publicar() {
             {errors.servicios_ids && <p className="text-xs text-red-600 mt-1">{errors.servicios_ids}</p>}
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-navy-800 mb-1.5">Campus asociado *</label>
-            <div className="flex flex-wrap gap-2 mt-1">
-              {campus.map(c => (
-                <label key={c.id} className={`text-xs sm:text-sm px-3 py-1.5 rounded-full border cursor-pointer select-none transition ${form.campus_ids.includes(c.id) ? 'bg-navy-800 text-white border-navy-800' : 'bg-white border-neutral-200 text-neutral-600 hover:border-navy-300'}`}>
-                  <input type="checkbox" className="sr-only" checked={form.campus_ids.includes(c.id)} onChange={() => toggleArray('campus_ids', c.id)} />
-                  {c.institucion ? `${c.institucion} - ${c.nombre_sede}` : c.nombre_sede}
-                </label>
-              ))}
-              {campus.length === 0 && <span className="text-xs text-neutral-400">Cargando campus...</span>}
-            </div>
-            {errors.campus_ids && <p className="text-xs text-red-600 mt-1">{errors.campus_ids}</p>}
-          </div>
+          {/* Tarea 3 (v7): sin "Campus asociado" — las distancias a Tulcán, Torobajo,
+              Centro, Salud… se autocalculan desde la ubicación del mapa. */}
+          <p className="text-xs text-neutral-500 bg-navy-50 border border-navy-100 rounded-lg px-3 py-2">
+            📍 Las distancias a Tulcán, Torobajo, Centro y demás puntos se calculan solas con la ubicación que marques en el mapa.
+          </p>
 
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Fotos * <span className="text-neutral-400 font-normal">(sube archivos o pega URLs)</span></label>
@@ -444,8 +432,8 @@ export default function Publicar() {
           </div>
 
           <div className="pt-2">
-            <button type="submit" disabled={submitting} className="btn-accent w-full justify-center">
-              {submitting ? 'Enviando...' : 'Enviar a revision'}
+            <button type="submit" disabled={submitting} aria-disabled={submitting} className="btn-accent w-full justify-center disabled:opacity-60 disabled:cursor-wait">
+              {submitting ? 'Guardando publicación...' : 'Enviar a revision'}
             </button>
             <p className="text-xs text-neutral-400 text-center mt-3">
               Requiere cuenta de arrendador. Estado inicial: PENDIENTE.

@@ -14,10 +14,14 @@
 // - Accesibilidad: dropzone con role=button + teclado Enter/Espacio, errores con role=alert, aria-live.
 import { useState, useRef, useEffect } from 'react'
 import { api } from '../services/api'
+import { comprimirImagen } from '../utils/compressImage'
 
 export const UPLOAD_MIN_FILES = 3
 export const UPLOAD_MAX_FILES = 10
 export const UPLOAD_MAX_SIZE = 5 * 1024 * 1024 // 5MB (igual que backend uploads.py MAX_SIZE)
+// Tarea 3 (v4): formatos permitidos en cliente (JPG, PNG, WEBP).
+export const UPLOAD_ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp']
+export const UPLOAD_ACCEPT = 'image/jpeg,image/png,image/webp'
 
 // BUG-F3-01 (fix): antes `removeFile` revocaba solo el eliminado y RECREABA objectURLs
 // para los restantes sin revocar los viejos -> leak. Ahora cada archivo tiene su propia
@@ -33,6 +37,7 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
   // BUG-F3-02 (fix): antes `uploadedUrls` iniciaba con `initialUrls` (placeholders Unsplash)
   // y mostraba "✓ Subidas N URLs" sin haber subido nada. Ahora inicia vacío: solo URLs reales.
   const [uploadedUrls, setUploadedUrls] = useState([])
+  const [comprimiendo, setComprimiendo] = useState(false)
   const inputRef = useRef(null)
   // Ref espejo para cleanup al desmontar sin depender del closure (evita revocar de más/menos).
   const itemsRef = useRef([])
@@ -47,7 +52,7 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
     }
   }, [])
 
-  const validateAndAdd = (newFiles) => {
+  const validateAndAdd = async (newFiles) => {
     setError('')
     const arr = Array.from(newFiles || [])
     if (items.length + arr.length > UPLOAD_MAX_FILES) {
@@ -55,17 +60,25 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
       return
     }
     for (const f of arr) {
-      if (!f.type || !f.type.startsWith('image/')) {
-        setError(`"${f.name}" no es imagen (solo image/*)`)
+      if (!f.type || !UPLOAD_ALLOWED_TYPES.includes(f.type.toLowerCase())) {
+        setError(`"${f.name}" no es un formato válido (solo JPG, PNG o WEBP)`)
         return
       }
       if (f.size > UPLOAD_MAX_SIZE) {
-        setError(`"${f.name}" excede 5MB (${(f.size / 1024 / 1024).toFixed(1)}MB)`)
+        setError(`"${f.name}" es muy pesada (${(f.size / 1024 / 1024).toFixed(1)}MB). El tamaño máximo permitido es 5 MB.`)
         return
       }
     }
+    // Tarea 4 (v4): compresión Canvas (máx 1200px, calidad 0.8) antes de previsualizar/subir.
+    setComprimiendo(true)
+    let livianas = arr
+    try {
+      livianas = await Promise.all(arr.map((f) => comprimirImagen(f)))
+    } finally {
+      setComprimiendo(false)
+    }
     // Solo los nuevos crean objectURL (los existentes se reutilizan, sin recrear).
-    const fresh = arr.map((f) => ({
+    const fresh = livianas.map((f) => ({
       key: newKey(),
       file: f,
       url: URL.createObjectURL(f),
@@ -128,7 +141,8 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
       setUploadedUrls(urls)
       onUrls(urls)
     } catch (err) {
-      const detail = err.response?.data?.detail
+      // Tarea 3 (v4): prefiere el mensaje amigable del interceptor (español no-técnico).
+      const detail = err.mensajeAmigable || err.response?.data?.detail
       setError(
         typeof detail === 'string'
           ? detail
@@ -142,12 +156,12 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
   }
 
   const total = items.length
-  const canUpload = total >= UPLOAD_MIN_FILES && total <= UPLOAD_MAX_FILES && !uploading
+  const canUpload = total >= UPLOAD_MIN_FILES && total <= UPLOAD_MAX_FILES && !uploading && !comprimiendo
 
   return (
     <div className="space-y-3">
       <label className="text-sm font-medium">
-        Fotos reales * <span className="text-neutral-400 font-normal">(3-10, cada una max 5MB, image/*)</span>
+        Fotos reales * <span className="text-neutral-400 font-normal">(3-10, JPG/PNG/WEBP, cada una max 5MB)</span>
       </label>
 
       {/* Drop zone accesible por teclado */}
@@ -166,10 +180,12 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
         tabIndex={0}
         aria-label="Seleccionar fotos"
       >
-        <input ref={inputRef} type="file" multiple accept="image/*" className="hidden" onChange={onInputChange} />
+        <input ref={inputRef} type="file" multiple accept={UPLOAD_ACCEPT} className="hidden" onChange={onInputChange} />
         <p className="text-sm font-medium text-neutral-700">Arrastra fotos aquí o haz clic para seleccionar</p>
         <p className="text-xs text-neutral-400 mt-1" aria-live="polite">
-          {total}/{UPLOAD_MAX_FILES} fotos • {total >= UPLOAD_MIN_FILES ? '✓ mínimo alcanzado' : `faltan ${UPLOAD_MIN_FILES - total} para mínimo`}
+          {comprimiendo
+            ? 'Optimizando imágenes…'
+            : `${total}/${UPLOAD_MAX_FILES} fotos • ${total >= UPLOAD_MIN_FILES ? '✓ mínimo alcanzado' : `faltan ${UPLOAD_MIN_FILES - total} para mínimo`}`}
         </p>
         {initialUrls.length > 0 && uploadedUrls.length === 0 && (
           <p className="text-[11px] text-neutral-400 mt-1">Tienes {initialUrls.length} URLs de ejemplo; sube fotos reales para reemplazarlas.</p>

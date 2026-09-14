@@ -12,13 +12,18 @@ class PublicacionCreate(BaseModel):
     tipo_inmueble: TipoInmueble
     canon_mensual: Decimal = Field(gt=0, le=10_000_000)
     deposito_requerido: Decimal = Field(ge=0, default=0)
-    zona_barrio_id: int = Field(gt=0)
+    # Tarea 3 (v10): zona del catálogo OPCIONAL — si el barrio no existe,
+    # va texto libre en barrio_texto (al menos uno de los dos es obligatorio).
+    zona_barrio_id: Optional[int] = Field(default=None, gt=0)
+    barrio_texto: Optional[str] = Field(default=None, min_length=3, max_length=120)
     direccion_referencial: str = Field(min_length=10, max_length=200)
     reglas_convivencia: str = Field(min_length=10, max_length=1000)
     latitud: Optional[float] = Field(ge=-90, le=90, default=None)
     longitud: Optional[float] = Field(ge=-180, le=180, default=None)
     servicios_ids: list[int] = Field(min_length=1)
-    campus_ids: list[int] = Field(min_length=1)
+    # Tarea 3 (v7): campus opcional — el trigger 004 autovincula TODOS los
+    # lugares con distancias geodésicas calculadas desde lat/lng del aviso.
+    campus_ids: list[int] = Field(default_factory=list)
     fotos: list[HttpUrl] = Field(min_length=3, max_length=10, description="≥3 fotos HU-005 C2")
     incluye_servicios_base: bool = True
 
@@ -27,6 +32,13 @@ class PublicacionCreate(BaseModel):
         # B0-5: lat/lng both-or-none -> 422 si solo uno presente.
         if (self.latitud is None) != (self.longitud is None):
             raise ValueError("latitud y longitud deben ir juntas (both-or-none)")
+        return self
+
+    @model_validator(mode="after")
+    def zona_o_barrio(self):
+        # Tarea 3 (v10): barrio del catálogo o texto libre (flexi-barrios).
+        if self.zona_barrio_id is None and not (self.barrio_texto or '').strip():
+            raise ValueError("indica la zona del catálogo o escribe el nombre del barrio")
         return self
 
 
@@ -131,7 +143,8 @@ class PublicacionCardOut(BaseModel):
     canon_mensual: float
     canon: float  # alias compat FE legacy
     deposito_requerido: float
-    zona_barrio_id: int
+    zona_barrio_id: Optional[int] = None
+    barrio_texto: Optional[str] = None  # v10: barrio libre si no hay zona del catálogo
     zona: Optional[str] = None  # alias compat
     zona_nombre: Optional[str] = None
     direccion_referencial: Optional[str] = None
@@ -173,7 +186,8 @@ class PublicacionDetailOut(BaseModel):
     canon: float  # alias compat
     deposito: float  # alias compat
     deposito_requerido: float
-    zona_barrio_id: int
+    zona_barrio_id: Optional[int] = None
+    barrio_texto: Optional[str] = None  # v10: barrio libre si no hay zona del catálogo
     zona: Optional[str] = None  # alias compat
     zona_nombre: Optional[str] = None
     direccion_referencial: Optional[str] = None

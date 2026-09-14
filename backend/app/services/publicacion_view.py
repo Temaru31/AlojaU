@@ -46,8 +46,9 @@ def mock_to_out(pub: dict, campus_id: Optional[int] = None) -> dict:
         "deposito": pub.get("deposito_requerido", 0),
         "deposito_requerido": pub.get("deposito_requerido", 0),
         "zona_barrio_id": pub["zona_barrio_id"],
-        "zona": pub.get("zona_nombre"),
-        "zona_nombre": pub.get("zona_nombre"),
+        "barrio_texto": pub.get("barrio_texto"),
+        "zona": pub.get("zona_nombre") or pub.get("barrio_texto"),
+        "zona_nombre": pub.get("zona_nombre") or pub.get("barrio_texto"),
         "direccion_referencial": pub["direccion_referencial"],
         "reglas": pub.get("reglas_convivencia"),
         "reglas_convivencia": pub.get("reglas_convivencia"),
@@ -94,6 +95,13 @@ def initial_trust(payload, telefono_verificado: bool) -> dict:
     )
 
 
+def _zona_display(p) -> str | None:
+    """Zona del catálogo o barrio libre (v10); None si no hay ninguno."""
+    z = getattr(p, "zona", None)
+    nombre = z.nombre if z is not None and getattr(z, "nombre", None) else None
+    return nombre or getattr(p, "barrio_texto", None) or None
+
+
 def trust_for_row(p, reportes_activos: int, tel_ver: bool) -> dict:
     """Índice para una fila ORM (lista o detalle)."""
     return calcular_indice(
@@ -116,7 +124,8 @@ def build_card(p, dist, trust: dict, zona_nombre, tel: Optional[str]) -> dict:
         "id": p.id, "titulo": p.titulo, "descripcion": p.descripcion,
         "tipo_inmueble": p.tipo_inmueble, "canon_mensual": float(p.canon_mensual), "canon": float(p.canon_mensual),
         "deposito_requerido": float(p.deposito_requerido),
-        "zona_barrio_id": p.zona_barrio_id, "zona": zona_nombre, "zona_nombre": zona_nombre,
+        "zona_barrio_id": p.zona_barrio_id, "barrio_texto": getattr(p, "barrio_texto", None),
+        "zona": zona_nombre, "zona_nombre": zona_nombre,
         "direccion_referencial": p.direccion_referencial,
         "reglas_convivencia": p.reglas_convivencia, "estado": p.estado,
         "fecha_renovacion": p.fecha_renovacion, "fecha_expiracion": p.fecha_expiracion,
@@ -135,13 +144,14 @@ def build_detail(p, reportes_activos: int, u, dist, campus_ref: Optional[dict] =
     tel_ver = bool(u.telefono_verificado) if u else False
     trust = trust_for_row(p, reportes_activos, tel_ver)
     tel = u.telefono_whatsapp if tel_ver and u else None
-    zona_nombre = p.zona.nombre if hasattr(p, "zona") and p.zona else "No informado"
+    zona_nombre = _zona_display(p) or "No informado"
     fotos = [im.url for im in p.imagenes]
     return {
         "id": p.id, "titulo": p.titulo, "descripcion": p.descripcion,
         "tipo_inmueble": p.tipo_inmueble, "canon_mensual": float(p.canon_mensual), "canon": float(p.canon_mensual),
         "deposito": float(p.deposito_requerido), "deposito_requerido": float(p.deposito_requerido),
-        "zona_barrio_id": p.zona_barrio_id, "zona": zona_nombre, "zona_nombre": zona_nombre,
+        "zona_barrio_id": p.zona_barrio_id, "barrio_texto": getattr(p, "barrio_texto", None),
+        "zona": zona_nombre, "zona_nombre": zona_nombre,
         "direccion_referencial": p.direccion_referencial, "reglas": p.reglas_convivencia,
         "reglas_convivencia": p.reglas_convivencia,
         "estado": p.estado, "fecha_renovacion": p.fecha_renovacion, "fecha_expiracion": p.fecha_expiracion,
@@ -167,15 +177,22 @@ def cards_for_page(pubs, reportes_map: dict, users_map: dict, dist_map: dict, ca
         u = users_map.get(p.usuario_id)
         tel_ver = bool(u.telefono_verificado) if u else False
         trust = trust_for_row(p, reportes_map.get(p.id, 0), tel_ver)
-        zona_nombre = p.zona.nombre if hasattr(p, "zona") and p.zona else None
+        zona_nombre = _zona_display(p)
         tel = u.telefono_whatsapp if tel_ver and u else None
         out.append(build_card(p, dist_map.get(p.id) if campus_id else None, trust, zona_nombre, tel))
     return out
 
 
-def filter_mock_pubs(pubs: List[dict], campus_id=None, precio_min=None, precio_max=None, tipo=None, servicios_ids=None, q=None):
-    """Filtros HU-001/002 + Oleada 2 (q texto libre) sobre MOCK_PUBS (solo dev sin PG)."""
+def filter_mock_pubs(pubs: List[dict], campus_id=None, precio_min=None, precio_max=None, tipo=None, servicios_ids=None, q=None, ciudad_id=None, ciudad_slug=None):
+    """Filtros HU-001/002 + Fase 2 tokenizada + multiciudad sobre MOCK_PUBS (solo dev sin PG).
+
+    - Tokeniza q, filtra stop-words ES, OR parcial con score (mayoría primero).
+    - Busca en titulo, descripcion, zona_nombre, tipo (con sinónimos) y servicios.
+    - ciudad_id/ciudad_slug filtran por mock ciudad_id (default 1 Popayán).
+    """
     from app.services.haversine import haversine_m as _h
+    from app.services.search import normalize_token, tokenize_query, tipo_canonico_para_token
+    from app.services.ciudades import slugify
     import unicodedata
 
     def _norm(s: str) -> str:
@@ -183,6 +200,15 @@ def filter_mock_pubs(pubs: List[dict], campus_id=None, precio_min=None, precio_m
         return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
 
     filtradas = [p for p in pubs if p["estado"] == "ACTIVO"]
+    # Fase 4 multiciudad (mock): los pubs demo son ciudad_id 1 salvo que el dict lo indique.
+    if ciudad_slug and not ciudad_id:
+        wanted = slugify(ciudad_slug)
+        # Mock solo conoce Popayán (id 1 / slug popayan).
+        if wanted != "popayan":
+            return []
+        ciudad_id = 1
+    if ciudad_id:
+        filtradas = [p for p in filtradas if int(p.get("ciudad_id", 1)) == int(ciudad_id)]
     if campus_id:
         # Paridad con el trigger 004 (enlaza TODOS los lugares): si ningún pub
         # lista este lugar (p.ej. POI nuevo en mock), no se filtra por membresía;
@@ -202,19 +228,34 @@ def filter_mock_pubs(pubs: List[dict], campus_id=None, precio_min=None, precio_m
     if servicios_ids:
         filtradas = [p for p in filtradas if all(s in p.get("servicios_ids", []) for s in servicios_ids)]
     if q and q.strip():
-        nq = _norm(q.strip())
-        # Relevancia simple: empieza-por-título > contiene-en-título > contiene-en-descripción.
+        tokens = tokenize_query(q)
+        if not tokens:
+            return filtradas  # solo stop-words -> sin filtro de texto
         scored = []
         for p in filtradas:
-            nt, nd = _norm(p.get("titulo", "")), _norm(p.get("descripcion", ""))
-            if nt.startswith(nq):
-                scored.append((0, p))
-            elif nq in nt:
-                scored.append((1, p))
-            elif nq in nd:
-                scored.append((2, p))
-        scored.sort(key=lambda t: t[0])
-        filtradas = [p for _, p in scored]
+            nt = _norm(p.get("titulo", ""))
+            nd = _norm(p.get("descripcion", ""))
+            nz = _norm(p.get("zona_nombre") or p.get("barrio_texto") or "")
+            ns = _norm(" ".join(p.get("servicios", []) or []))
+            ntipo = _norm(p.get("tipo_inmueble", "").replace("_", " "))
+            haystacks = (nt, nd, nz, ns, ntipo)
+            hits = 0
+            for tok in tokens:
+                ntok = normalize_token(tok)
+                canon = tipo_canonico_para_token(tok)
+                matched = any(ntok in h for h in haystacks)
+                if not matched and canon:
+                    if canon == "HABITACION":
+                        matched = p.get("tipo_inmueble", "").startswith("HABITACION")
+                    else:
+                        matched = p.get("tipo_inmueble") == canon
+                if matched:
+                    hits += 1
+            if hits > 0:
+                # (-hits, id) => mayoría primero, determinista.
+                scored.append((-hits, p.get("id", 0), p))
+        scored.sort(key=lambda t: (t[0], t[1]))
+        filtradas = [p for _, _, p in scored]
     return filtradas
 
 

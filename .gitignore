@@ -15,6 +15,16 @@ pgdata/
 # Uploads (Render ephemeral; solo se trackea .gitkeep para preservar la carpeta)
 backend/uploads/*
 !backend/uploads/.gitkeep
+# Capturas temporales de MCP/herramientas de prueba sueltas en raíz o tests
+# (no toca frontend/src/assets ni frontend/public, que sí se versionan)
+/*.png
+/*.jpg
+/*.jpeg
+/screenshot*.png
+backend/tests/*.png
+backend/tests/*.jpg
+frontend/src/tests/*.png
+frontend/src/tests/*.jpg
 # IDE
 .vscode/
 .idea/

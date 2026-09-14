@@ -28,6 +28,20 @@ export function isRetryableError(err) {
   return true
 }
 
+// Tarea 3 (v4): mensajes sencillos en español para usuarios no técnicos.
+// No reemplaza `detail` del backend: el interceptor lo adjunta como
+// `err.mensajeAmigable` sin romper lecturas existentes de err.response.
+export function mensajeAmigable(err) {
+  const status = err?.response?.status
+  if (status === 401) return 'Tu sesión ha expirado. Por favor, ingresa nuevamente.'
+  if (status === 413) return 'La imagen que intentas subir es muy pesada. El tamaño máximo permitido es 5 MB.'
+  if (status != null && status >= 500) return 'Tuvimos un problema técnico momentáneo. Ya estamos trabajando en ello.'
+  if (status == null) return 'Parece que perdiste la conexión a internet. Revisa tu señal e intenta de nuevo.'
+  const detail = err?.response?.data?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  return 'No se pudo completar la acción. Intenta de nuevo.'
+}
+
 // OLA4: peticiones abortadas vía AbortController (axios las rechaza con ERR_CANCELED).
 export function isCancelError(err) {
   return err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError'
@@ -109,11 +123,13 @@ api.interceptors.response.use(
     const cfg = err.config
     if (!cfg) {
       trackEnd()
+      err.mensajeAmigable = mensajeAmigable(err)
       throw err
     }
     const canRetry = (cfg.__retryCount ?? 0) < API_MAX_RETRIES && isRetryableError(err)
     if (!canRetry) {
       trackEnd()
+      err.mensajeAmigable = mensajeAmigable(err)
       throw err
     }
     const attempt = cfg.__retryCount ?? 0

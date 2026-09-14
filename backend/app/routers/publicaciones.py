@@ -95,14 +95,16 @@ MOCK_PUBS = [
 ]
 
 # --- Endpoints Sprint1 ---
-@router.get("", response_model=PaginatedPublicaciones, summary="HU-001 Buscar por sede + HU-002 Filtros combinables")
+@router.get("", response_model=PaginatedPublicaciones, summary="HU-001 Buscar por sede + HU-002 Filtros + búsqueda tokenizada + multiciudad")
 async def list_publicaciones(
-    campus_id: Optional[int] = Query(None, ge=1, le=1000, description="FK campus_universitarios.id - calcula Haversine y filtra publicaciones asociadas"),
+    campus_id: Optional[int] = Query(None, ge=1, le=1000, description="FK campus_universitarios.id - filtra por lugar cercano (POIs por categoría)"),
     precio_min: Optional[int] = Query(None, ge=0, le=10_000_000, description="COP mínimo"),
     precio_max: Optional[int] = Query(None, ge=0, le=10_000_000, description="COP máximo"),
     tipo: Optional[str] = Query(None, pattern="^(HABITACION_FAMILIAR|HABITACION_INDEPENDIENTE|APARTAESTUDIO|COMPARTIDO)$"),
     servicios: Optional[str] = Query(None, max_length=50, description="IDs coma separados, ej: 1,3"),
-    q: Optional[str] = Query(None, min_length=2, max_length=100, description="Texto libre: FTS español + fallback trigramas (Oleada 2)"),
+    q: Optional[str] = Query(None, min_length=2, max_length=100, description="Texto libre tokenizado: stop-words ES fuera, OR parcial + relevancia (Fase 2)"),
+    ciudad_id: Optional[int] = Query(None, ge=1, le=1000000, description="Fase 4 multiciudad: filtra por Ciudad.id vía zona"),
+    ciudad_slug: Optional[str] = Query(None, min_length=2, max_length=100, pattern="^[a-z0-9-]+$", description="Fase 4 multiciudad: slug de ciudad, ej: popayan"),
     page: int = Query(1, ge=1, le=1000, description="Página 1-indexed"),
     size: int = Query(9, ge=1, le=50, description="Tamaño página"),
     db: AsyncSession = Depends(get_session),
@@ -125,8 +127,13 @@ async def list_publicaciones(
 
     # Intento DB real con fallback mock solo en dev (B0-2 fail-closed 503 en prod)
     try:
+        try:
+            ciudad_id_res = await repo.resolver_ciudad_id(db, ciudad_id, ciudad_slug)
+        except ValueError as ve:
+            raise HTTPException(status_code=404, detail=str(ve))
         total, pubs, rep_map, user_map, dist_map, size_norm = await repo.query_lista(
-            db, campus_id, precio_min, precio_max, tipo, servicios_ids, page, size, q
+            db, campus_id, precio_min, precio_max, tipo, servicios_ids, page, size, q,
+            ciudad_id_res, None,
         )
         items = view.cards_for_page(pubs, rep_map, user_map, dist_map, campus_id)
         return build_paginated(items, total, page, size_norm)
@@ -141,8 +148,11 @@ async def list_publicaciones(
             pass
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        print(f"[Sprint1 mock fallback] DB no disponible: {e!r}")
-        filtradas = view.filter_mock_pubs(MOCK_PUBS, campus_id, precio_min, precio_max, tipo, servicios_ids, q)
+        logger.warning(f"[Sprint1 mock fallback] DB no disponible: {e!r}")
+        filtradas = view.filter_mock_pubs(
+            MOCK_PUBS, campus_id, precio_min, precio_max, tipo, servicios_ids, q,
+            ciudad_id=ciudad_id, ciudad_slug=ciudad_slug,
+        )
         items = [view.mock_to_out(p, campus_id) for p in filtradas]
         total = len(items)
         offset, size_norm = paginate_params(page, size)
@@ -151,7 +161,7 @@ async def list_publicaciones(
 
 @router.get("/mias", response_model=PaginatedPublicaciones, summary="UX Mis publicaciones del dueño (todos los estados, paginado)")
 async def mis_publicaciones(
-    estado: Optional[str] = Query(None, pattern="^(ACTIVO|PENDIENTE|PAUSADO|RECHAZADO|ARRENDADO|EXPIRADO|DESACTIVADO)$", description="Filtra por estado (default todos)"),
+    estado: Optional[str] = Query(None, pattern="^(ACTIVO|PENDIENTE|PAUSADO|PAUSADO_POR_REPORTE|REVISION_REQUERIDA|RECHAZADO|ARRENDADO|EXPIRADO|DESACTIVADO)$", description="Filtra por estado (default todos)"),
     page: int = Query(1, ge=1, le=1000, description="Página 1-indexed"),
     size: int = Query(12, ge=1, le=50, description="Tamaño página"),
     db: AsyncSession = Depends(get_session),
@@ -260,7 +270,7 @@ async def get_publicacion(
             pass
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        print(f"[DB fallback] get_publicacion {pub_id}: {e!r}")
+        logger.warning(f"[DB fallback] get_publicacion {pub_id}: {e!r}")
 
     # Mock fallback solo dev (B0-2). B0-6: no-ACTIVO privado también en mock.
     if not _mock_enabled():
@@ -437,10 +447,13 @@ async def crear_publicacion(
 ):
     """
     HU-005 Criterios:
-      1. Título, tipo, canon, zona, servicios, sede ref y fotos obligatorios (validado por PublicacionCreate)
+      1. Título, tipo, canon, zona, servicios y fotos obligatorios (validado por PublicacionCreate)
       2. ≥3 fotos (Sprint1 adopta 3 para índice, aunque plantilla HU-005 decía 2)
       3. Estado inicial PENDIENTE (no ACTIVO directo; requiere moderación HU-010 Sprint2)
 
+    Tarea 3 (v7): campus_ids OPCIONAL — con coords, el trigger 004 autovincula
+    todos los lugares (Tulcán, Torobajo, Centro, Salud…) con Haversine; sin
+    coords el aviso vive en el listado general hasta ubicarse en el mapa.
     Sprint1: si no hay DB, retorna mock PENDIENTE + calcula índice inicial (no persiste) para demo frontend.
     Con DB: persiste publicación + publicacion_campus (con Haversine) + imagenes + calcula índice.
     B0-4: FK estricta zona/campus/servicios -> 404 con rollback. B0-5: dist NULL si sin coords.
@@ -474,12 +487,13 @@ async def crear_publicacion(
         logger.error(f"[DB crear] falló: {e!r}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        # Mock fallback Sprint1 solo dev: no hay PG, simular creación (usa id 10000+ para no colisionar con DB ids 1-6)
+        # Mock fallback Sprint1 solo dev: no hay PG, simular creación (usa id 10000+ para no colisionar con ids del seed)
         mock_id = max(max(p["id"] for p in MOCK_PUBS), 10000) + 1
         MOCK_PUBS.append({
             "id": mock_id, "titulo": payload.titulo, "descripcion": payload.descripcion,
             "tipo_inmueble": payload.tipo_inmueble, "canon_mensual": float(payload.canon_mensual),
             "deposito_requerido": float(payload.deposito_requerido), "zona_barrio_id": payload.zona_barrio_id,
+            "barrio_texto": payload.barrio_texto,
             "direccion_referencial": payload.direccion_referencial, "reglas_convivencia": payload.reglas_convivencia,
             "estado": "PENDIENTE", "fecha_renovacion": datetime.now(timezone.utc),
             "fecha_expiracion": datetime.now(timezone.utc) + timedelta(days=30),

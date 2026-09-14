@@ -42,13 +42,15 @@ describe('F3 UploadFotos', () => {
     expect(api.post).not.toHaveBeenCalled()
   })
 
-  it('rechaza no-imagen y >5MB sin llamar al backend', async () => {
+  it('rechaza formato inválido y >5MB sin llamar al backend', async () => {
     render(<UploadFotos token="t" onUrls={vi.fn()} />)
     const input = document.querySelector('input[type="file"]')
     pickFiles(input, [new File(['x'], 'doc.txt', { type: 'text/plain' })])
-    expect(await screen.findByText(/no es imagen/)).toBeInTheDocument()
+    expect(await screen.findByText(/no es un formato válido.*JPG, PNG o WEBP/)).toBeInTheDocument()
+    pickFiles(input, [new File(['x'], 'anim.gif', { type: 'image/gif' })])
+    expect(await screen.findByText(/no es un formato válido/)).toBeInTheDocument()
     pickFiles(input, [img('big.png', 6 * 1024 * 1024)])
-    expect(await screen.findByText(/excede 5MB/)).toBeInTheDocument()
+    expect(await screen.findByText(/muy pesada.*máximo permitido es 5 MB/)).toBeInTheDocument()
     expect(api.post).not.toHaveBeenCalled()
   })
 
@@ -63,7 +65,8 @@ describe('F3 UploadFotos', () => {
     render(<UploadFotos token="tok-arr" onUrls={onUrls} />)
     const input = document.querySelector('input[type="file"]')
     pickFiles(input, [img('a1.png'), img('a2.png'), img('a3.png')])
-    fireEvent.click(screen.getByRole('button', { name: /Subir 3 fotos/ }))
+    // validateAndAdd es async (compresión Canvas): espera el botón habilitado.
+    fireEvent.click(await screen.findByRole('button', { name: /Subir 3 fotos/ }))
     await waitFor(() =>
       expect(api.post).toHaveBeenCalledWith(
         '/api/publicaciones/upload',

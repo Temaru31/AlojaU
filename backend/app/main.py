@@ -12,7 +12,7 @@ import logging
 import os
 import uuid
 from app.core.config import settings
-from app.routers import publicaciones, campus, auth, uploads, reportes, admin
+from app.routers import publicaciones, campus, auth, uploads, reportes, admin, ciudades, admin_automation, zonas
 
 logger = logging.getLogger("alojau")
 
@@ -124,7 +124,10 @@ async def custom_docs():
         swagger_favicon_url="/static/favicon.svg",
     )
 
-# Routers Sprint1 + T1 reportes + RBAC admin
+# Routers Sprint1 + T1 reportes + RBAC admin + multiciudad + automation + zonas
+app.include_router(ciudades.router)
+app.include_router(zonas.router)
+app.include_router(admin_automation.router)
 app.include_router(campus.router)
 app.include_router(publicaciones.router)
 app.include_router(auth.router)
