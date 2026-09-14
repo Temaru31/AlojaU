@@ -99,3 +99,37 @@ def _t5_test_hermetico():
     _pg_disponible()
     yield
     # Sin teardown por test: el setup del siguiente + el cierre de sesión restauran.
+
+
+def _uploads_dir() -> str:
+    import os
+
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "uploads"))
+
+
+@pytest.fixture(scope="function", autouse=True)
+def _uploads_limpio():
+    """Tarea 1 (v4): ningún test deja basura en backend/uploads/.
+
+    Foto del directorio antes/después; borra solo lo creado por el test
+    (respeta .gitkeep y archivos preexistentes).
+    """
+    import os
+
+    d = _uploads_dir()
+    try:
+        antes = set(os.listdir(d))
+    except FileNotFoundError:
+        antes = set()
+    yield
+    try:
+        despues = set(os.listdir(d))
+    except FileNotFoundError:
+        return
+    for name in despues - antes:
+        if name == ".gitkeep":
+            continue
+        try:
+            os.remove(os.path.join(d, name))
+        except FileNotFoundError:
+            pass

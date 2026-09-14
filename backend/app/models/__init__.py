@@ -96,7 +96,8 @@ class Publicacion(Base):
     __tablename__ = "publicaciones"
     __table_args__ = (
         CheckConstraint("tipo_inmueble IN ('HABITACION_FAMILIAR','HABITACION_INDEPENDIENTE','APARTAESTUDIO','COMPARTIDO')", name="chk_tipo"),
-        CheckConstraint("estado IN ('PENDIENTE','ACTIVO','PAUSADO','ARRENDADO','EXPIRADO','RECHAZADO','DESACTIVADO')", name="chk_estado"),
+        # Fase 5 (aditivo): + PAUSADO_POR_REPORTE + REVISION_REQUERIDA. Los 7 previos siguen válidos.
+        CheckConstraint("estado IN ('PENDIENTE','ACTIVO','PAUSADO','ARRENDADO','EXPIRADO','RECHAZADO','DESACTIVADO','PAUSADO_POR_REPORTE','REVISION_REQUERIDA')", name="chk_estado"),
         CheckConstraint("canon_mensual > 0", name="chk_canon"),
         CheckConstraint("deposito_requerido >= 0", name="chk_deposito"),
         CheckConstraint("indice_confianza BETWEEN 0 AND 100", name="chk_confianza"),
@@ -112,7 +113,9 @@ class Publicacion(Base):
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
-    zona_barrio_id: Mapped[int] = mapped_column(ForeignKey("zonas_barrios.id", ondelete="RESTRICT"), nullable=False)
+    # Tarea 3 (v10): zona opcional — barrio personalizado vive en barrio_texto.
+    zona_barrio_id: Mapped[int | None] = mapped_column(ForeignKey("zonas_barrios.id", ondelete="RESTRICT"), nullable=True)
+    barrio_texto: Mapped[str | None] = mapped_column(String(120), nullable=True)
     titulo: Mapped[str] = mapped_column(String(150), nullable=False)
     descripcion: Mapped[str] = mapped_column(Text, nullable=False)
     tipo_inmueble: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -131,7 +134,7 @@ class Publicacion(Base):
     fecha_expiracion: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sa_text("NOW() + INTERVAL '30 days'"))
 
     # Relationships para evitar N+1 y permitir selectinload (router espera .servicios y .imagenes)
-    zona: Mapped["ZonaBarrio"] = relationship(lazy="joined")
+    zona: Mapped["ZonaBarrio | None"] = relationship(lazy="joined")
     usuario: Mapped["Usuario"] = relationship(lazy="joined")
     servicios: Mapped[list["ServicioCatalogo"]] = relationship(secondary="publicacion_servicios", lazy="selectin")
     imagenes: Mapped[list["ImagenPublicacion"]] = relationship(back_populates="publicacion", cascade="all, delete-orphan", lazy="selectin")
@@ -225,3 +228,22 @@ class PublicacionesAudit(Base):
     evento: Mapped[str] = mapped_column(String(20), nullable=False)
     detalle: Mapped[str | None] = mapped_column(Text, nullable=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------------------------------------------------------------------------
+# Fase 5: ajustes automatizados por UI (tabla system_settings, borrador).
+# La máquina de estados extendida (PAUSADO_POR_REPORTE, REVISION_REQUERIDA)
+# llega vía migración 005; el CHECK del modelo se amplía sin romper los
+# 7 estados previos (aditivo). Ver docs/ADMIN_AUTOMATION_SPECS.md.
+# ---------------------------------------------------------------------------
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+    __table_args__ = (
+        UniqueConstraint("clave", name="uq_system_settings_clave"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    clave: Mapped[str] = mapped_column(String(80), nullable=False)
+    valor: Mapped[str] = mapped_column(Text, nullable=False)
+    tipo: Mapped[str] = mapped_column(String(20), nullable=False, default="int")
+    descripcion: Mapped[str | None] = mapped_column(Text, nullable=True)
+    actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

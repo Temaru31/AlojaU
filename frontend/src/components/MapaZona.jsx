@@ -3,6 +3,7 @@ import { MapContainer, TileLayer, Circle, Marker, Popup, Polyline, useMap } from
 import 'leaflet/dist/leaflet.css'
 import L from 'leaflet'
 import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
+import { obtenerRutaPie } from '../utils/osrm'
 // Fix icon
 // OLA4: iconos servidos en local (public/leaflet/) en vez de CDN unpkg (SPOF + integridad).
 delete L.Icon.Default.prototype._getIconUrl
@@ -62,11 +63,13 @@ function Vista({ centro }) {
 }
 
 /**
- * MapaZona — tres casos (004 POIs):
- * - A (aviso + lugar/campus): 2 pines (casa + referencia) + línea punteada +
- *   fitBounds + "Cómo llegar". El `lugar` (dinámico del Detalle) precede a `campus`.
- * - B (aviso sin referencia): solo pin de la casa, zoom 16.
+ * MapaZona — modos condicionales (Tarea 1, v10):
+ * - Trayectoria (aviso + `lugar` explícito del flujo ?campus_id=): 2 pines
+ *   (casa + referencia) + círculo + línea punteada + fitBounds + "Cómo llegar".
+ * - Inmueble único (aviso SIN lugar): SOLO el pin de la vivienda, sin pin
+ *   secundario, sin línea, sin círculo y sin leyenda de distancia a campus.
  * - Legacy (sin aviso): círculo + pin del campus, texto referencial.
+ * `campus` es solo fallback legacy; `lugar` (dinámico del Detalle) manda.
  */
 export default function MapaZona({
   zona = 'No informado',
@@ -81,9 +84,12 @@ export default function MapaZona({
   const [modoViaje, setModoViaje] = useState('walking')
   const [origenGps, setOrigenGps] = useState(null)
   const [buscandoGps, setBuscandoGps] = useState(false)
+  const [rutaReal, setRutaReal] = useState(null)
   const hasDist = dist_m != null && !Number.isNaN(Number(dist_m))
   const tiempo = hasDist ? formatTiempoCaminando(dist_m) : null
   const tieneAviso = coordsValidas(aviso)
+  // Tarea 1 (v10): la trayectoria exige lugar EXPLÍCITO (no el fallback legacy).
+  const modoTrayectoria = tieneAviso && coordsValidas(lugar)
   // 004: la referencia dinámica manda; `campus` queda como fallback legacy.
   const ref = coordsValidas(lugar) ? lugar : (coordsValidas(campus) ? campus : null)
   const nombreRef = (lugar && lugar.nombre) || 'Campus'
@@ -93,7 +99,7 @@ export default function MapaZona({
   const destino = tieneAviso
     ? `${aviso.lat},${aviso.lng}`
     : (direccion ? `${direccion}, Popayán, Cauca` : null)
-  const origen = origenGps || (ref ? `${ref.lat},${ref.lng}` : null)
+  const origen = origenGps || (modoTrayectoria && ref ? `${ref.lat},${ref.lng}` : null)
   const gmapsUrl = destino
     ? buildGoogleMapsDirUrl({ origin: origen, destination: destino, travelmode: modoViaje })
     : null
@@ -104,6 +110,22 @@ export default function MapaZona({
     ? `https://www.openstreetmap.org/?mlat=${aviso.lat}&mlon=${aviso.lng}#map=17/${aviso.lat}/${aviso.lng}`
     : null
   const modoActual = MODOS_VIAJE.find(m => m.id === modoViaje) || MODOS_VIAJE[0]
+
+  // Tarea 2 (v10): ruta peatonal real OSRM en trayectoria (progresivo: con
+  // timeout y fallback a la estimación por fórmula si OSRM no responde).
+  useEffect(() => {
+    if (!modoTrayectoria || !coordsValidas(aviso) || !coordsValidas(lugar)) {
+      setRutaReal(null)
+      return
+    }
+    let vivo = true
+    const ctrl = new AbortController()
+    obtenerRutaPie(
+      { origen: { lat: lugar.lat, lng: lugar.lng }, destino: { lat: aviso.lat, lng: aviso.lng } },
+      { signal: ctrl.signal },
+    ).then((r) => { if (vivo) setRutaReal(r) })
+    return () => { vivo = false; ctrl.abort() }
+  }, [modoTrayectoria, aviso?.lat, aviso?.lng, lugar?.lat, lugar?.lng])
 
   // "Cómo llegar desde mi ubicación": geolocalización SOLO a petición del
   // usuario (evita el prompt de permiso al abrir el Detalle). Si el navegador
@@ -133,7 +155,7 @@ export default function MapaZona({
       <div className="relative z-0 isolate rounded-xl overflow-hidden border border-neutral-200">
         <MapContainer
           center={centro}
-          zoom={tieneAviso ? (ref ? 15 : 16) : 14}
+          zoom={tieneAviso ? (modoTrayectoria ? 15 : 16) : 14}
           style={{ height: '300px', width: '100%' }}
           scrollWheelZoom={false}
         >
@@ -142,28 +164,30 @@ export default function MapaZona({
             attribution="&copy; OpenStreetMap"
           />
           <Vista centro={centro} />
-          {tieneAviso && ref && (
+          {modoTrayectoria && (
             <Encuadre puntos={[[Number(aviso.lat), Number(aviso.lng)], [Number(ref.lat), Number(ref.lng)]]} />
           )}
           {tieneAviso ? (
             <>
-              <Circle
-                center={centro}
-                radius={150}
-                pathOptions={{ color: '#14213D', fillColor: '#14213D', fillOpacity: 0.12, weight: 1 }}
-              />
+              {modoTrayectoria && (
+                <Circle
+                  center={centro}
+                  radius={150}
+                  pathOptions={{ color: '#14213D', fillColor: '#14213D', fillOpacity: 0.12, weight: 1 }}
+                />
+              )}
               <Marker position={centro}>
                 <Popup>
                   <span className="text-xs font-medium">{titulo || 'Inmueble'} — ubicación aproximada</span>
                   <br />
-                  {hasDist ? (
+                  {modoTrayectoria && hasDist ? (
                     <span className="text-xs text-neutral-500">{formatDistancia(dist_m)}{tiempo ? ` • ${tiempo} del campus` : ''}</span>
                   ) : (
                     <span className="text-xs text-neutral-500">Zona: {zona}</span>
                   )}
                 </Popup>
               </Marker>
-              {ref && (
+              {modoTrayectoria && ref && (
                 <>
                   <Marker position={[Number(ref.lat), Number(ref.lng)]}>
                     <Popup><span className="text-xs font-medium">{nombreRef}</span></Popup>
@@ -201,8 +225,17 @@ export default function MapaZona({
       </div>
       {/* UX: texto limpio para el estudiante (sin jerga "Haversine/geodésica") */}
       <p className="text-xs text-neutral-400 mt-2">
-        {tieneAviso ? (
-          <>Ubicación aproximada (radio 150 m, no es la dirección exacta){hasDist ? <> · {tiempo ? `${tiempo} del campus` : `${formatDistancia(dist_m)} del campus`}</> : null}</>
+        {modoTrayectoria ? (
+          <>
+            Ubicación aproximada (radio 150 m, no es la dirección exacta)
+            {rutaReal ? (
+              <span aria-live="polite"> · 🚶 ~{rutaReal.mins} min por ruta</span>
+            ) : hasDist ? (
+              <> · {tiempo ? `${tiempo} del campus` : `${formatDistancia(dist_m)} del campus`}</>
+            ) : null}
+          </>
+        ) : tieneAviso ? (
+          <>Ubicación de la vivienda{zona && zona !== 'No informado' ? ` · ${zona}` : ''}</>
         ) : hasDist ? (
           <>Zona referencial: {zona} · {tiempo ? `${tiempo} del campus` : `${formatDistancia(dist_m)} del campus`}</>
         ) : (

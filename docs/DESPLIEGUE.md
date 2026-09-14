@@ -57,9 +57,24 @@ GitHub Temaru31/AlojaU (main)
 2. Dentro del proyecto → `Settings (engranaje) → Database → Connection string → Session pooler → Copy`. **No usar `Direct connection`**. Formato `postgresql://postgres.xxx:[PASSWORD]@aws-0-us-east-2.pooler.supabase.com:5432/postgres`.
 3. Servirá para Render como `DATABASE_URL` (luego lo convertimos a `postgresql+asyncpg://...` con `ssl=require` — el backend lo hace solo si falta).
 4. `SQL Editor → New query` → abre local `backend/db/schema.sql:1` (VS Code → `backend/db/schema.sql` → `Ctrl+A/C`) → pega → `Run` → `Success` (11 tablas + `haversine_m`).
-5. `New query` → pega `backend/db/seed.sql:1` → `Run` → `Success`. Verifica `Table Editor → publicaciones` → 6 filas `ACTIVO` (`SELECT count(*) → 6`).
+5. `New query` → pega `backend/db/seed.sql:1` → `Run` → `Success`. Verifica `Table Editor → publicaciones` → 16 filas (13 `ACTIVO` + 3 `PAUSADO_POR_REPORTE`).
 
 > **Seguridad:** no pegues `DATABASE_URL` en chat público/GitHub. Solo en Render env var. Borra nota temporal tras pegarla.
+
+### 3b) Migraciones en Supabase al fusionar a `main` (v8, 2 min, MANUAL)
+
+**Por qué manual:** Render y Vercel sí se actualizan solos con cada push a `main` (`Auto-Deploy: Yes`), pero **Supabase no ejecuta migraciones automáticamente** (el Dockerfile solo levanta `uvicorn`, sin `alembic upgrade`). Cada cambio de esquema de una iteración debe pegarse una vez en el SQL Editor.
+
+**Comando (tras cada merge a `main` con cambios de BD):**
+1. `Supabase → tu proyecto → SQL Editor → New query`.
+2. Abre local `backend/db/migrations/005_fix_estado_and_campus.sql` → `Ctrl+A/C` → pega → `Run` → `Success`.
+3. Verifica con el bloque de verificación al final del archivo (debe quedar solo `chk_estado`, 3 índices, 3 filas en `system_settings`).
+
+**Reglas de sincronización:**
+- **Código (Render/Vercel): automático** al hacer push a `main`. Nada que hacer.
+- **Esquema (Supabase): manual**, un archivo por iteración en `backend/db/migrations/` (idempotentes: se pueden re-ejecutar sin daño).
+- **Datos de demo (`seed.sql` / 16 pubs): SOLO local/dev.** Nunca pegues `seed.sql` en Supabase prod: hace `TRUNCATE` y borraría los avisos reales de usuarios. El script `backend/scripts/seed_all.py` se niega a correr contra `supabase.co` salvo `ALOJAU_SEED_CONFIRM=yes`.
+- **Datos reales:** se crean solos con el uso (`/publicar`, reportes, moderación) y aparecen al instante en frontend; no requieren ningún paso.
 
 ---
 

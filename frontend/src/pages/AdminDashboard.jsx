@@ -24,8 +24,157 @@ function Stat({ label, value, tone }) {
   )
 }
 
+// Tarea 2: claves internas de PostgreSQL -> etiquetas de dominio.
+const SETTING_LABELS = {
+  dias_vigencia_publicacion: {
+    titulo: 'Días de vigencia por aviso',
+    leyenda: 'Duración estándar en días antes de que una publicación pase a expirada',
+  },
+  auto_aprobar_arrendadores_verificados: {
+    titulo: 'Aprobación automática a verificados',
+    leyenda: 'Permite que usuarios con teléfono verificado publiquen sin pasar por cola de moderación',
+  },
+  max_reportes_para_pausa_automatica: {
+    titulo: 'Límite de reportes para pausa',
+    leyenda: 'Número de denuncias pendientes necesarias para suspender temporalmente un aviso',
+  },
+}
+
+function etiquetaSetting(s) {
+  const m = SETTING_LABELS[s.clave]
+  if (m) return m
+  const titulo = s.clave.replace(/_/g, ' ')
+  return { titulo: titulo.charAt(0).toUpperCase() + titulo.slice(1), leyenda: s.descripcion || '' }
+}
+
+// Tarea 3: gestor visual de system_settings (GET/PATCH /api/admin/automation/settings).
+function AjustesSistema({ token }) {
+  const [settings, setSettings] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [ok, setOk] = useState('')
+  const [saving, setSaving] = useState(null)
+  const [draft, setDraft] = useState({})
+
+  const cargar = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const r = await api.get('/api/admin/automation/settings', authHead(token))
+      setSettings(r.data)
+      const d = {}
+      for (const s of r.data) d[s.clave] = s.valor
+      setDraft(d)
+    } catch (err) {
+      setError(err?.response?.status === 401 || err?.response?.status === 403
+        ? 'Sin permiso de administrador.'
+        : 'No se pudieron cargar los ajustes.')
+    } finally {
+      setLoading(false)
+    }
+  }, [token])
+
+  useEffect(() => { if (token) cargar() }, [cargar, token])
+
+  const guardar = async (clave) => {
+    setSaving(clave)
+    setError('')
+    setOk('')
+    try {
+      const r = await api.patch(`/api/admin/automation/settings/${clave}`, { valor: String(draft[clave] ?? '') }, authHead(token))
+      setSettings((prev) => (prev || []).map((s) => (s.clave === clave ? r.data : s)))
+      setDraft((d) => ({ ...d, [clave]: r.data.valor }))
+      setOk(`"${etiquetaSetting(r.data).titulo}" guardado.`)
+    } catch (err) {
+      setError(err?.response?.data?.detail || `No se pudo guardar "${etiquetaSetting({ clave }).titulo}".`)
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  if (loading) {
+    return <div className="card p-8 animate-pulse space-y-3"><div className="h-5 bg-neutral-150 rounded w-1/3" /><div className="h-10 bg-neutral-100 rounded" /><div className="h-10 bg-neutral-100 rounded" /></div>
+  }
+
+  return (
+    <div className="space-y-3">
+      {error && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2" role="alert">{error}</p>}
+      {ok && <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2" role="status">{ok}</p>}
+      {(settings || []).map((s) => {
+        const meta = etiquetaSetting(s)
+        const modificado = String(draft[s.clave] ?? '') !== String(s.valor)
+        const guardando = saving === s.clave
+        return (
+        <article key={s.clave} className="card p-4">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-navy-800">{meta.titulo}</p>
+              {meta.leyenda && <p className="text-[11px] text-neutral-400 mt-0.5">{meta.leyenda}</p>}
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {s.tipo === 'bool' ? (
+                <span className="inline-flex items-center gap-2">
+                  <span aria-hidden="true" className={`text-[11px] font-bold ${String(draft[s.clave]) === 'true' ? 'text-emerald-700' : 'text-neutral-400'}`}>
+                    {String(draft[s.clave]) === 'true' ? 'ON' : 'OFF'}
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={String(draft[s.clave]) === 'true'}
+                    aria-label={meta.titulo}
+                    onClick={() => setDraft((d) => ({ ...d, [s.clave]: String(d[s.clave]) === 'true' ? 'false' : 'true' }))}
+                    className={`relative w-11 h-7 rounded-full transition ${String(draft[s.clave]) === 'true' ? 'bg-emerald-500' : 'bg-neutral-300'}`}
+                  >
+                    <span aria-hidden="true" className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-all ${String(draft[s.clave]) === 'true' ? 'left-[22px]' : 'left-1'}`} />
+                  </button>
+                </span>
+              ) : (
+                <input
+                  type="number"
+                  aria-label={meta.titulo}
+                  value={draft[s.clave] ?? ''}
+                  onChange={(e) => setDraft((d) => ({ ...d, [s.clave]: e.target.value }))}
+                  className="input-field w-28"
+                  min={s.clave === 'dias_vigencia_publicacion' ? 1 : 1}
+                  max={s.clave === 'dias_vigencia_publicacion' ? 365 : 20}
+                />
+              )}
+              <button
+                type="button"
+                onClick={() => guardar(s.clave)}
+                disabled={guardando || !modificado}
+                aria-label={`Guardar ${meta.titulo}`}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition ${modificado
+                  ? 'bg-navy-800 text-white shadow hover:bg-navy-900'
+                  : 'bg-neutral-100 text-neutral-400 cursor-not-allowed'
+                  } disabled:cursor-wait`}
+              >
+                {guardando && (
+                  <svg aria-hidden="true" className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-90" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                  </svg>
+                )}
+                {guardando ? 'Guardando…' : 'Guardar'}
+              </button>
+            </div>
+          </div>
+        </article>
+        )
+      })}
+      {settings && settings.length === 0 && (
+        <div className="card p-8 text-center">
+          <p className="text-sm font-medium text-neutral-700">Sin ajustes configurados</p>
+          <p className="text-xs text-neutral-400">Aplica la migración 005_admin_automation.</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function AdminDashboard() {
   const { token } = useAuth()
+  const [tab, setTab] = useState('moderacion')
   const [metricas, setMetricas] = useState(null)
   const [pendientes, setPendientes] = useState([])
   const [totalPen, setTotalPen] = useState(0)
@@ -94,11 +243,34 @@ export default function AdminDashboard() {
       <h1 className="font-display text-xl md:text-2xl font-bold text-navy-900 mb-1">
         🛡️ Panel Administrador
       </h1>
-      <p className="text-xs text-neutral-400 mb-5">Métricas, moderación y control maestro de avisos.</p>
+      <p className="text-xs text-neutral-400 mb-5">Métricas, moderación, avisos y ajustes del sistema.</p>
 
       {error && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-4" role="alert">{error}</p>}
 
-      {loading ? (
+      <div className="flex gap-1 border-b border-neutral-150 mb-5" role="tablist" aria-label="Secciones del panel">
+        {[
+          { id: 'moderacion', label: '🛡️ Moderación' },
+          { id: 'ajustes', label: '⚙️ Ajustes del Sistema' },
+        ].map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.id}
+            onClick={() => setTab(t.id)}
+            className={`px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 -mb-px transition ${tab === t.id
+              ? 'border-gold-400 text-navy-900'
+              : 'border-transparent text-neutral-400 hover:text-navy-700'
+              }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'ajustes' ? (
+        <AjustesSistema token={token} />
+      ) : loading ? (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 animate-pulse">
           {[1, 2, 3, 4].map(i => <div key={i} className="h-20 bg-neutral-150 rounded-xl" />)}
         </div>

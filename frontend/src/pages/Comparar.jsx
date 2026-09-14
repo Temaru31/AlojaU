@@ -3,9 +3,23 @@ import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import { useComparar } from '../contexts/CompararContext'
 import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
+import SmartImage from '../components/SmartImage'
+import BadgeConfianza from '../components/BadgeConfianza'
 
 function NoInformado() {
   return <span className="text-neutral-400 italic text-xs">No informado</span>
+}
+
+// Tarea 1 (v8): ENUM técnico -> texto legible (incluye APARTAMENTO legacy).
+export function humanizarTipoComparar(tipo) {
+  const map = {
+    HABITACION_FAMILIAR: 'Habitación familiar',
+    HABITACION_INDEPENDIENTE: 'Habitación independiente',
+    APARTAESTUDIO: 'Apartaestudio',
+    COMPARTIDO: 'Compartido',
+    APARTAMENTO: 'Apartamento',
+  }
+  return map[tipo] || tipo || null
 }
 
 export default function Comparar() {
@@ -33,7 +47,7 @@ export default function Comparar() {
         return `$${Number(dep).toLocaleString('es-CO')}`
       }
     },
-    { label: 'Tipo', key: 'tipo', render: (p) => p.tipo_inmueble || <NoInformado /> },
+    { label: 'Tipo', key: 'tipo', render: (p) => humanizarTipoComparar(p.tipo_inmueble) || <NoInformado /> },
     { label: 'Zona', key: 'zona', render: (p) => p.zona_nombre || p.zona || <NoInformado /> },
     {
       label: 'Distancia al campus', key: 'dist', render: (p) => {
@@ -42,11 +56,18 @@ export default function Comparar() {
       }
     },
     { label: 'Tiempo a pie', key: 'tiempo', render: (p) => formatTiempoCaminando(p.distancia_geodesica_m ?? p.dist_m) || <NoInformado /> },
-    { label: 'Índice confianza', key: 'indice', render: (p) => p.indice_confianza != null ? `${p.indice_confianza}/100` : <NoInformado /> },
+    { label: 'Índice confianza', key: 'indice', render: (p) => p.indice_confianza != null ? <BadgeConfianza indice={p.indice_confianza} /> : <NoInformado /> },
     { label: 'Servicios', key: 'servicios', render: (p) => p.servicios?.length ? p.servicios.join(' · ') : <NoInformado /> },
     { label: 'Fotos', key: 'fotos', render: (p) => `${Array.isArray(p.fotos) ? p.fotos.length : (p.num_fotos ?? 0)} fotos` },
     { label: 'Estado', key: 'estado', render: (p) => p.estado === 'PENDIENTE' ? 'En revisión' : p.estado === 'ACTIVO' ? 'Publicada' : (p.estado || <NoInformado />) },
     { label: 'Dirección ref.', key: 'direccion', render: (p) => p.direccion_referencial || <NoInformado /> },
+    {
+      label: 'Anuncio', key: 'cta', render: (p) => (
+        <Link to={`/publicacion/${p.id}`} className="btn-accent !py-1.5 !px-3 !text-xs inline-flex">
+          Ver anuncio
+        </Link>
+      ),
+    },
   ]
 
   return (
@@ -106,7 +127,15 @@ export default function Comparar() {
                       <th className="text-left px-4 py-3 text-xs font-medium text-navy-700 sticky left-0 z-10 bg-navy-50">Característica</th>
                       {pubs.map(p => (
                         <th key={p.id} className="text-left px-4 py-3 min-w-[180px] max-w-[260px]">
-                          <div className="flex flex-col gap-1">
+                          <div className="flex flex-col gap-1.5">
+                            {/* Tarea 1 (v8): miniatura principal + título en la cabecera */}
+                            {Array.isArray(p.fotos) && p.fotos[0] ? (
+                              <SmartImage src={p.fotos[0]} alt={`Foto principal de ${p.titulo || `aviso ${p.id}`}`} className="w-full h-20 object-cover rounded-lg" />
+                            ) : (
+                              <div className="w-full h-20 rounded-lg bg-neutral-100 flex items-center justify-center" role="img" aria-label="Sin foto">
+                                <span aria-hidden="true" className="text-neutral-300 text-xl">⌂</span>
+                              </div>
+                            )}
                             <Link to={`/publicacion/${p.id}`} className="text-navy-600 hover:text-navy-800 font-semibold line-clamp-2 break-words text-xs">{p.titulo || 'No informado'}</Link>
                             <button type="button" onClick={() => toggle(p.id)} className="text-[11px] text-red-500 hover:text-red-600 hover:underline text-left">Quitar</button>
                           </div>

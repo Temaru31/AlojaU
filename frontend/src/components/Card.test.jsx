@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import Card from './Card'
 
 afterEach(()=> cleanup())
@@ -73,11 +73,18 @@ describe('Card - HU-001/003 y overflow', ()=>{
     expect(screen.queryByText(/\$0/)).not.toBeInTheDocument()
   })
 
-  it('badge confianza color según índice', ()=>{
-    const { rerender } = render(<Card pub={{...basePub, indice_confianza: 85}} />)
-    expect(screen.getByText(/85.*Alto/)).toBeInTheDocument()
-    rerender(<Card pub={{...basePub, indice_confianza: 60}} />)
-    expect(screen.getByText(/60.*Medio/)).toBeInTheDocument()
+  it('badge minimalista: punto + número con tooltip de detalle', ()=>{
+    const { rerender } = render(<Card pub={{...basePub, indice_confianza: 100}} />)
+    const pill = screen.getByLabelText('Confianza Alta: 100 de 100')
+    expect(pill).toHaveTextContent('🟢')
+    expect(pill).toHaveTextContent('100')
+    expect(pill).toHaveAttribute('title', 'Confianza Alta: 100/100')
+    rerender(<Card pub={{...basePub, indice_confianza: 65}} />)
+    expect(screen.getByLabelText('Confianza Media: 65 de 100')).toHaveTextContent('🟡')
+    rerender(<Card pub={{...basePub, indice_confianza: 40}} />)
+    expect(screen.getByLabelText('Confianza Básica: 40 de 100')).toHaveTextContent('🔴')
+    // Sin texto extenso sobre la foto
+    expect(screen.queryByText(/100 — Alto/)).not.toBeInTheDocument()
   })
 
   it('container tiene overflow-hidden y min-w-0 para evitar desborde', ()=>{
@@ -85,5 +92,44 @@ describe('Card - HU-001/003 y overflow', ()=>{
     const card = container.firstChild
     expect(card.className).toContain('overflow-hidden')
     expect(card.className).toContain('min-w-0')
+  })
+})
+
+describe('Card - carousel táctil (v4)', ()=>{
+  it('muestra contador 1/4 y dots con labels', ()=>{
+    render(<Card pub={basePub} />)
+    expect(screen.getByText('1/4')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Ver foto 2' })).toBeInTheDocument()
+  })
+
+  it('swipe izquierda avanza foto sin navegar (stopPropagation)', ()=>{
+    const { container } = render(<Card pub={basePub} />)
+    const img = () => container.querySelector('img')
+    expect(img().getAttribute('src')).toBe('https://a.com/1.jpg')
+    // La zona táctil es el contenedor de la imagen (h-36)
+    const tactil = Array.from(container.querySelectorAll('div')).find(d => d.className.includes('h-36'))
+    fireEvent.touchStart(tactil, { touches: [{ clientX: 200 }] })
+    fireEvent.touchEnd(tactil, { changedTouches: [{ clientX: 100 }] })
+    expect(img().getAttribute('src')).toBe('https://a.com/2.jpg')
+    expect(screen.getByText('2/4')).toBeInTheDocument()
+  })
+
+  it('swipe corto (<40px) no cambia de foto', ()=>{
+    const { container } = render(<Card pub={basePub} />)
+    const tactil = Array.from(container.querySelectorAll('div')).find(d => d.className.includes('h-36'))
+    fireEvent.touchStart(tactil, { touches: [{ clientX: 200 }] })
+    fireEvent.touchEnd(tactil, { changedTouches: [{ clientX: 180 }] })
+    expect(container.querySelector('img').getAttribute('src')).toBe('https://a.com/1.jpg')
+  })
+
+  it('dot lleva directo a la foto sin navegar', ()=>{
+    const { container } = render(<Card pub={basePub} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Ver foto 3' }))
+    expect(container.querySelector('img').getAttribute('src')).toBe('https://a.com/3.jpg')
+  })
+
+  it('sin fotos múltiples no muestra contador', ()=>{
+    render(<Card pub={{...basePub, fotos: ['https://a.com/1.jpg']}} />)
+    expect(screen.queryByText('1/1')).not.toBeInTheDocument()
   })
 })

@@ -77,6 +77,27 @@ class LoginOut(BaseModel):
     rol: str
     mock: bool = False
 
+
+class PasswordChangeIn(BaseModel):
+    actual: str = Field(min_length=1, max_length=72)
+    nueva: str = Field(min_length=8, max_length=72)
+
+
+# Tarea 2: rate-limit simple para cambio de contraseña (5 intentos/min por
+# usuario). Misma técnica que el login (B0-7): en memoria por proceso.
+_PW_ATTEMPTS: dict[str, list[float]] = {}
+PW_LIMIT = 5
+PW_WINDOW_S = 60.0
+
+
+def _check_password_rate_limit(uid: str) -> None:
+    now = time.monotonic()
+    hist = [t for t in _PW_ATTEMPTS.get(uid, []) if now - t < PW_WINDOW_S]
+    if len(hist) >= PW_LIMIT:
+        raise HTTPException(status_code=429, detail="Demasiados intentos, espera 1 minuto")
+    hist.append(now)
+    _PW_ATTEMPTS[uid] = hist
+
 # B0-7 rate-limit simple en memoria: 5 intentos/min por IP en /login -> 429.
 _LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 LOGIN_LIMIT = 5
@@ -225,6 +246,89 @@ async def get_perfil(
         telefono_verificado=bool(m.get("telefono_verificado", False)),
         rol=m.get("rol", "ARRENDADOR"),
     )
+
+@router.patch("/perfil/password", summary="Cambiar contraseña (requiere la actual)")
+async def cambiar_password(
+    data: PasswordChangeIn,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Tarea 2: actualiza la contraseña tras verificar la actual + fortaleza.
+
+    Fortaleza: >=8 chars con letras y números. 401 sin token, 403 si la
+    actual no coincide, 422 si la nueva es débil o igual a la actual.
+    """
+    import re
+
+    def _debil(pw: str) -> Optional[str]:
+        if len(pw) < 8:
+            return "La nueva contraseña debe tener al menos 8 caracteres"
+        if not re.search(r"[A-Za-z]", pw) or not re.search(r"[0-9]", pw):
+            return "La nueva contraseña debe incluir letras y números"
+        return None
+
+    email = user.get("sub")
+    user_id = user.get("id")
+    _check_password_rate_limit(f"{user_id or email}")
+    err = _debil(data.nueva)
+    if err:
+        raise HTTPException(status_code=422, detail=err)
+    if data.nueva == data.actual:
+        raise HTTPException(status_code=422, detail="La nueva contraseña debe ser distinta de la actual")
+    try:
+        from ..models import Usuario
+        u = None
+        if user_id:
+            u = await db.get(Usuario, user_id)
+        elif email:
+            res = await db.execute(select(Usuario).where(Usuario.email == email))
+            u = res.scalars().first()
+        if u:
+            if not verify_password(data.actual, u.password_hash):
+                raise HTTPException(status_code=403, detail="La contraseña actual no coincide")
+            u.password_hash = hash_password(data.nueva)
+            await db.commit()
+            return {"mensaje": "Contraseña actualizada con éxito."}
+        if not _mock_enabled():
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[auth password] DB falló: {e!r}", exc_info=True)
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+
+    # Fallback mock dev
+    m = MOCK_USERS.get(email)
+    if not m:
+        for em, udata in MOCK_USERS.items():
+            if udata.get("id") == user_id:
+                m = udata
+                email = em
+                break
+    if not m:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if not verify_password(data.actual, m["password"]):
+        raise HTTPException(status_code=403, detail="La contraseña actual no coincide")
+    m["password"] = hash_password(data.nueva)
+    return {"mensaje": "Contraseña actualizada con éxito."}
+
+
+@router.post("/perfil/solicitud-verificacion", status_code=202, summary="Solicitar verificación de teléfono")
+async def solicitar_verificacion(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Tarea 2: registra la intención (la verificación la otorga un ADMIN).
+
+    Sin tabla dedicada: responde 202 para que la UI confirme el envío.
+    """
+    return {"mensaje": "Solicitud registrada. Un administrador verificará tu línea.", "estado": "PENDIENTE"}
+
 
 @router.patch("/perfil", response_model=PerfilOut, summary="Actualizar nombre y teléfono (verificación solo-lectura)")
 async def update_perfil(
