@@ -76,6 +76,18 @@ GitHub Temaru31/AlojaU (main)
 - **Datos de demo (`seed.sql` / 16 pubs): SOLO local/dev.** Nunca pegues `seed.sql` en Supabase prod: hace `TRUNCATE` y borraría los avisos reales de usuarios. El script `backend/scripts/seed_all.py` se niega a correr contra `supabase.co` salvo `ALOJAU_SEED_CONFIRM=yes`.
 - **Datos reales:** se crean solos con el uso (`/publicar`, reportes, moderación) y aparecen al instante en frontend; no requieren ningún paso.
 
+### 3c) Carga demo en prod SIN borrar nada (v12, solo para mostrar)
+
+Si necesitas enseñar la plataforma con más contenido (las 13 del home + 3 pausadas de moderación) sin tocar los 6 avisos que ya hay:
+1. `SQL Editor → New query` → pega `backend/db/seeds/prod_demo_insert.sql` → `Run` → `Success` (verificado: 6 → 13 `ACTIVO` + 3 `PAUSADO_POR_REPORTE`, re-ejecutable sin duplicar).
+2. Recarga `aloja-u.vercel.app`: el home muestra 13 resultados; los 3 pausados solo se ven en `/admin/dashboard` y `/admin/reportes` (muestran la moderación en acción).
+3. Cuando lances de verdad: borra las demo desde el propio panel admin (Eliminar por aviso) o con `DELETE FROM publicaciones WHERE id BETWEEN 7 AND 16;` — nunca `seed.sql`.
+
+### 3d) Cómo comprobar 005/006 desde la URL (sin acceso a Supabase)
+
+- **006 (zonas + barrio libre):** abre `https://alojau-api.onrender.com/api/zonas` → 200 con la lista; y busca `barrio_texto` en `https://alojau-api.onrender.com/openapi.json` (Ctrl+F). Si `/api/zonas` da 404, Render aún no redespliega: espera 2-3 min y recarga.
+- **005 (ajustes + estados):** abre `https://alojau-api.onrender.com/api/admin/automation/settings` sin login → debe dar **401** (la ruta existe y el RBAC responde; 404 significaría código viejo). Con tu login admin en `/admin/dashboard` → pestaña "Ajustes del Sistema" carga los 3 valores.
+
 ---
 
 ## 4) Paso 2 — Render (backend 7 min)
