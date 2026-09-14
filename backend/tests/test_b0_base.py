@@ -94,18 +94,3 @@ def test_b0_fail_closed_prod():
     # dev con mock True permite mock
     s2 = Settings(ENV="dev", USE_MOCK_FALLBACK=True)
     assert s2.mock_enabled is True
-
-def test_b0_login_rate_limit_429():
-    from app.routers.auth import _LOGIN_ATTEMPTS
-    _LOGIN_ATTEMPTS.clear()
-    try:
-        payload = {"email": "nobody@alojau.com", "password": "wrong123"}
-        codes = []
-        for _ in range(6):
-            r = client.post("/api/auth/login", json=payload)
-            codes.append(r.status_code)
-        # Primeros 5: 401 (credenciales), 6to: 429
-        assert codes[:5] == [401] * 5, codes
-        assert codes[5] == 429, codes
-    finally:
-        _LOGIN_ATTEMPTS.clear()

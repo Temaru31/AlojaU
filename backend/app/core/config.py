@@ -15,6 +15,13 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"  # HS256 fijo para Sprint1 (Tabla18)
     ACCESS_TOKEN_EXPIRE_HOURS: int = 8  # 8h expiración (p22)
 
+    # Keycloak (OIDC) - backend es Resource Server: SOLO valida access tokens
+    # de Keycloak (JWT RS256 vía JWKS). Login/registro son responsabilidad del
+    # frontend. Roles Keycloak usados: "admin" y "landlord".
+    KEYCLOAK_URL: str = ""
+    KEYCLOAK_REALM: str = "aloja-u"
+    KEYCLOAK_CLIENT_ID: str = "ClientAlojaU"
+
     # Sprint1: permite funcionar sin PG (mock en memoria) si no hay DB
     USE_MOCK_FALLBACK: bool = True
 
@@ -81,6 +88,15 @@ class Settings(BaseSettings):
             and self.CLOUDINARY_API_KEY.strip()
             and self.CLOUDINARY_API_SECRET.strip()
         )
+
+    @property
+    def keycloak_configured(self) -> bool:
+        """True si Keycloak es el IdP activo (URL + realm seteados)."""
+        return bool(self.KEYCLOAK_URL.strip() and self.KEYCLOAK_REALM.strip())
+
+    @property
+    def keycloak_jwks_url(self) -> str:
+        return f"{self.KEYCLOAK_URL.rstrip('/')}/realms/{self.KEYCLOAK_REALM}/protocol/openid-connect/certs"
 
     @property
     def mock_enabled(self) -> bool:

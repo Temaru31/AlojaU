@@ -93,7 +93,7 @@ async def metricas(
         pendientes=sum(1 for p in pubs if p.get("estado") == "PENDIENTE"),
         reportes_activos=sum(int(p.get("reportes_activos", 0) or 0) for p in pubs),
         reportes_pendientes=0,
-        arrendadores_verificados=sum(1 for u in MOCK_USERS.values() if u.get("rol") == "ARRENDADOR" and u.get("telefono_verificado")),
+        arrendadores_verificados=sum(1 for u in MOCK_USERS.values() if u.get("rol") in ("LANDLORD", "ARRENDADOR") and u.get("telefono_verificado")),
         total_usuarios=len(MOCK_USERS),
     )
 

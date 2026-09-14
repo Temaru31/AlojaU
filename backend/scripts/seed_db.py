@@ -80,7 +80,7 @@ async def main() -> None:
     conn = await asyncpg.connect(dsn, ssl=ssl if ssl else None)
     try:
         for demo in DEMOS:
-            # Misma librería que app/core/security.hash_password (passlib bcrypt).
+            # passlib bcrypt (mismo formato histórico del esquema Usuario).
             digest = pwd_ctx.hash(demo["password"])
             await conn.execute(
                 UPSERT,

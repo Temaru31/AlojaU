@@ -122,7 +122,7 @@ def test_listado_campus_id_ordena_por_distancia():
 
 
 def test_detalle_con_campus_id_resuelve_ref():
-    r = client.get("/api/publicaciones/1", params={"campus_id": 3})
+    r = client.get("/api/publicaciones/1", params={"campus_id": 3}, headers={"Authorization": "Bearer mock-token-arrendador"})
     assert r.status_code == 200
     body = r.json()
     ref = body["campus_ref"]
@@ -133,13 +133,13 @@ def test_detalle_con_campus_id_resuelve_ref():
 
 
 def test_detalle_sin_campus_id_sin_ref():
-    r = client.get("/api/publicaciones/1")
+    r = client.get("/api/publicaciones/1", headers={"Authorization": "Bearer mock-token-arrendador"})
     assert r.status_code == 200
     assert r.json()["campus_ref"] is None
 
 
 def test_detalle_campus_inexistente_404():
-    r = client.get("/api/publicaciones/1", params={"campus_id": 999})
+    r = client.get("/api/publicaciones/1", params={"campus_id": 999}, headers={"Authorization": "Bearer mock-token-arrendador"})
     assert r.status_code == 404
 
 

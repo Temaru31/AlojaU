@@ -135,6 +135,6 @@ app.include_router(admin.router)
 # Legacy mock endpoints removidos: ahora en routers/publicaciones.py y routers/campus.py
 # - GET /api/publicaciones?campus_id=&precio_min=&precio_max=&tipo=&servicios=  (HU-001+002)
 # - GET /api/publicaciones/{id}  (HU-003+007+008)
-# - POST /api/publicaciones  (HU-005 PENDIENTE, solo ARRENDADOR)
+# - POST /api/publicaciones  (HU-005 PENDIENTE, solo Landlord o admin)
 # - GET /api/campus  (HU-001)
 # - POST /api/auth/register, /api/auth/login  (HU-005 auth)

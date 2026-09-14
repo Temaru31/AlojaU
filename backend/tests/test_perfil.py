@@ -16,7 +16,7 @@ def test_get_perfil_con_mock_token():
     assert data["email"] == "arrendador@alojau.com"
     assert "telefono_whatsapp" in data
     assert "telefono_verificado" in data
-    assert data["rol"] == "ARRENDADOR"
+    assert data["rol"] == "LANDLORD"
 
 def test_patch_perfil_actualiza_telefono_y_nombre():
     headers = {"Authorization": "Bearer mock-token-arrendador"}
@@ -50,12 +50,12 @@ def test_patch_perfil_ignora_telefono_verificado_ola2():
 def test_auto_verificacion_no_cambia_confianza_ola2():
     # OLA2-M4 regresión: intentar auto-verificarse no mueve el índice ni el desglose.
     headers = {"Authorization": "Bearer mock-token-arrendador"}
-    pub_antes = client.get("/api/publicaciones/1").json()
+    pub_antes = client.get("/api/publicaciones/1", headers=headers).json()
 
     r = client.patch("/api/auth/perfil", json={"telefono_verificado": True}, headers=headers)
     assert r.status_code == 200
 
-    pub_despues = client.get("/api/publicaciones/1").json()
+    pub_despues = client.get("/api/publicaciones/1", headers=headers).json()
     assert pub_despues["indice_confianza"] == pub_antes["indice_confianza"]
     assert pub_despues["desglose"]["telefono"] == pub_antes["desglose"]["telefono"]
 

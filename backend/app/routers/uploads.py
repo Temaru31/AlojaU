@@ -1,7 +1,7 @@
 """
 routers/uploads.py - HU-005 Subida real fotos 3-10 + F3 Cloudinary
 POST /api/publicaciones/upload -> {"urls": ["https://.../uploads/uuid.jpg", ...]}
-Seguridad: solo ARRENDADOR, valida 3-10 archivos, 5MB c/u, image/*, nombre seguro uuid
+Seguridad: solo Landlord, valida 3-10 archivos, 5MB c/u, image/*, nombre seguro uuid
 Persistencia (Strategy via services/storage.py):
 - Dev/test sin CLOUDINARY_*: disco local `backend/uploads/` (efímero en Render).
 - Prod con CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET: Cloudinary `secure_url` persistente.
@@ -12,7 +12,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
 from pydantic import BaseModel
 
-from app.core.security import require_arrendador
+from app.core.security import require_landlord
 from app.services.storage import get_storage_backend
 
 router = APIRouter(prefix="/api/publicaciones/upload", tags=["uploads"])
@@ -65,11 +65,11 @@ class UploadOut(BaseModel):
     count: int
 
 
-@router.post("", response_model=UploadOut, summary="HU-005 Upload 3-10 imágenes (solo ARRENDADOR)")
+@router.post("", response_model=UploadOut, summary="HU-005 Upload 3-10 imágenes (solo Landlord)")
 async def upload_fotos(
     request: Request,
     files: List[UploadFile] = File(..., description="3-10 imágenes, cada una max 5MB, image/*"),
-    user: dict = Depends(require_arrendador),
+    user: dict = Depends(require_landlord),
 ):
     if len(files) < MIN_FILES:
         raise HTTPException(status_code=422, detail=f"Mínimo {MIN_FILES} fotos (HU-005 C2), recibidas {len(files)}")

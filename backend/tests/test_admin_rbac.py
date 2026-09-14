@@ -11,7 +11,7 @@ from app.db.session import get_session
 
 client = TestClient(app)
 
-ARR = {"Authorization": "Bearer mock-token-arrendador"}  # id 1, ARRENDADOR
+ARR = {"Authorization": "Bearer mock-token-arrendador"}  # id 1, LANDLORD
 ADMIN = {"Authorization": "Bearer mock-token-admin"}  # id 2, ADMIN
 
 

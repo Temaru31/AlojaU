@@ -32,7 +32,7 @@ def test_f1_paginacion_sql_sin_solape():
 
 
 def test_f1_detalle_contrato_unificado():
-    r = client.get("/api/publicaciones/1")
+    r = client.get("/api/publicaciones/1", headers={"Authorization": "Bearer mock-token-arrendador"})
     assert r.status_code == 200
     p = r.json()
     assert p["canon"] == p["canon_mensual"]

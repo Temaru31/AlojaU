@@ -1,10 +1,10 @@
 """
 routers/publicaciones.py - HU-001,002,003,005,007 (Sprint1) + Mis publicaciones (UX) + PA-01 Renovación
-Endpoints:
-  GET   /api/publicaciones?campus_id=&precio_min=&precio_max=&tipo=&servicios=  (HU-001+002)
+Endpoints (seguridad OLA-Keycloak: SOLO GET / publicaciones es público; el resto exige Landlord o admin):
+  GET   /api/publicaciones?campus_id=&precio_min=&precio_max=&tipo=&servicios=  (HU-001+002) PUBLICO
   GET   /api/publicaciones/mias                                                 (UX: dueño, todos los estados)
   GET   /api/publicaciones/{id}                                                 (HU-003+007)
-  POST  /api/publicaciones                                                      (HU-005 -> PENDIENTE, solo ARRENDADOR)
+  POST  /api/publicaciones                                                      (HU-005 -> PENDIENTE, solo Landlord o admin)
   PATCH /api/publicaciones/{id}                                                 (UX editar aviso del dueño)
   PATCH /api/publicaciones/{id}/renovar                                         (PA-01 renovación 30 días)
 
@@ -13,14 +13,14 @@ NFR P95<500ms: query indexada (estado, zona, canon), sin N+1, Haversine en memor
 """
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
-from fastapi import APIRouter, Depends, Query, Path, HTTPException, status, Header
+from fastapi import APIRouter, Depends, Query, Path, HTTPException, status
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.core.config import settings
-from app.core.security import get_current_user, get_optional_user, require_arrendador
+from app.core.security import require_landlord_or_admin
 from app.repositories import publicacion_repo as repo
 from app.services import publicacion_view as view
 from app.schemas.publicacion import (
@@ -155,7 +155,7 @@ async def mis_publicaciones(
     page: int = Query(1, ge=1, le=1000, description="Página 1-indexed"),
     size: int = Query(12, ge=1, le=50, description="Tamaño página"),
     db: AsyncSession = Depends(get_session),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_landlord_or_admin),
 ):
     """Lista las publicaciones del usuario autenticado en TODOS los estados
     (ACTIVO + PENDIENTE en moderación + otros), más recientes primero, paginado.
@@ -216,7 +216,7 @@ async def get_publicacion(
     pub_id: int = Path(..., ge=1, le=1000000),
     campus_id: Optional[int] = Query(None, ge=1, le=1000000, description="004 POIs: resuelve campus_ref (distancia a ESTE lugar) para sincronizar el mapa del Detalle"),
     db: AsyncSession = Depends(get_session),
-    authorization: Optional[str] = Header(None),
+    user: dict = Depends(require_landlord_or_admin),
 ):
     """
     HU-003: muestra canon, servicios, fotos, zona, condiciones, vigencia
@@ -224,8 +224,9 @@ async def get_publicacion(
     HU-007: incluye indice_confianza 0-100 + desglose 40+20+15+15+10 + disclaimer
     HU-008: telefono_whatsapp solo si verificado + whatsapp_url wa.me
     B0-6: PENDIENTE (y no-ACTIVO) privado -> 404 salvo owner/admin.
+    Seguridad OLA-Keycloak: exige token Landlord o admin (401 sin token, 403 otros).
     """
-    current_user = get_optional_user(authorization)
+    current_user = user
     try:
         p, reportes_activos, u, dist_detalle = await repo.fetch_detail_bundle(db, pub_id)
         if p:
@@ -298,7 +299,7 @@ async def editar_publicacion(
     pub_id: int = Path(..., ge=1, le=1000000),
     payload: PublicacionUpdate = ...,
     db: AsyncSession = Depends(get_session),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_landlord_or_admin),
 ):
     """Edición parcial del dueño: titulo/descripcion/tipo/canon/deposito/direccion/reglas.
     401 sin token o sin id válido, 403 si no es dueño ni ADMIN, 404 si no existe,
@@ -360,7 +361,7 @@ async def editar_publicacion(
 async def renovar_publicacion(
     pub_id: int = Path(..., ge=1, le=1000000),
     db: AsyncSession = Depends(get_session),
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_landlord_or_admin),
 ):
     """
     PA-01: Renueva la vigencia de una publicación por 30 días calendario exactos.
@@ -429,10 +430,10 @@ async def renovar_publicacion(
     }
 
 
-@router.post("", response_model=PublicacionCreatedOut, status_code=status.HTTP_201_CREATED, summary="HU-005 Publicar oferta estructurada -> PENDIENTE (solo ARRENDADOR)")
+@router.post("", response_model=PublicacionCreatedOut, status_code=status.HTTP_201_CREATED, summary="HU-005 Publicar oferta estructurada -> PENDIENTE (Landlord o admin)")
 async def crear_publicacion(
     payload: PublicacionCreate,
-    user: dict = Depends(require_arrendador),
+    user: dict = Depends(require_landlord_or_admin),
     db: AsyncSession = Depends(get_session),
 ):
     """

@@ -6,12 +6,12 @@ import time
 from datetime import datetime
 from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import get_optional_user, require_admin
+from app.core.security import require_admin
 from app.core.config import settings
 from app.db.session import get_session
 
@@ -81,10 +81,9 @@ async def crear_reporte(
     payload: ReporteIn,
     request: Request,
     db: AsyncSession = Depends(get_session),
-    authorization: Optional[str] = Header(None),
 ):
-    """Crea reporte PENDIENTE (anónimo si no hay token). 404 si la publicación no existe."""
-    user = get_optional_user(authorization)
+    """Crea reporte PENDIENTE 100% anónimo (no se asocia a ningún usuario/token).
+    404 si la publicación no existe; anti-spam por IP."""
     try:
         from app.models import Publicacion, ReportePublicacion
 
@@ -94,7 +93,7 @@ async def crear_reporte(
         _check_report_rate_limit(request)
         nuevo = ReportePublicacion(
             publicacion_id=payload.publicacion_id,
-            usuario_id=user.get("id") if user and isinstance(user.get("id"), int) else None,
+            usuario_id=None,
             motivo=payload.motivo,
             detalle=payload.detalle,
             estado="PENDIENTE",

@@ -5,6 +5,7 @@ import UploadFotos from '../components/UploadFotos'
 import MapPicker from '../components/MapPicker'
 import { notifyToast } from '../components/Toast'
 import { emitAuthChange } from '../contexts/AuthContext'
+import { useAuth } from 'react-oidc-context'
 
 const SERVICIOS = [
   { id: 1, nombre: 'WiFi Fibra' },
@@ -19,13 +20,9 @@ const ZONAS = [
   { id: 3, nombre: 'Tulcán' },
 ]
 
-export default function Publicar() {
+export default function Publicar() {  
   const [campus, setCampus] = useState([])
-  const [token, setToken] = useState(() => localStorage.getItem('alojau_token') || '')
-  const [loginEmail, setLoginEmail] = useState('')
-  const [loginPass, setLoginPass] = useState('')
-  const [loginError, setLoginError] = useState('')
-  const [loginLoading, setLoginLoading] = useState(false)
+
 
   const [form, setForm] = useState({
     titulo: '',
@@ -46,6 +43,8 @@ export default function Publicar() {
   const [submitError, setSubmitError] = useState('')
   const [submitOk, setSubmitOk] = useState(null)
   const [submitting, setSubmitting] = useState(false)
+  const auth = useAuth()
+  const token = auth.user?.access_token
 
   useEffect(() => {
     api.get('/api/campus')
@@ -67,25 +66,6 @@ export default function Publicar() {
     }
   }, [])
 
-  const handleLogin = async (e) => {
-    e.preventDefault()
-    setLoginError(''); setLoginLoading(true)
-    try {
-      const r = await api.post('/api/auth/login', { email: loginEmail, password: loginPass })
-      const t = r.data.access_token
-      localStorage.setItem('alojau_token', t)
-      setToken(t)
-      emitAuthChange()
-    } catch (err) {
-      setLoginError(err.response?.data?.detail || 'Credenciales inválidas')
-    } finally { setLoginLoading(false) }
-  }
-
-  const handleLogout = () => {
-    localStorage.removeItem('alojau_token')
-    setToken('')
-    emitAuthChange()
-  }
 
   const validate = () => {
     const e = {}
@@ -183,32 +163,13 @@ export default function Publicar() {
               Debes iniciar sesión como <b>ARRENDADOR</b> para publicar. Estado inicial siempre <span className="font-medium text-gold-600">PENDIENTE</span> hasta ser revisada.
             </p>
 
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-navy-800 mb-1.5">Email</label>
-                <input
-                  type="email"
-                  value={loginEmail}
-                  onChange={e => setLoginEmail(e.target.value)}
-                  className="input-field"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-navy-800 mb-1.5">Contraseña</label>
-                <input
-                  type="password"
-                  value={loginPass}
-                  onChange={e => setLoginPass(e.target.value)}
-                  className="input-field"
-                  required
-                />
-              </div>
-              {loginError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-2">{loginError}</p>}
-              <button type="submit" disabled={loginLoading} className="btn-accent w-full justify-center">
-                {loginLoading ? 'Ingresando...' : 'Iniciar sesión como ARRENDADOR'}
-              </button>
-            </form>
+           <button 
+  type="button" 
+  onClick={() => auth.signinRedirect()} 
+  className="btn-accent w-full justify-center"
+>
+  Iniciar sesión para publicar
+</button>
           </div>
         </div>
       </div>
@@ -231,7 +192,13 @@ export default function Publicar() {
             <h1 className="font-display text-2xl md:text-3xl font-bold text-navy-900 tracking-tight mb-0">
               Publicar vivienda
             </h1>
-            <button type="button" onClick={handleLogout} className="text-xs sm:text-sm text-neutral-500 hover:text-red-600">Cerrar sesión</button>
+            <button 
+  type="button" 
+  onClick={() => auth.removeUser()} 
+  className="text-xs sm:text-sm text-neutral-500 hover:text-red-600"
+>
+  Cerrar sesión
+</button>
           </div>
           <p className="text-sm text-neutral-500 mt-1">
             Completa los datos. La publicacion pasara a estado PENDIENTE hasta ser revisada.

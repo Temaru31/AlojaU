@@ -108,7 +108,7 @@ def test_campus_id_fuera_rango_422():
     assert r2.status_code == 422
 
 def test_no_expone_password_hash():
-    r = client.get("/api/publicaciones/1")
+    r = client.get("/api/publicaciones/1", headers={"Authorization": "Bearer mock-token-arrendador"})
     assert r.status_code == 200
     body = str(r.json()).lower()
     assert "password" not in body

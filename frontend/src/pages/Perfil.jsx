@@ -2,23 +2,25 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import { emitAuthChange, inicialesDe } from '../contexts/AuthContext'
+import { useAuth } from 'react-oidc-context'
 
 export default function Perfil() {
-  const [token, setToken] = useState(() => localStorage.getItem('alojau_token') || '')
   const [perfil, setPerfil] = useState(null)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [successMsg, setSuccessMsg] = useState('')
 
+
+  //Keycloack
+  const auth = useAuth()
+  const token = auth.user?.access_token
+
   // Formulario de edición
   const [telefono, setTelefono] = useState('')
   const [nombre, setNombre] = useState('')
 
-  // Formulario de login si no hay token
-  const [loginEmail, setLoginEmail] = useState('')
-  const [loginPass, setLoginPass] = useState('')
-  const [loginLoading, setLoginLoading] = useState(false)
+
 
   // Resumen del dueño (totales vía /mias; si falla se oculta en silencio).
   const [misStats, setMisStats] = useState(null)
@@ -91,22 +93,7 @@ export default function Perfil() {
     }
   }, [])
 
-  const handleLogin = async (e) => {
-    e.preventDefault()
-    setLoginLoading(true)
-    setError('')
-    try {
-      const r = await api.post('/api/auth/login', { email: loginEmail, password: loginPass })
-      const t = r.data.access_token
-      localStorage.setItem('alojau_token', t)
-      setToken(t)
-      emitAuthChange() // UX: avisa al navbar para mostrar el avatar al instante
-    } catch (err) {
-      setError(err?.response?.data?.detail || 'Error al iniciar sesión')
-    } finally {
-      setLoginLoading(false)
-    }
-  }
+
 
   // Nota UX: el cierre de sesión vive en el dropdown del navbar (AuthContext.logout).
 
@@ -158,32 +145,13 @@ export default function Perfil() {
               Debes iniciar sesión para ver y editar tu información de contacto.
             </p>
 
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-navy-800 mb-1.5">Email</label>
-                <input
-                  type="email"
-                  value={loginEmail}
-                  onChange={e => setLoginEmail(e.target.value)}
-                  className="input-field"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-navy-800 mb-1.5">Contraseña</label>
-                <input
-                  type="password"
-                  value={loginPass}
-                  onChange={e => setLoginPass(e.target.value)}
-                  className="input-field"
-                  required
-                />
-              </div>
-              {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-2">{error}</p>}
-              <button type="submit" disabled={loginLoading} className="btn-accent w-full justify-center">
-                {loginLoading ? 'Ingresando...' : 'Iniciar sesión'}
-              </button>
-            </form>
+           <button 
+  type="button" 
+  onClick={() => auth.signinRedirect()} 
+  className="btn-accent w-full justify-center"
+>
+  Iniciar sesión
+</button>
           </div>
         </div>
       </div>

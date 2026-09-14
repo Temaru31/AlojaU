@@ -120,7 +120,7 @@ def test_hu002_c1_validacion_tipos():
 
 # --- HU-003 ---
 def test_hu003_c1_ficha_completa():
-    r = client.get("/api/publicaciones/1")
+    r = client.get("/api/publicaciones/1", headers=auth_header())
     assert r.status_code == 200
     p = r.json()
     assert "titulo" in p and len(p["titulo"]) >= 10
@@ -147,10 +147,10 @@ def test_hu003_c3_pendiente_no_en_catalogo_pero_detalle():
     r2 = client.get("/api/publicaciones", params={"campus_id": 1})
     titulos = [p["titulo"] for p in _items(r2.json())]
     assert titulo_unico not in titulos, "PENDIENTE no debe aparecer en catálogo (HU-003 C3 / HU-005 C3)"
-    # B0-6: detalle PENDIENTE privado -> anónimo 404 (no filtra existencia),
-    # owner 200 con estado PENDIENTE, admin 200. Antes esperaba 200 anónimo (hueco).
+    # B0-6: detalle PENDIENTE privado -> sin token 401; owner 200 con estado
+    # PENDIENTE, admin 200. Antes esperaba 200 anónimo (hueco).
     r3 = client.get(f"/api/publicaciones/{new_id}")
-    assert r3.status_code == 404
+    assert r3.status_code == 401
     r_owner = client.get(f"/api/publicaciones/{new_id}", headers=auth_header())
     assert r_owner.status_code == 200
     assert r_owner.json()["estado"].startswith("PENDIENTE")
@@ -164,7 +164,7 @@ def test_hu003_c3_pendiente_no_en_catalogo_pero_detalle():
     assert "desglose" in r_owner.json()
 
 # --- HU-005 ---
-def test_hu005_c1_solo_arrendador():
+def test_hu005_c1_requiere_landlord():
     # sin token 401
     r = client.post("/api/publicaciones", json=BASE_PAYLOAD)
     assert r.status_code == 401
@@ -174,9 +174,9 @@ def test_hu005_c1_solo_arrendador():
     # con token Bearer vacío 401
     r3 = client.post("/api/publicaciones", json=BASE_PAYLOAD, headers={"Authorization": "Bearer "})
     assert r3.status_code == 401
-    # con mock admin (no arrendador) 403
+    # con mock admin (Landlord o admin pueden crear) -> 201
     r4 = client.post("/api/publicaciones", json=BASE_PAYLOAD, headers=auth_header("mock-token-admin"))
-    assert r4.status_code == 403
+    assert r4.status_code == 201
 
 def test_hu005_c2_menos_de_3_fotos_rechazado():
     payload = {**BASE_PAYLOAD, "fotos": ["https://a.com/1.jpg", "https://a.com/2.jpg"]}
@@ -262,7 +262,7 @@ def test_paginacion_filtros_combinados():
 
 # --- HU-007 ---
 def test_hu007_desglose_y_disclaimer():
-    r = client.get("/api/publicaciones/1")
+    r = client.get("/api/publicaciones/1", headers=auth_header())
     assert r.status_code == 200
     p = r.json()
     assert "indice_confianza" in p
@@ -288,7 +288,7 @@ def test_hu007_escala_colores():
 # --- HU-008 ---
 def test_hu008_whatsapp_solo_verificado():
     # pub 1 tiene teléfono verificado True → whatsapp_url debe existir
-    r = client.get("/api/publicaciones/1")
+    r = client.get("/api/publicaciones/1", headers=auth_header())
     assert r.status_code == 200
     p = r.json()
     # Si telefono verificado, debe tener wa.me
@@ -310,7 +310,7 @@ def test_hu008_whatsapp_formato():
     assert r.status_code == 201
     new_id = r.json()["id"]
     # El detail de una ACTIVO real con teléfono verificado debe tener wa.me con ID
-    r2 = client.get("/api/publicaciones/1")
+    r2 = client.get("/api/publicaciones/1", headers=auth_header())
     assert r2.status_code == 200
     p = r2.json()
     if p.get("whatsapp_url"):

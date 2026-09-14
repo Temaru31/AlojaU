@@ -9,7 +9,8 @@ alembic==1.13.1
 python-dotenv>=1.2.2
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
-PyJWT>=2.10  # OLA1: reemplaza python-jose (abandonado + CVEs JWT bomb); solo HS256
+PyJWT>=2.10  # OLA1: reemplaza python-jose (abandonado + CVEs JWT bomb); HS256 + RS256 (Keycloak)
+cryptography>=42.0  # PyJWT RS256 (verificación de access tokens Keycloak) + PyJWKClient
 python-multipart>=0.0.31
 httpx==0.28.1  # solo para TestClient / tests
 cloudinary==1.40.0  # F3: persistencia prod (opcional en dev; import lazy con fallback local)

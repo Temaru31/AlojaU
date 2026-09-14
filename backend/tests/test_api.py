@@ -28,7 +28,7 @@ def test_publicaciones_rango_invalido():
     # debe ser 400 según HU-002 C1
     assert r.status_code in (400,422)
 def test_detalle_no_activo():
-    r=client.get("/api/publicaciones/3")
+    r=client.get("/api/publicaciones/3", headers={"Authorization": "Bearer mock-token-admin"})
     # 3 es PENDIENTE en mock
     assert r.status_code in (200,404)  # mock retorna 200 con estado PENDIENTE, real debería 404
 def test_post_sin_auth():
