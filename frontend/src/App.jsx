@@ -13,6 +13,7 @@ const AdminReportes = lazy(() => import('./pages/AdminReportes'))
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'))
 import ProtectedAdminRoute from './components/ProtectedAdminRoute'
 import ColdStartBanner from './components/ColdStartBanner'
+import ErrorBoundary from './components/ErrorBoundary'
 import Toaster from './components/Toast'
 import BrandMark from './components/BrandMark'
 import { FavoritosProvider, useFavoritos } from './contexts/FavoritosContext'
@@ -85,13 +86,6 @@ function Nav() {
               >
                 Comparar {compCount > 0 && <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full ml-1">{compCount}/{compMax}</span>}
               </Link>
-              <Link
-                to="/perfil"
-                className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive('/perfil') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
-                  }`}
-              >
-                Mi Perfil
-              </Link>
               {token && (
                 <Link
                   to="/mis-publicaciones"
@@ -106,10 +100,10 @@ function Nav() {
 
           <div className="hidden md:flex items-center gap-3">
             {favCount > 0 && <span className="text-sm text-neutral-500" aria-label={`${favCount} favoritos`}>♡ {favCount}</span>}
-            {/* UX: navbar según sesión */}
+            {/* Fase 1: navbar según sesión — anónimo solo "Iniciar Sesión", sin duplicar "Mi Perfil". */}
             {!token ? (
               <Link to="/perfil" className="px-3 py-2 text-sm font-medium rounded-md text-neutral-500 hover:text-navy-700 hover:bg-neutral-100 transition-colors">
-                Mi Perfil / Iniciar Sesión
+                Iniciar Sesión
               </Link>
             ) : (
               <div className="relative">
@@ -138,6 +132,9 @@ function Nav() {
                       </Link>
                       <Link to="/mis-publicaciones" onClick={closeUser} role="menuitem" className="block px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-100">
                         Mis Publicaciones
+                      </Link>
+                      <Link to="/favoritos" onClick={closeUser} role="menuitem" className="block px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-100">
+                        Favoritos{favCount > 0 ? ` (${favCount})` : ''}
                       </Link>
                       {user?.rol === 'ADMIN' && (
                         <Link to="/admin/dashboard" onClick={closeUser} role="menuitem" className="block px-3 py-2 text-sm font-bold rounded-md text-navy-800 bg-navy-50 hover:bg-navy-100">
@@ -205,9 +202,7 @@ function Nav() {
               <span>Comparar</span>
               <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${compCount} de ${compMax} para comparar`}>{compCount}/{compMax}</span>
             </Link>
-            {/* UX-AUDIT P1: se elimina el item "Favoritos" (apuntaba a "/" = Buscar,
-                enlace muerto). La página /favoritos llega en T3 (BUG-07); el contador
-                ♡ del navbar desktop sigue visible. */}
+            {/* Fase 1: drawer móvil sin duplicados — misma estructura que desktop. */}
             <Link
               to="/perfil"
               onClick={closeMenu}
@@ -221,7 +216,16 @@ function Nav() {
                   </span>
                   <span className="truncate max-w-40">{displayName}</span>
                 </span>
-              ) : 'Mi Perfil / Iniciar Sesión'}
+              ) : 'Iniciar Sesión'}
+            </Link>
+            <Link
+              to="/favoritos"
+              onClick={closeMenu}
+              aria-current={isActive('/favoritos') ? 'page' : undefined}
+              className={mobileLinkCls(isActive('/favoritos'))}
+            >
+              <span>Favoritos</span>
+              {favCount > 0 && <span className="bg-red-100 text-red-700 text-[11px] px-1.5 py-0.5 rounded-full">{favCount}</span>}
             </Link>
             {token && (
               <>
@@ -309,6 +313,7 @@ function Footer() {
 function App() {
   return (
     <BrowserRouter>
+      <ErrorBoundary>
       <ScrollToTop />
       <AuthProvider>
         <FavoritosProvider>
@@ -335,7 +340,6 @@ function App() {
                     <Route path="/publicar" element={<Publicar />} />
                     <Route path="/perfil" element={<Perfil />} />
                     <Route path="/mis-publicaciones" element={<MisPublicaciones />} />
-                    <Route path="/favoritos" element={<Favoritos />} />
                     <Route path="/admin/dashboard" element={<ProtectedAdminRoute><AdminDashboard /></ProtectedAdminRoute>} />
                     <Route path="/admin/reportes" element={<ProtectedAdminRoute><AdminReportes /></ProtectedAdminRoute>} />
                   </Routes>
@@ -348,6 +352,7 @@ function App() {
           </CompararProvider>
         </FavoritosProvider>
       </AuthProvider>
+      </ErrorBoundary>
     </BrowserRouter>
   )
 }

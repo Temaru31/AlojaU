@@ -145,13 +145,24 @@ describe('Detalle 004 sincronización dinámica del mapa', () => {
     expect(screen.getByText(/Distancia a Sede Única/)).toBeInTheDocument()
   })
 
-  it('sin ?campus_id= mantiene el comportamiento legacy (sin lugar, etiqueta genérica)', async () => {
+  it('sin ?campus_id= modo inmueble único (sin distancia a campus)', async () => {
     window.scrollTo = vi.fn()
     api.get.mockResolvedValue({ data: { ...pub, distancia_geodesica_m: 320 } })
     renderDetalle()
     await waitFor(() => expect(screen.getByText('Descripción')).toBeInTheDocument())
     expect(screen.getByTestId('mapa').dataset.lugar).toBe('')
-    expect(screen.getByText('Distancia al campus')).toBeInTheDocument()
+    // Tarea 1 (v10): encabezado de vivienda, sin cálculo hacia campus no elegido.
+    expect(screen.getByText('Ubicación de la vivienda')).toBeInTheDocument()
+    expect(screen.queryByText('Distancia al campus')).not.toBeInTheDocument()
+  })
+
+  it('PAUSADO_POR_REPORTE muestra tarjeta explicativa (no el aviso genérico)', async () => {
+    window.scrollTo = vi.fn()
+    api.get.mockResolvedValue({ data: { ...pub, estado: 'PAUSADO_POR_REPORTE' } })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+    expect(screen.getByText(/Anuncio pausado temporalmente/)).toBeInTheDocument()
+    expect(screen.getByText(/contacto está deshabilitado/)).toBeInTheDocument()
   })
 })
 

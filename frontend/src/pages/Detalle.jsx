@@ -180,6 +180,10 @@ export default function Detalle() {
     : (lugarLista
       ? { lat: lugarLista.latitud ?? lugarLista.lat, lng: lugarLista.longitud ?? lugarLista.lng, nombre: nombreLugarLista }
       : null)
+  // Tarea 1 (v10): trayectoria SOLO con lugar explícito (?campus_id= del flujo
+  // de búsqueda). Sin filtro previo -> modo inmueble único (1 pin, sin
+  // distancias hacia un campus no seleccionado).
+  const modoTrayectoria = lugar != null
   // Si se pidió una referencia y su distancia es desconocida (sin backfill,
   // otra ciudad, sin coords), se muestra "No informado": nunca se hereda la
   // distancia mínima a OTRO lugar bajo la etiqueta del lugar pedido.
@@ -253,7 +257,16 @@ export default function Detalle() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
         <div className="lg:col-span-2 space-y-6">
-          {!isActivo && (
+          {!isActivo && pub.estado === 'PAUSADO_POR_REPORTE' && (
+            <div className="bg-red-50 border border-red-200 text-red-700 rounded-md p-4 text-sm" role="alert">
+              <p className="font-bold mb-1">⏸️ Anuncio pausado temporalmente</p>
+              <p className="text-xs leading-relaxed">
+                Esta publicación recibió varios reportes de la comunidad y está suspendida mientras nuestro equipo la revisa.
+                Por tu seguridad, el contacto está deshabilitado hasta que se resuelva la revisión.
+              </p>
+            </div>
+          )}
+          {!isActivo && pub.estado !== 'PAUSADO_POR_REPORTE' && (
             <div className="bg-amber-50 border border-amber-200 text-amber-700 rounded-md p-3 text-sm">
               {/* UX: copia humana, sin enum de BD (ACTIVO/PENDIENTE es interno) */}
               No disponible para contacto por ahora{pub.estado === 'PENDIENTE' ? ' — en revisión' : ''}.
@@ -404,8 +417,17 @@ export default function Detalle() {
               {/* UX: sin columna "Estado" (ACTIVO/PENDIENTE es interno de BD, no del estudiante) */}
               <div className="flex items-center gap-4">
                 <div>
-                  <p className="text-xs text-neutral-400 mb-0.5">{etiquetaDist}</p>
-                    <p className="text-sm font-semibold text-navy-800">{distMapa != null ? formatDistancia(distMapa) : 'No informado'}{distMapa != null && formatTiempoCaminando(distMapa) ? ` · ${formatTiempoCaminando(distMapa)}` : ''}</p>
+                  {modoTrayectoria ? (
+                    <>
+                      <p className="text-xs text-neutral-400 mb-0.5">{etiquetaDist}</p>
+                      <p className="text-sm font-semibold text-navy-800">{distMapa != null ? formatDistancia(distMapa) : 'No informado'}{distMapa != null && formatTiempoCaminando(distMapa) ? ` · ${formatTiempoCaminando(distMapa)}` : ''}</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-xs text-neutral-400 mb-0.5">Ubicación de la vivienda</p>
+                      <p className="text-sm font-semibold text-navy-800">{zona}</p>
+                    </>
+                  )}
                 </div>
                 <div className="w-px h-8 bg-neutral-150" />
                 <div>
@@ -420,8 +442,8 @@ export default function Detalle() {
             <h3 className="text-sm font-semibold text-navy-800 mb-3">Ubicación referencial</h3>
             <MapaZona
               zona={zona}
-              dist_m={distMapa}
-              campus={{ lat: 2.443, lng: -76.606 }}
+              dist_m={modoTrayectoria ? distMapa : null}
+              campus={modoTrayectoria ? { lat: 2.443, lng: -76.606 } : null}
               lugar={lugar}
               aviso={pub.latitud != null && pub.longitud != null ? { lat: pub.latitud, lng: pub.longitud } : null}
               direccion={pub.direccion_referencial || ''}

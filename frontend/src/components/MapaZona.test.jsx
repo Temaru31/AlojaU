@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, cleanup, fireEvent } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import MapaZona, { buildGoogleMapsDirUrl } from './MapaZona'
 
@@ -28,12 +28,13 @@ describe('MapaZona Oleada 2', () => {
     expect(url).not.toContain('key=')
   })
 
-  it('modo aviso: centra en el inmueble con radio 150m + línea al campus + deep-link', () => {
+  it('modo trayectoria (aviso + lugar explícito): 2 pines + círculo + línea + deep-link', () => {
     render(
       <MemoryRouter>
         <MapaZona
           zona="Tulcán"
           campus={{ lat: 2.443, lng: -76.606 }}
+          lugar={{ lat: 2.443, lng: -76.606, nombre: 'Campus Tulcán' }}
           dist_m={320}
           aviso={{ lat: 2.4451, lng: -76.6085 }}
           direccion="Calle 5 #4-70"
@@ -47,10 +48,37 @@ describe('MapaZona Oleada 2', () => {
     expect(screen.getByText(/Ubicación aproximada/)).toBeInTheDocument()
     const link = screen.getByRole('link', { name: /Cómo llegar en Google Maps/ })
     expect(link.getAttribute('href')).toContain('2.4451')
+    // Tarea 2 (v10): origen explícito + travelmode walking en la URL.
+    expect(link.getAttribute('href')).toContain('origin=2.443')
+    expect(link.getAttribute('href')).toContain('travelmode=walking')
     const osm = screen.getByRole('link', { name: /Abrir ubicación en OpenStreetMap/ })
     // FIX-OSM: coords directas con marcador, nunca /directions con texto.
     expect(osm.getAttribute('href')).toContain('mlat=2.4451')
     expect(osm.getAttribute('href')).toContain('#map=17/2.4451/')
+  })
+
+  it('modo inmueble único (aviso sin lugar): 1 pin, sin círculo/línea/leyenda campus', () => {
+    render(
+      <MemoryRouter>
+        <MapaZona
+          zona="Tulcán"
+          campus={{ lat: 2.443, lng: -76.606 }}
+          dist_m={320}
+          aviso={{ lat: 2.4451, lng: -76.6085 }}
+          direccion="Calle 5 #4-70"
+          titulo="Habitación prueba"
+        />
+      </MemoryRouter>
+    )
+    // Tarea 1 (v10): solo el pin de la vivienda.
+    expect(screen.getAllByTestId('marker').length).toBe(1)
+    expect(screen.queryByTestId('circle')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('linea-ruta')).not.toBeInTheDocument()
+    expect(screen.getByText(/Ubicación de la vivienda/)).toBeInTheDocument()
+    expect(screen.queryByText(/del campus/)).not.toBeInTheDocument()
+    // El botón sigue válido (Google resuelve el origen) sin origin fijo.
+    const link = screen.getByRole('link', { name: /Cómo llegar en Google Maps/ })
+    expect(link.getAttribute('href')).not.toContain('origin=')
   })
 
   it('cambiar modo de viaje actualiza el deep-link', () => {
@@ -141,15 +169,50 @@ describe('MapaZona 004 POIs dinámico', () => {
     try {
       render(
         <MemoryRouter>
-          <MapaZona campus={{ lat: 2.443, lng: -76.606 }} aviso={AVISO} onGeoError={onGeoError} />
+          <MapaZona campus={{ lat: 2.443, lng: -76.606 }} lugar={{ lat: 2.443, lng: -76.606, nombre: 'Campus Tulcán' }} aviso={AVISO} onGeoError={onGeoError} />
         </MemoryRouter>
       )
       fireEvent.click(screen.getByRole('button', { name: /desde mi ubicación/ }))
       expect(onGeoError).toHaveBeenCalledTimes(1)
-      // La ruta por defecto (origen = campus) sigue disponible.
+      // La ruta por defecto (origen = lugar explícito) sigue disponible.
       expect(screen.getByRole('link', { name: /Cómo llegar en Google Maps/ }).getAttribute('href')).toContain('origin=2.443')
     } finally {
       Object.defineProperty(navigator, 'geolocation', { value: geo, configurable: true })
+    }
+  })
+
+  it('OSRM disponible muestra minutos por ruta', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ routes: [{ distance: 410, duration: 372 }] }),
+    })))
+    try {
+      render(
+        <MemoryRouter>
+          <MapaZona campus={null} lugar={{ lat: 2.443, lng: -76.606, nombre: 'Campus Tulcán' }} aviso={AVISO} dist_m={320} />
+        </MemoryRouter>
+      )
+      // 372 s -> 6 min por red de calles (progresivo sobre la fórmula).
+      expect(await screen.findByText(/6 min por ruta/)).toBeInTheDocument()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('OSRM caído conserva la estimación por fórmula', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('OSRM caído') }))
+    try {
+      render(
+        <MemoryRouter>
+          <MapaZona campus={null} lugar={{ lat: 2.443, lng: -76.606, nombre: 'Campus Tulcán' }} aviso={AVISO} dist_m={320} />
+        </MemoryRouter>
+      )
+      // Sin "por ruta": la estimación por fórmula (~6 min a pie) sigue visible
+      // (caption + popup del pin).
+      await waitFor(() => expect(screen.getAllByText(/~6 min a pie del campus/).length).toBeGreaterThanOrEqual(1))
+      expect(screen.queryByText(/por ruta/)).not.toBeInTheDocument()
+    } finally {
+      vi.unstubAllGlobals()
     }
   })
 })
