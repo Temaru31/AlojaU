@@ -88,7 +88,10 @@ jobs:
           EOF
 
       - name: Run tests with coverage (min 70%)
-        run: pytest tests/ -q --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=70
+        # `python -m` (no el binario `pytest`): antepone el CWD (backend/) al
+        # sys.path, sin lo cual `from app...` falla en colección con
+        # ModuleNotFoundError (21 archivos). Verificado localmente.
+        run: python -m pytest tests/ -q --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=70
 
       - name: Upload coverage
         if: always()
