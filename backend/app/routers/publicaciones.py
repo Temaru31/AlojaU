@@ -263,14 +263,16 @@ async def get_publicacion(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] get_publicacion {pub_id} falló: {e!r}", exc_info=True)
+        # CWE-117: pub_id viene del path; sanear CR/LF antes de loguear.
+        safe_pub_id = str(pub_id).replace("\r", "").replace("\n", "")
+        logger.error(f"[DB fallback] get_publicacion {safe_pub_id} falló: {e!r}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
             pass
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        logger.warning(f"[DB fallback] get_publicacion {pub_id}: {e!r}")
+        logger.warning(f"[DB fallback] get_publicacion {safe_pub_id}: {e!r}")
 
     # Mock fallback solo dev (B0-2). B0-6: no-ACTIVO privado también en mock.
     if not _mock_enabled():
