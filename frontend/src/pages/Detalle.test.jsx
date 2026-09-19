@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { render, screen, cleanup, waitFor } from '@testing-library/react'
+import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
-import Detalle from './Detalle'
+import Detalle, { humanizarTipo } from './Detalle'
 import { api } from '../services/api'
 
 vi.mock('../services/api', () => ({ api: { get: vi.fn() } }))
@@ -192,5 +192,161 @@ describe('Detalle 004 distancias honestas', () => {
     await waitFor(() => expect(screen.getByText('Distancia a Sede Única')).toBeInTheDocument())
     // No hereda los 900 m de otro lugar: no aparece ninguna distancia en el bloque.
     expect(screen.queryByText(/900/)).not.toBeInTheDocument()
+  })
+})
+
+describe('Detalle ramas sin cubrir (contacto, errores, fallbacks)', () => {
+  it('humanizarTipo: conocido traduce, desconocido conserva, vacío informa', () => {
+    expect(humanizarTipo('COMPARTIDO')).toBe('Compartido')
+    expect(humanizarTipo('LOFT')).toBe('LOFT')
+    expect(humanizarTipo(null)).toBe('No informado')
+    expect(humanizarTipo(undefined)).toBe('No informado')
+  })
+
+  it('PENDIENTE muestra aviso ámbar y oculta el WhatsApp', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: { ...pub, estado: 'PENDIENTE' } })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText(/No disponible para contacto por ahora/)).toBeInTheDocument())
+    expect(screen.getByText(/en revisión/)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Contactar por WhatsApp/ })).not.toBeInTheDocument()
+    expect(screen.getByText('Este aviso no está disponible por ahora')).toBeInTheDocument()
+  })
+
+  it('ACTIVO sin teléfono autorizado explica que no hay contacto', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: { ...pub, telefono_whatsapp: null } })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText(/Sin WhatsApp autorizado/)).toBeInTheDocument())
+    expect(screen.queryByRole('link', { name: /Contactar por WhatsApp/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Guardar y avísame si habilita contacto/ })).toBeInTheDocument()
+  })
+
+  it('contacto ya registrado se refleja sin volver a pulsar', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    localStorage.setItem('alojau_contactos', JSON.stringify([{ id: 1, titulo: 'x', fecha: '2026-01-01' }]))
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText(/Ya contactaste este aviso/)).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Ya contacté por otro medio' })).not.toBeInTheDocument()
+  })
+
+  it('storage corrupto no rompe el detalle (contactos e historial opcionales)', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    localStorage.setItem('alojau_contactos', '{roto')
+    localStorage.setItem('alojau_historial', '[roto')
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getAllByText('Habitación cerca Tulcán').length).toBeGreaterThan(0))
+  })
+
+  it('descripción larga ofrece Leer más / Leer menos', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: { ...pub, descripcion: 'Detalle. '.repeat(40) } })
+    renderDetalle()
+    const mas = await screen.findByRole('button', { name: 'Leer más' })
+    fireEvent.click(mas)
+    expect(await screen.findByRole('button', { name: 'Leer menos' })).toBeInTheDocument()
+  })
+
+  it('sin descripción informa que el arrendador no la agregó', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: { ...pub, descripcion: '  ' } })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText(/El arrendador aún no agregó una descripción/)).toBeInTheDocument())
+  })
+
+  it('botón Reportar abre el modal', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reportar este aviso' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Reportar este aviso' }))
+    expect(screen.getByTestId('reportar')).toBeInTheDocument()
+  })
+
+  it('favorito alterna el toast con enlace a Favoritos', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByRole('button', { name: '♡ Añadir a favoritos' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '♡ Añadir a favoritos' }))
+    expect(await screen.findByText(/Guardado en favoritos/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Ver →' })).toHaveAttribute('href', '/favoritos')
+  })
+
+  it('comparar alterna sin toast cuando hay menos de 2', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByRole('button', { name: '+ Comparar (máx 3)' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '+ Comparar (máx 3)' }))
+    expect(screen.queryByText(/Añadido a comparar/)).not.toBeInTheDocument()
+  })
+
+  it('copiar sin portapapeles no rompe y conserva el botón', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    const btn = await screen.findByRole('button', { name: 'Copiar número' })
+    fireEvent.click(btn)
+    expect(screen.getByRole('button', { name: 'Copiar número' })).toBeInTheDocument()
+    expect(screen.queryByText('✓ Número copiado')).not.toBeInTheDocument()
+  })
+
+  it('Ya contacté por otro medio marca y oculta la acción', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    const btn = await screen.findByRole('button', { name: 'Ya contacté por otro medio' })
+    fireEvent.click(btn)
+    expect(await screen.findByText(/Marcado como contactado/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Ya contacté por otro medio' })).not.toBeInTheDocument()
+  })
+
+  it('canon y depósito nulos muestran No informado (sin total)', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({
+      data: {
+        ...pub, canon_mensual: undefined, canon: undefined,
+        deposito_requerido: null, deposito: null,
+        reglas_convivencia: 'Reglas claras de convivencia',
+        direccion_referencial: 'Calle 5 # 4-70',
+      },
+    })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText('Descripción')).toBeInTheDocument())
+    expect(screen.getAllByText('No informado').length).toBe(3)
+    expect(screen.queryByText(/Total primer mes/)).not.toBeInTheDocument()
+  })
+
+  it('respuesta nula informa publicación no encontrada', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: null })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText('Publicación no encontrada')).toBeInTheDocument())
+  })
+
+  it('tipo y servicios crudos se muestran tal cual (badges)', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: { ...pub, tipo_inmueble: 'LOFT', servicios: ['WiFi Fibra', 'Amoblado'] } })
+    renderDetalle()
+    await waitFor(() => expect(screen.getAllByText('LOFT').length).toBe(2))
+    expect(screen.getByText('WiFi Fibra')).toBeInTheDocument()
+    expect(screen.getByText('Amoblado')).toBeInTheDocument()
   })
 })
