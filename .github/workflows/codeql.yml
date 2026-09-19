@@ -1,0 +1,41 @@
+# CodeQL — AlojaU (Tarea 2, AUDITORIA.md §8)
+# Análisis de seguridad automatizado (detección e inventario, sin correcciones).
+# Lenguajes del monorepo: python (backend/) y javascript (frontend/, sin TS).
+# No modifica ci.yml: corre en paralelo como checks independientes del mismo PR.
+# NOTA: security-extended amplía cobertura pero incluye consultas de menor
+# precisión -> revisar cada hallazgo antes de tratarlo como vulnerabilidad real.
+name: CodeQL
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+  schedule:
+    - cron: '0 6 * * 1' # semanal, lunes 06:00 UTC
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write # publicar resultados en Security -> Code scanning
+      actions: read # leer metadata del run
+      contents: read # checkout del código
+    strategy:
+      fail-fast: false # un lenguaje en rojo no cancela el otro
+      matrix:
+        language: [python, javascript]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
