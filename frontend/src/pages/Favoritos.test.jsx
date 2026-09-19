@@ -143,10 +143,8 @@ describe('Página de Favoritos (HU Estudiante)', () => {
 
     await waitFor(() => {
       expect(screen.queryByText('Vivienda 1')).not.toBeInTheDocument()
+      expect(screen.getByText('Vivienda 2')).toBeInTheDocument()
     })
-
-    // Vivienda 2 sigue presente
-    expect(screen.getByText('Vivienda 2')).toBeInTheDocument()
 
     // localStorage actualizado
     const stored = JSON.parse(localStorage.getItem('favoritos'))
