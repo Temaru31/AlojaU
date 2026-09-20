@@ -232,6 +232,34 @@ def test_handler_global_pasa_http_exception_intacta():
     import json
     assert json.loads(resp.body) == {"detail": "Nope"}
 
+def test_t2_login_expires_in_2h():
+    # T2: el default commiteado es 2h y el contrato expone la misma fuente única.
+    # (Se compara contra settings en vivo porque un .env local de dev puede
+    # sobreescribir el default; en CI no hay .env y vale 2.)
+    from app.core.config import Settings
+
+    assert Settings.model_fields["ACCESS_TOKEN_EXPIRE_HOURS"].default == 2
+    r = client.post("/api/auth/login", json={"email": "arrendador@alojau.com", "password": "AlojaU123"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["expires_in_hours"] == settings.ACCESS_TOKEN_EXPIRE_HOURS
+
+
+def test_t2_token_expirado_401_en_protegido():
+    # T2: JWT con exp en el pasado (firmado con el mecanismo real) -> 401 vía HTTP.
+    import jwt as pyjwt
+    from datetime import datetime, timezone, timedelta
+
+    pasado = datetime.now(timezone.utc) - timedelta(hours=1)
+    t = pyjwt.encode(
+        {"sub": "arrendador@alojau.com", "rol": "ARRENDADOR", "id": 1, "exp": pasado},
+        settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM,
+    )
+    r = client.post("/api/publicaciones", json={}, headers={"Authorization": f"Bearer {t}"})
+    assert r.status_code == 401
+
+
 def test_handler_global_500_con_request_id():
     import asyncio
     import json

@@ -73,7 +73,8 @@ class RegisterOut(BaseModel):
 class LoginOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    expires_in_hours: int = 8
+    # T2: fuente única settings (no hardcodear: create_token usa el mismo valor).
+    expires_in_hours: int = settings.ACCESS_TOKEN_EXPIRE_HOURS
     rol: str
     mock: bool = False
 
@@ -147,7 +148,7 @@ async def register(data: RegisterIn, db: AsyncSession = Depends(get_session)):
             raise HTTPException(status_code=400, detail="Email ya registrado (mock)")
         return {"id": 99, "email": data.email, "rol": "ARRENDADOR", "mock": True}
 
-@router.post("/login", response_model=LoginOut, summary="Login JWT HS256 8h")
+@router.post("/login", response_model=LoginOut, summary="Login JWT HS256 2h (T2)")
 async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_session)):
     _check_login_rate_limit(request)
     # B0-1: intenta DB real primero; fallback mock solo dev.
@@ -162,7 +163,7 @@ async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_
                 "sub": u_db.email, "rol": u_db.rol, "id": u_db.id,
                 "telefono_verificado": bool(u_db.telefono_verificado),
             })
-            return {"access_token": token, "token_type": "bearer", "expires_in_hours": 8, "rol": u_db.rol, "mock": False}
+            return {"access_token": token, "token_type": "bearer", "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": u_db.rol, "mock": False}
         # No en DB: en prod 401 directo (no filtrar existencia, no mock).
         if not _mock_enabled():
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
@@ -171,7 +172,7 @@ async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_
         if not u or not verify_password(data.password, u["password"]):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
         token = create_token({"sub": data.email, "rol": u["rol"], "id": u["id"], "telefono_verificado": True})
-        return {"access_token": token, "token_type": "bearer", "expires_in_hours": 8, "rol": u["rol"], "mock": True}
+        return {"access_token": token, "token_type": "bearer", "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": u["rol"], "mock": True}
     except HTTPException:
         raise
     except Exception as e:
@@ -186,7 +187,7 @@ async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_
         if not u or not verify_password(data.password, u["password"]):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
         token = create_token({"sub": data.email, "rol": u["rol"], "id": u["id"], "telefono_verificado": True})
-        return {"access_token": token, "token_type": "bearer", "expires_in_hours": 8, "rol": u["rol"], "mock": True}
+        return {"access_token": token, "token_type": "bearer", "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": u["rol"], "mock": True}
 
 @router.get("/perfil", response_model=PerfilOut, summary="Obtener perfil del usuario autenticado")
 async def get_perfil(
