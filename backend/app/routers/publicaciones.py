@@ -12,15 +12,15 @@ Sprint1: mock lista en memoria si no hay PG (frontend no se bloquea). Si hay PG,
 NFR P95<500ms: query indexada (estado, zona, canon), sin N+1, Haversine en memoria/Python.
 """
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List
-from fastapi import APIRouter, Depends, Query, Path, HTTPException, status, Header
+from typing import Optional
+from fastapi import APIRouter, Depends, Query, Path, HTTPException, status, Header, Request
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_session
 from app.core.config import settings
-from app.core.security import get_current_user, get_optional_user, require_arrendador
+from app.core.security import get_current_user, get_optional_user
 from app.repositories import publicacion_repo as repo
 from app.services import publicacion_view as view
 from app.schemas.publicacion import (
@@ -51,6 +51,37 @@ def _is_owner_or_admin(user: dict | None, owner_id: int | None) -> bool:
         return int(user.get("id")) == int(owner_id) if owner_id is not None else False
     except Exception:
         return False
+
+# v15.2 throttle de vistas: 120/min por IP (memoria en mock, PG en real).
+_VISTAS_MEM: dict[str, list[float]] = {}
+_VISTAS_MEM_LIMIT = 120
+_VISTAS_MEM_WINDOW_S = 60.0
+_VISTAS_MOCK_SET: set[tuple[int, str]] = set()
+
+
+async def _db_rate_check_vista(db: AsyncSession, ip: str) -> None:
+    """Throttle anti-inflado de vistas. PG en real, memoria en mock/dev."""
+    import time as _t
+    if _mock_enabled():
+        ahora = _t.monotonic()
+        hist = [x for x in _VISTAS_MEM.get(ip, []) if ahora - x < _VISTAS_MEM_WINDOW_S]
+        if len(hist) >= _VISTAS_MEM_LIMIT:
+            raise HTTPException(status_code=429, detail="Demasiadas vistas, espera un minuto")
+        hist.append(ahora)
+        _VISTAS_MEM[ip] = hist
+        return
+    try:
+        from app.routers.auth import _db_rate_check as _check, _db_rate_record as _rec
+        await _check(db, f"vista:{ip}", limite=_VISTAS_MEM_LIMIT,
+                     ventana_s=int(_VISTAS_MEM_WINDOW_S))
+        await _rec(db, f"vista:{ip}", False)
+    except HTTPException:
+        raise
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
 
 # --- MOCK Sprint1 (si no hay PG, solo dev) ---
 # MOCK_CAMPUS canónico en app/fixtures/demo.py. MOCK_PUBS simula filas.
@@ -135,7 +166,8 @@ async def list_publicaciones(
             db, campus_id, precio_min, precio_max, tipo, servicios_ids, page, size, q,
             ciudad_id_res, None,
         )
-        items = view.cards_for_page(pubs, rep_map, user_map, dist_map, campus_id)
+        mostrar = await repo.vistas_publicas(db)
+        items = view.cards_for_page(pubs, rep_map, user_map, dist_map, campus_id, mostrar)
         return build_paginated(items, total, page, size_norm)
     except HTTPException:
         raise
@@ -153,7 +185,7 @@ async def list_publicaciones(
             MOCK_PUBS, campus_id, precio_min, precio_max, tipo, servicios_ids, q,
             ciudad_id=ciudad_id, ciudad_slug=ciudad_slug,
         )
-        items = [view.mock_to_out(p, campus_id) for p in filtradas]
+        items = [view.mock_to_out(p, campus_id, False) for p in filtradas]
         total = len(items)
         offset, size_norm = paginate_params(page, size)
         paginated_items = items[offset:offset+size_norm]
@@ -200,7 +232,7 @@ async def mis_publicaciones(
         if not pubs:
             return build_paginated([], total, page, size_norm)
         rep_map, users_map, _ = await repo.fetch_page_aggregates(db, pubs, None)
-        return build_paginated(view.cards_for_page(pubs, rep_map, users_map, {}, None), total, page, size_norm)
+        return build_paginated(view.cards_for_page(pubs, rep_map, users_map, {}, None, True), total, page, size_norm)
     except HTTPException:
         raise
     except Exception as e:
@@ -218,7 +250,7 @@ async def mis_publicaciones(
     filtradas.sort(key=lambda p: p["id"], reverse=True)
     total = len(filtradas)
     offset, size_norm = paginate_params(page, size)
-    items = [view.mock_to_out(p) for p in filtradas[offset:offset + size_norm]]
+    items = [view.mock_to_out(p, None, True) for p in filtradas[offset:offset + size_norm]]
     return build_paginated(items, total, page, size_norm)
 
 @router.get("/{pub_id}", response_model=PublicacionDetailOut, summary="HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp")
@@ -235,10 +267,15 @@ async def get_publicacion(
     HU-008: telefono_whatsapp solo si verificado + whatsapp_url wa.me
     B0-6: PENDIENTE (y no-ACTIVO) privado -> 404 salvo owner/admin.
     """
-    current_user = get_optional_user(authorization)
+    current_user = await get_optional_user(authorization)
     try:
         p, reportes_activos, u, dist_detalle = await repo.fetch_detail_bundle(db, pub_id)
         if p:
+            # v14.1 Ley 1581: dueño eliminado -> invisible salvo ADMIN
+            # (la búsqueda ya los excluye; esto cubre acceso directo por URL).
+            if (u is not None and getattr(u, "eliminado_en", None) is not None
+                    and not (current_user and current_user.get("rol") == "ADMIN")):
+                raise HTTPException(status_code=404, detail="Publicación no encontrada")
             # B0-6: detalle no-ACTIVO privado (404 para no filtrar existencia).
             if p.estado != "ACTIVO" and not _is_owner_or_admin(current_user, p.usuario_id):
                 raise HTTPException(status_code=404, detail="Publicación no encontrada")
@@ -259,7 +296,10 @@ async def get_publicacion(
                     "dist_m": dist_ref,
                     "tiempo_pie_min": tiempo_pie_min(dist_ref),
                 }
-            return view.build_detail(p, reportes_activos, u, dist, campus_ref)
+            return view.build_detail(
+                p, reportes_activos, u, dist, campus_ref,
+                await repo.vistas_publicas(db) or _is_owner_or_admin(current_user, p.usuario_id),
+            )
     except HTTPException:
         raise
     except Exception as e:
@@ -292,7 +332,8 @@ async def get_publicacion(
         dist_ref = None
         if pub.get("latitud") is not None and pub.get("longitud") is not None:
             dist_ref = haversine_m(pub["latitud"], pub["longitud"], lugar["lat"], lugar["lng"])
-        out = view.mock_to_out(pub, campus_id)
+        out = view.mock_to_out(pub, campus_id,
+                               _is_owner_or_admin(current_user, pub.get("usuario_id")))
         out["campus_ref"] = {
             "campus_id": campus_id,
             "institucion": lugar["institucion"],
@@ -303,7 +344,8 @@ async def get_publicacion(
             "tiempo_pie_min": tiempo_pie_min(dist_ref),
         }
         return out
-    return view.mock_to_out(pub)
+    return view.mock_to_out(pub, None,
+                            _is_owner_or_admin(current_user, pub.get("usuario_id")))
 
 @router.patch("/{pub_id}", response_model=PublicacionCardOut, summary="UX Editar aviso del dueño (solo owner/ADMIN)")
 async def editar_publicacion(
@@ -342,7 +384,7 @@ async def editar_publicacion(
         )
         p = (await db.execute(stmt)).scalars().unique().one()
         rep_map, users_map, _ = await repo.fetch_page_aggregates(db, [p], None)
-        return view.cards_for_page([p], rep_map, users_map, {}, None)[0]
+        return view.cards_for_page([p], rep_map, users_map, {}, None, True)[0]
     except HTTPException:
         try:
             await db.rollback()
@@ -366,7 +408,7 @@ async def editar_publicacion(
     if not _is_owner_or_admin(user, pub.get("usuario_id")):
         raise HTTPException(status_code=403, detail="Solo el dueño puede editar")
     pub.update(cambios)
-    return view.mock_to_out(pub)
+    return view.mock_to_out(pub, None, True)
 
 @router.patch("/{pub_id}/renovar", response_model=RenovacionOut, summary="PA-01 Renovar vigencia 30 días (solo propietario)")
 async def renovar_publicacion(
@@ -441,10 +483,405 @@ async def renovar_publicacion(
     }
 
 
-@router.post("", response_model=PublicacionCreatedOut, status_code=status.HTTP_201_CREATED, summary="HU-005 Publicar oferta estructurada -> PENDIENTE (solo ARRENDADOR)")
+@router.delete("/{pub_id}", status_code=status.HTTP_200_OK, summary="Dueño: eliminar aviso (democión N->0 si queda sin inventario)")
+async def eliminar_publicacion(
+    pub_id: int = Path(..., ge=1, le=1000000),
+    db: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """v13.2: el dueño (o ADMIN) elimina su aviso.
+
+    Misma transacción: DELETE + conteo de vigentes + democión a ESTUDIANTE
+    si el inventario llega a 0 (row-lock anti-carreras). Responde el rol
+    para que el frontend refresque sin re-login.
+    401 sin token/id, 403 si no es dueño ni ADMIN, 404 si no existe.
+    """
+    from app.services import role_lifecycle as _rl
+    uid_token = user.get("id")
+    if not isinstance(uid_token, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    try:
+        from app.models import Publicacion
+
+        p = await db.get(Publicacion, pub_id)
+        if not p:
+            raise HTTPException(status_code=404, detail="Publicación no encontrada")
+        if not _is_owner_or_admin(user, p.usuario_id):
+            raise HTTPException(status_code=403, detail="Solo el dueño puede eliminar")
+        dueno_id = p.usuario_id
+        await db.delete(p)
+        await db.flush()
+        rol_final, democionado = await _rl.evaluar_democion(db, dueno_id)
+        await db.commit()
+        return {"id": pub_id, "eliminada": True, "rol": rol_final,
+                "rol_actualizado": democionado,
+                "mensaje": "Publicación eliminada." + (
+                    " Tu rol volvió a Usuario Base." if democionado else "")}
+    except HTTPException:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        raise
+    except Exception as e:
+        logger.error(f"[DB fallback] eliminar {pub_id} falló: {e!r}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    if not _mock_enabled():
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    pub = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
+    if not pub:
+        raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    if not _is_owner_or_admin(user, pub.get("usuario_id")):
+        raise HTTPException(status_code=403, detail="Solo el dueño puede eliminar")
+    dueno_id = pub.get("usuario_id")
+    MOCK_PUBS.remove(pub)
+    # Espejo mock de la democión (mismo criterio de vigentes).
+    democionado = False
+    rol_final = user.get("rol")
+    try:
+        from app.routers.auth import MOCK_USERS as _MU
+        restantes = sum(1 for x in MOCK_PUBS
+                        if x.get("usuario_id") == dueno_id
+                        and x.get("estado") in _rl.ESTADOS_VIGENTES)
+        for _em, _m in _MU.items():
+            if _m.get("id") == dueno_id and _m.get("rol") == "ARRENDADOR" and restantes == 0:
+                _m["rol"] = "ESTUDIANTE"
+                democionado = True
+                rol_final = "ESTUDIANTE"
+                break
+    except Exception:
+        pass
+    return {"id": pub_id, "eliminada": True, "rol": rol_final,
+            "rol_actualizado": democionado,
+            "mensaje": "Publicación eliminada (mock)." + (
+                " Tu rol volvió a Usuario Base." if democionado else "")}
+
+
+@router.patch("/{pub_id}/estado", summary="Dueño: pausar/reanudar aviso (ACTIVO<->PAUSADO)")
+async def cambiar_estado_dueno(
+    pub_id: int = Path(..., ge=1, le=1000000),
+    payload: dict = ...,
+    db: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """v15.2 switch del arrendador. Solo dueño (o ADMIN).
+
+    Allowlist: ACTIVO <-> PAUSADO y solo desde esos mismos estados (nunca
+    desde PENDIENTE/RECHAZADO: eso eludiría la moderación -> 409).
+    Misma transacción: estado + audit (PAUSED/RESUMED) + chequeo democión.
+    """
+    from app.services import role_lifecycle as _rl
+
+    nuevo = (payload or {}).get("estado") if isinstance(payload, dict) else None
+    if nuevo not in ("ACTIVO", "PAUSADO"):
+        raise HTTPException(status_code=422, detail="estado debe ser ACTIVO o PAUSADO")
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    try:
+        from app.models import Publicacion, PublicacionesAudit
+
+        p = await db.get(Publicacion, pub_id)
+        if not p:
+            raise HTTPException(status_code=404, detail="Publicación no encontrada")
+        if not _is_owner_or_admin(user, p.usuario_id):
+            raise HTTPException(status_code=403, detail="Solo el dueño puede cambiar el estado")
+        if p.estado not in ("ACTIVO", "PAUSADO"):
+            raise HTTPException(
+                status_code=409,
+                detail=f"No se puede cambiar estado desde {p.estado} (solo ACTIVO<->PAUSADO)",
+            )
+        if p.estado == nuevo:
+            return {"id": p.id, "estado": p.estado, "rol": user.get("rol"),
+                    "rol_actualizado": False, "mensaje": "Sin cambios."}
+        p.estado = nuevo
+        db.add(PublicacionesAudit(
+            publicacion_id=pub_id,
+            usuario_id=uid,
+            evento="PAUSED" if nuevo == "PAUSADO" else "RESUMED",
+            detalle=f"Cambio a {nuevo} por el dueño",
+        ))
+        await db.flush()
+        rol_final, democionado = await _rl.evaluar_democion(db, p.usuario_id)
+        await db.commit()
+        return {"id": p.id, "estado": nuevo, "rol": rol_final,
+                "rol_actualizado": democionado,
+                "mensaje": f"Aviso {nuevo.lower()}."}
+    except HTTPException:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        raise
+    except Exception as e:
+        logger.error(f"[DB fallback] estado {pub_id} falló: {e!r}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    if not _mock_enabled():
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    pub = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
+    if not pub:
+        raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    if not _is_owner_or_admin(user, pub.get("usuario_id")):
+        raise HTTPException(status_code=403, detail="Solo el dueño puede cambiar el estado")
+    if pub.get("estado") not in ("ACTIVO", "PAUSADO"):
+        raise HTTPException(status_code=409, detail="Solo ACTIVO<->PAUSADO")
+    pub["estado"] = nuevo
+    return {"id": pub_id, "estado": nuevo, "rol": user.get("rol"),
+            "rol_actualizado": False, "mensaje": f"Aviso {nuevo.lower()} (mock)."}
+
+
+@router.get("/{pub_id}/similares", summary="Inmuebles similares en la zona (excluye el actual)")
+async def similares(
+    pub_id: int = Path(..., ge=1, le=1000000),
+    limit: int = Query(4, ge=1, le=12),
+    db: AsyncSession = Depends(get_session),
+):
+    """v15.2 bloque 'similares': misma zona (o barrio libre), ACTIVO, dueño
+    activo, ordenados por confianza desc. 404 si el aviso base no existe."""
+    try:
+        from app.models import Publicacion
+
+        base = await db.get(Publicacion, pub_id)
+        if not base:
+            raise HTTPException(status_code=404, detail="Publicación no encontrada")
+        from app.repositories.publicacion_repo import dueno_activo_clause
+        from app.repositories import publicacion_repo as _repo
+        from app.services import publicacion_view as _view
+        conds = [
+            Publicacion.id != pub_id,
+            Publicacion.estado == "ACTIVO",
+            dueno_activo_clause(Publicacion),
+        ]
+        if base.zona_barrio_id is not None:
+            conds.append(Publicacion.zona_barrio_id == base.zona_barrio_id)
+        elif base.barrio_texto:
+            conds.append(Publicacion.barrio_texto == base.barrio_texto)
+        else:
+            return {"items": [], "total": 0}
+        stmt = (
+            select(Publicacion)
+            .options(
+                selectinload(Publicacion.imagenes),
+                selectinload(Publicacion.servicios),
+                selectinload(Publicacion.zona),
+            )
+            .where(*conds)
+            .order_by(Publicacion.indice_confianza.desc(), Publicacion.id.asc())
+            .limit(limit)
+        )
+        pubs = (await db.execute(stmt)).scalars().unique().all()
+        if not pubs:
+            return {"items": [], "total": 0}
+        rep_map, users_map, _ = await _repo.fetch_page_aggregates(db, pubs, None)
+        mostrar = await _repo.vistas_publicas(db)
+        return {"items": _view.cards_for_page(pubs, rep_map, users_map, {}, None, mostrar),
+                "total": len(pubs)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[DB fallback] similares {pub_id} falló: {e!r}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    if not _mock_enabled():
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    base = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
+    if not base:
+        raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    cands = [x for x in MOCK_PUBS
+             if x["id"] != pub_id and x.get("estado") == "ACTIVO"
+             and ((base.get("zona_barrio_id") is not None
+                   and x.get("zona_barrio_id") == base.get("zona_barrio_id"))
+                  or (base.get("zona_barrio_id") is None and base.get("barrio_texto")
+                      and x.get("barrio_texto") == base.get("barrio_texto")))]
+    items = [view.mock_to_out(x, None, False) for x in cands[:limit]]
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/{pub_id}/vista", summary="Contar vista (dedup diaria por IP, anti-inflado)")
+async def registrar_vista(
+    pub_id: int = Path(..., ge=1, le=1000000),
+    request: Request = ...,
+    db: AsyncSession = Depends(get_session),
+):
+    """v15.2 métrica de vistas. Pública (ver vitrinas cuenta como visita).
+
+    Antifraude: 1 conteo por (aviso, IP, día) vía hash SHA256 (nunca la IP
+    en claro) + throttle 120/min por IP. Sin PG (dev mock): memoria local.
+    """
+    import hashlib as _hl
+    from datetime import date as _date
+    ip = "unknown"
+    try:
+        fwd = request.headers.get("x-forwarded-for") if request else None
+        ip = (str(fwd).split(",")[0].strip() if fwd
+              else (request.client.host if request and request.client else "unknown"))
+    except Exception:
+        pass
+    await _db_rate_check_vista(db, ip)
+    dia = _date.today().isoformat()
+    marca = _hl.sha256(f"{ip}|{dia}".encode()).hexdigest()
+    try:
+        from app.models import Publicacion, VistaDedup
+
+        p = await db.get(Publicacion, pub_id)
+        if not p:
+            raise HTTPException(status_code=404, detail="Publicación no encontrada")
+        ya = (await db.execute(
+            select(VistaDedup).where(VistaDedup.publicacion_id == pub_id,
+                                     VistaDedup.marca == marca)
+        )).scalars().first()
+        if ya:
+            return {"id": pub_id, "vistas": int(p.vistas or 0), "contada": False}
+        db.add(VistaDedup(publicacion_id=pub_id, marca=marca, dia=dia))
+        p.vistas = int(p.vistas or 0) + 1
+        await db.commit()
+        return {"id": pub_id, "vistas": int(p.vistas), "contada": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[DB vista] {pub_id} falló: {e!r}", exc_info=True)
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    # Mock dev: memoria local del proceso.
+    key = (pub_id, marca)
+    if key in _VISTAS_MOCK_SET:
+        return {"id": pub_id, "vistas": 0, "contada": False, "mock": True}
+    _VISTAS_MOCK_SET.add(key)
+    for x in MOCK_PUBS:
+        if x["id"] == pub_id:
+            x["vistas"] = int(x.get("vistas", 0) or 0) + 1
+            return {"id": pub_id, "vistas": int(x["vistas"]), "contada": True, "mock": True}
+    raise HTTPException(status_code=404, detail="Publicación no encontrada")
+
+
+async def _gate_escritura(db: AsyncSession, user: dict) -> tuple[dict, bool]:
+    """Gate de escritura v13/v13.2/v14.1 (extraído de crear_publicacion).
+
+    Verifica en orden (guard clauses): rol real de BD (anti-staleness del
+    claim JWT) -> cuenta no eliminada -> email confirmado -> teléfono
+    vinculado -> scope `publications:write` (con auto-promoción ESTUDIANTE).
+
+    Args:
+        db: Sesión async (misma transacción del endpoint).
+        user: Claims JWT (requiere `id` int válido).
+
+    Returns:
+        Tupla (user_actualizado, rol_actualizado). `user` trae el rol real y
+        sin claim `scopes` rancio; `rol_actualizado` indica promoción.
+
+    Raises:
+        HTTPException: 403 (soft-delete, email, scope), 400 (sin teléfono).
+    """
+    from app.core.permissions import has_scope as _has_scope
+    from app.services import role_lifecycle as _rl
+
+    rol_actualizado = False
+    rol_bd, email_ok_bd, tel_bd = user.get("rol"), None, None
+    _uu = None
+    rol_verificado = False
+    try:
+        from app.models import Usuario as _U
+        _ures = await db.execute(select(_U).where(_U.id == user["id"]))
+        _uu = _ures.scalars().first()
+        if _uu is not None:
+            rol_bd = _uu.rol
+            email_ok_bd = bool(getattr(_uu, "email_verificado", True))
+            tel_bd = getattr(_uu, "telefono_whatsapp", None)
+            rol_verificado = True
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+    if not rol_verificado and _mock_enabled():
+        # Fuente de verdad en mock: MOCK_USERS (los claims del mock-token
+        # legacy pueden venir sin teléfono).
+        try:
+            from app.routers.auth import MOCK_USERS as _MU
+            _m = None
+            for _em, _mm in _MU.items():
+                if _mm.get("id") == user.get("id"):
+                    _m = _mm
+                    break
+            if _m is None:
+                from app.routers.auth import _norm_email as _ne
+                _m = _MU.get(_ne(user.get("sub") or ""))
+            if _m is not None:
+                rol_bd = _m.get("rol") or rol_bd
+                email_ok_bd = bool(_m.get("email_verificado", True))
+                tel_bd = _m.get("telefono_whatsapp")
+                rol_verificado = True
+        except Exception:
+            pass
+    user = {**user, "rol": rol_bd or user.get("rol")}
+    if _uu is not None and getattr(_uu, "eliminado_en", None) is not None:
+        raise HTTPException(
+            status_code=403,
+            detail="Tu cuenta está en proceso de eliminación. Restáurala antes de publicar.",
+        )
+    if rol_verificado:
+        # Anti-staleness: sin claim, los scopes derivan del rol real.
+        user.pop("scopes", None)
+    if not user.get("email_verificado") and email_ok_bd is False:
+        raise HTTPException(
+            status_code=403,
+            detail="Confirma tu correo antes de publicar (revisa tu email o solicita un código en /api/auth/otp/solicitar)",
+        )
+    tel_efectivo = tel_bd or user.get("telefono_whatsapp")
+    if not tel_efectivo:
+        raise HTTPException(
+            status_code=400,
+            detail="Vincula un número de contacto antes de publicar (Mi Perfil → Datos y contacto)",
+        )
+    if not _has_scope(user, "publications:write"):
+        promovido = False
+        if user.get("rol") == "ESTUDIANTE":
+            try:
+                rol_final = await _rl.promover_si_estudiante(db, user["id"])
+                if rol_final == "ARRENDADOR":
+                    user = {**user, "rol": "ARRENDADOR"}
+                    user.pop("scopes", None)
+                    promovido = True
+                    rol_actualizado = True
+            except Exception:
+                pass
+            if not promovido and _mock_enabled():
+                from app.routers.auth import MOCK_USERS as _MU
+                for _em, _m in _MU.items():
+                    if _m.get("id") == user.get("id") and _m.get("rol") == "ESTUDIANTE":
+                        _m["rol"] = "ARRENDADOR"
+                        user = {**user, "rol": "ARRENDADOR"}
+                        user.pop("scopes", None)
+                        promovido = True
+                        rol_actualizado = True
+                        break
+        if not _has_scope(user, "publications:write"):
+            raise HTTPException(status_code=403, detail="Solo ARRENDADOR puede publicar (se requiere 'publications:write')")
+    return user, rol_actualizado
+
+
+@router.post("", response_model=PublicacionCreatedOut, status_code=status.HTTP_201_CREATED, summary="HU-005 Publicar oferta estructurada -> PENDIENTE (auto-promueve ESTUDIANTE)")
 async def crear_publicacion(
     payload: PublicacionCreate,
-    user: dict = Depends(require_arrendador),
+    user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """
@@ -453,14 +890,37 @@ async def crear_publicacion(
       2. ≥3 fotos (Sprint1 adopta 3 para índice, aunque plantilla HU-005 decía 2)
       3. Estado inicial PENDIENTE (no ACTIVO directo; requiere moderación HU-010 Sprint2)
 
-    Tarea 3 (v7): campus_ids OPCIONAL — con coords, el trigger 004 autovincula
-    todos los lugares (Tulcán, Torobajo, Centro, Salud…) con Haversine; sin
-    coords el aviso vive en el listado general hasta ubicarse en el mapa.
-    Sprint1: si no hay DB, retorna mock PENDIENTE + calcula índice inicial (no persiste) para demo frontend.
-    Con DB: persiste publicación + publicacion_campus (con Haversine) + imagenes + calcula índice.
-    B0-4: FK estricta zona/campus/servicios -> 404 con rollback. B0-5: dist NULL si sin coords.
+    v13:
+      - RBAC por scopes: exige `publications:write`. Un ESTUDIANTE que
+        publica se promueve automáticamente a ARRENDADOR (sin duplicar
+        cuentas) y la petición continúa.
+      - Email no confirmado bloquea la escritura (403 con guía a /otp).
+    v13.2:
+      - El rol se verifica contra BD (no solo el claim del JWT: evita que
+        un token democionado conserve scopes hasta expirar).
+      - Sin teléfono vinculado -> 400 (progressive profiling: se exige al
+        publicar, no al registrarse). La promoción solo ocurre si email +
+        teléfono están listos.
+      - La respuesta incluye `rol` + `rol_actualizado` para que el frontend
+        refresque el perfil sin re-login.
+
+    Args:
+        payload: Oferta validada por PublicacionCreate.
+        user: Claims JWT (inyectados por get_current_user, con revocación).
+        db: Sesión async (misma transacción para gate + persistencia).
+
+    Returns:
+        PublicacionCreatedOut con `rol`/`rol_actualizado` para reactividad.
+
+    Raises:
+        HTTPException: 401 sin propietario válido, 403 sin email/scope o
+            cuenta en eliminación, 400 sin teléfono, 404 FK, 503 sin BD.
     """
-    # Validación extra: si lat/lng no provistas, warning pero no bloquea (Sprint1)
+    # Guard: nunca suplantar dueño (F1) antes de tocar la BD.
+    if not isinstance(user.get("id"), int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    # Gate v13/v13.2/v14.1 (rol real + email + teléfono + promoción).
+    user, rol_actualizado = await _gate_escritura(db, user)
     # Calcular índice inicial (B0-6: default telefono_verificado False si ausente).
     trust = view.initial_trust(payload, bool(user.get("telefono_verificado", False)))
 
@@ -473,7 +933,18 @@ async def crear_publicacion(
             db, payload.zona_barrio_id, payload.campus_ids, payload.servicios_ids
         )
         nueva = await repo.create_persisted(db, payload, user["id"], trust, campus_ids, servicios_ids)
-        return {"id": nueva.id, "estado": "PENDIENTE", "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "mensaje": "Publicación en PENDIENTE, pendiente de moderación"}
+        # v15.2 auto-moderación (flag OFF por defecto: no-op, sigue PENDIENTE).
+        mod_info = None
+        try:
+            from app.services import auto_moderation as _am
+            _res = await _am.evaluar_y_aplicar(db, nueva)
+            await db.commit()
+            await db.refresh(nueva)
+            if _res.labels.get("auto", True) is not False and _res.decision == _am.APPROVE:
+                mod_info = _res.to_dict()
+        except Exception as _e:
+            logger.warning(f"[automod] no aplicada, sigue flujo manual: {_e!r}")
+        return {"id": nueva.id, "estado": nueva.estado, "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "mensaje": "Publicación en PENDIENTE, pendiente de moderación" if nueva.estado == "PENDIENTE" else "Publicación aprobada automáticamente", "rol": user.get("rol"), "rol_actualizado": rol_actualizado, "moderacion": mod_info}
 
     except HTTPException:
         try:
@@ -504,4 +975,4 @@ async def crear_publicacion(
             "campus_ids": list(dict.fromkeys(payload.campus_ids)), "usuario_id": user["id"],
             "telefono_verificado": bool(user.get("telefono_verificado", False)), "reportes_activos": 0,
         })
-        return {"id": mock_id, "estado": "PENDIENTE (MOCK - sin PG)", "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "detalle_mock": f"DB no disponible ({e}), se usó mock en memoria"}
+        return {"id": mock_id, "estado": "PENDIENTE (MOCK - sin PG)", "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "detalle_mock": f"DB no disponible ({e}), se usó mock en memoria", "rol": user.get("rol"), "rol_actualizado": rol_actualizado}

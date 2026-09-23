@@ -23,11 +23,25 @@ def test_settings_rbac():
     r = client.get("/api/admin/automation/settings", headers=ADMIN)
     assert r.status_code == 200
     claves = {s["clave"] for s in r.json()}
-    assert claves == {
+    # Superset (no igualdad exacta): añadir claves no debe romper este test.
+    esperadas = {
         "dias_vigencia_publicacion",
         "max_reportes_para_pausa_automatica",
         "auto_aprobar_arrendadores_verificados",
+        # v15.2 auto-moderación + UX.
+        "moderacion_automatica",
+        "umbral_aprobacion_ia",
+        "dias_desactualizada",
+        "titulo_min",
+        "titulo_max",
+        "descripcion_min",
+        "descripcion_max",
+        "fotos_min_publicar",
+        "palabras_prohibidas",
+        "vistas_visibles_publico",
     }
+    assert esperadas <= claves, f"faltan claves: {esperadas - claves}"
+    assert all("seccion" in s for s in r.json())
 
 
 def test_settings_patch_valida_e_invalida_cache():

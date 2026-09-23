@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { api } from '../services/api'
 import Indice from '../components/IndiceConfianza'
@@ -8,6 +8,9 @@ import ReportarModal from '../components/ReportarModal'
 import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
 import { useFavoritos } from '../contexts/FavoritosContext'
 import { useComparar } from '../contexts/CompararContext'
+import { useAuth } from '../contexts/AuthContext'
+import EditarPublicacionModal from '../components/EditarPublicacionModal'
+import { haceRelativo, estaDesactualizada } from '../constants'
 
 export function humanizarTipo(tipo) {
   const map = {
@@ -56,6 +59,11 @@ export default function Detalle() {
   const [yaContactado, setYaContactado] = useState(false)
   const [copiado, setCopiado] = useState('')
   const favHook = useFavoritos()
+  // v14.1: con sesión, el dueño/Admin ve su aviso aunque no esté ACTIVO.
+  const { token: authToken, user: authUser } = useAuth()
+  const [editando, setEditando] = useState(false)
+  const [similares, setSimilares] = useState([])
+  const vistaEnviada = useRef(null)
   const compHook = useComparar()
 
   const mostrarToast = (msg) => {
@@ -72,7 +80,8 @@ export default function Detalle() {
     setLoading(true)
     setLoadError('')
     const qs = campusIdParam ? `?campus_id=${encodeURIComponent(campusIdParam)}` : ''
-    api.get(`/api/publicaciones/${id}${qs}`)
+    const cfg = authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : {}
+    api.get(`/api/publicaciones/${id}${qs}`, cfg)
       .then(r => { if (!cancelled) setPub(r.data) })
       .catch((err) => {
         if (cancelled) return
@@ -84,7 +93,27 @@ export default function Detalle() {
       .finally(() => { if (!cancelled) setLoading(false) })
     // UX/perf: cambio rápido de aviso no pisa el detalle con respuesta tardía.
     return () => { cancelled = true }
-  }, [id, campusIdParam])
+  }, [id, campusIdParam, authToken])
+
+  // v15.2 métrica de vistas: 1 POST por aviso (el backend deduplica por IP/día).
+  useEffect(() => {
+    if (!pub || vistaEnviada.current === pub.id) return
+    vistaEnviada.current = pub.id
+    try {
+      const p = api.post(`/api/publicaciones/${pub.id}/vista`)
+      p?.catch?.(() => { /* métrica best-effort */ })
+    } catch { /* métrica best-effort */ }
+  }, [pub, id])
+
+  // v15.2 bloque "similares en la zona" (también alimenta el fallback).
+  useEffect(() => {
+    if (!pub) { setSimilares([]); return }
+    let vivo = true
+    api.get(`/api/publicaciones/${pub.id}/similares`, { params: { limit: 4 } })
+      .then(r => { if (vivo) setSimilares(Array.isArray(r.data?.items) ? r.data.items : []) })
+      .catch(() => { if (vivo) setSimilares([]) })
+    return () => { vivo = false }
+  }, [pub, id])
 
   // Catálogo de lugares para resolver ?campus_id= aunque el backend no traiga campus_ref.
   useEffect(() => {
@@ -147,8 +176,15 @@ export default function Detalle() {
             </svg>
           </div>
           <p className="font-medium text-neutral-700 mb-1">
-            {es404 || loadError === '' ? 'Publicación no encontrada' : 'No se pudo cargar la publicación'}
+            {es404 ? 'Esta publicación no se encuentra disponible actualmente'
+              : loadError === '' ? 'Publicación no encontrada'
+              : 'No se pudo cargar la publicación'}
           </p>
+          {es404 && (
+            <p className="text-xs text-neutral-500 mb-4">
+              Pudo ser pausada, vendida o eliminada. Explora inmuebles similares en Buscar.
+            </p>
+          )}
           {loadError === 'network' && (
             <p className="text-xs text-neutral-500 mb-4">Revisa tu conexión o intenta de nuevo. Si persiste, el servidor puede estar iniciando.</p>
           )}
@@ -193,6 +229,11 @@ export default function Detalle() {
     : (lugarLista ? `Distancia a ${nombreLugarLista}` : 'Distancia al campus')
 
   const isActivo = pub.estado === 'ACTIVO'
+  // v15.2 autoría reactiva (usuario_id lo expone DetailOut).
+  const esDueno = !!(authUser?.id != null && pub.usuario_id != null
+    && Number(authUser.id) === Number(pub.usuario_id))
+  const actualizadoHace = haceRelativo(pub.updated_at || pub.fecha_renovacion)
+  const desactualizada = estaDesactualizada(pub.updated_at || pub.fecha_renovacion)
   const hasTel = !!pub.telefono_whatsapp && isActivo
   const wa = hasTel
     ? `https://wa.me/${pub.telefono_whatsapp}?text=${encodeURIComponent(`Hola, vi ${pub.titulo} (ID ${pub.id}) en AlojaU y me interesa.`)}`
@@ -254,6 +295,17 @@ export default function Detalle() {
         </svg>
         <span className="text-neutral-600 truncate">{pub.titulo}</span>
       </nav>
+      {/* v15.2 banner de estado no disponible (solo lo ven dueño/Admin). */}
+      {!isActivo && (
+        <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3" role="status">
+          <p className="text-xs sm:text-sm font-semibold text-amber-800">
+            Esta publicación se encuentra temporalmente pausada o desactualizada por el arrendador.
+          </p>
+          <p className="text-[11px] text-amber-700 mt-0.5">
+            Estás viendo una vista previa de lectura{esDueno ? ' de tu propio aviso' : ''}; sin botones de contacto ni reserva.
+          </p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
         <div className="lg:col-span-2 space-y-6">
@@ -296,6 +348,16 @@ export default function Detalle() {
             >
               ⚑ Reportar aviso
             </button>
+            {/* v15.2 acceso directo del dueño (verificado por usuario_id). */}
+            {esDueno && (
+              <button type="button"
+                onClick={() => setEditando(true)}
+                aria-label={`Editar ${pub.titulo}`}
+                className="px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition bg-navy-800 border-navy-800 text-white hover:bg-navy-900"
+              >
+                ✎ Editar publicación
+              </button>
+            )}
           </div>
 
           {compHook.error && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2" role="alert">{compHook.error}</p>}
@@ -311,6 +373,17 @@ export default function Detalle() {
             <h1 className="font-display text-2xl md:text-3xl font-bold text-navy-900 tracking-tight mb-2">
               {pub.titulo}
             </h1>
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-neutral-400 mb-2">
+              {actualizadoHace && <span>Actualizado {actualizadoHace}</span>}
+              {typeof pub.vistas === 'number' && (
+                <span aria-label={`${pub.vistas} vistas`}>· 👁 {pub.vistas} {pub.vistas === 1 ? 'vista' : 'vistas'}</span>
+              )}
+              {desactualizada && (
+                <span className="font-semibold px-2 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-300">
+                  Desactualizada
+                </span>
+              )}
+            </div>
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
               <span className="text-2xl font-bold text-navy-800">
                 {canon != null ? `$${Number(canon).toLocaleString('es-CO')}` : 'No informado'}
@@ -558,6 +631,35 @@ export default function Detalle() {
       </div>
       {reportOpen && (
         <ReportarModal publicacionId={pub.id} titulo={pub.titulo} onClose={() => setReportOpen(false)} />
+      )}
+      {/* v15.2 similares en la zona (también visibles en avisos inactivos). */}
+      {similares.length > 0 && (
+        <section aria-label="Inmuebles similares disponibles en esta zona" className="mt-10">
+          <h2 className="font-display text-lg font-bold text-navy-900 mb-3">
+            Inmuebles similares disponibles en esta zona
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {similares.map(s => (
+              <Link key={s.id} to={`/publicacion/${s.id}`}
+                className="card p-3 hover:border-navy-300 transition block">
+                <p className="text-sm font-semibold text-navy-900 line-clamp-1">{s.titulo}</p>
+                <p className="text-xs text-neutral-500 mt-1">
+                  {s.canon_mensual != null ? `$${Number(s.canon_mensual).toLocaleString('es-CO')} COP/mes` : 'Canon no informado'}
+                </p>
+                <p className="text-[11px] text-neutral-400 mt-0.5">{s.zona_nombre || s.zona || ''}</p>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+      {/* v15.2 el dueño edita sin salir del detalle (reutiliza el modal). */}
+      {editando && authToken && (
+        <EditarPublicacionModal
+          pub={pub}
+          token={authToken}
+          onClose={() => setEditando(false)}
+          onSaved={(upd) => { setPub(prev => ({ ...prev, ...upd })); setEditando(false) }}
+        />
       )}
     </div>
   )

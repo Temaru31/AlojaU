@@ -4,7 +4,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import Detalle, { humanizarTipo } from './Detalle'
 import { api } from '../services/api'
 
-vi.mock('../services/api', () => ({ api: { get: vi.fn() } }))
+vi.mock('../services/api', () => ({ api: { get: vi.fn(), post: vi.fn() } }))
 // Leaflet no corre en jsdom: se mockean hijos visuales (el scroll/botones se prueban aquí).
 vi.mock('../components/MapaZona', () => ({ default: (props) => <div data-testid="mapa" data-aviso={props.aviso ? JSON.stringify(props.aviso) : ''} data-lugar={props.lugar ? JSON.stringify(props.lugar) : ''} /> }))
 vi.mock('../components/GaleriaFotos', () => ({ default: () => <div data-testid="galeria" /> }))
@@ -138,7 +138,7 @@ describe('Detalle 004 sincronización dinámica del mapa', () => {
       })
     })
     renderDetalleQs('?campus_id=3')
-    await waitFor(() => expect(api.get).toHaveBeenCalledWith('/api/publicaciones/1?campus_id=3'))
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith('/api/publicaciones/1?campus_id=3', {}))
     const mapa = await screen.findByTestId('mapa')
     expect(mapa.dataset.lugar).toContain('Campanario')
     expect(mapa.dataset.lugar).toContain('2.4467')
@@ -348,5 +348,81 @@ describe('Detalle ramas sin cubrir (contacto, errores, fallbacks)', () => {
     await waitFor(() => expect(screen.getAllByText('LOFT').length).toBe(2))
     expect(screen.getByText('WiFi Fibra')).toBeInTheDocument()
     expect(screen.getByText('Amoblado')).toBeInTheDocument()
+  })
+})
+
+describe('Detalle v14.1 (sesión en vistas)', () => {
+  it('con token: envía Authorization para que el dueño vea su PENDIENTE', async () => {
+    const AuthCtx = await import('../contexts/AuthContext')
+    const spy = vi.spyOn(AuthCtx, 'useAuth').mockReturnValue({
+      token: 'tok-dueno', user: { email: 'a@b.co' }, loading: false,
+      login: vi.fn(), logout: vi.fn(), refresh: vi.fn(),
+    })
+    try {
+      api.get.mockResolvedValue({ data: pub })
+      renderDetalle()
+      await waitFor(() => expect(api.get).toHaveBeenCalledWith(
+        '/api/publicaciones/1',
+        { headers: { Authorization: 'Bearer tok-dueno' } },
+      ))
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('sin token: no envía Authorization (lectura pública)', async () => {
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith('/api/publicaciones/1', {}))
+  })
+})
+
+describe('Detalle v15.2 (dueño, inactivo y similares)', () => {
+  it('dueño ve botón Editar publicación; tercero no', async () => {
+    const AuthCtx = await import('../contexts/AuthContext')
+    const spy = vi.spyOn(AuthCtx, 'useAuth').mockReturnValue({
+      token: 't', user: { id: 9, email: 'a@b.co' }, loading: false,
+      login: vi.fn(), logout: vi.fn(), refresh: vi.fn(),
+    })
+    try {
+      api.get.mockImplementation((url) => {
+        if (url.endsWith('/similares')) return Promise.resolve({ data: { items: [], total: 0 } })
+        if (url.endsWith('/vista')) return Promise.resolve({ data: { vistas: 1, contada: true } })
+        return Promise.resolve({ data: { ...pub, usuario_id: 9 } })
+      })
+      renderDetalle()
+      expect(await screen.findByRole('button', { name: /Editar Habitación cerca Tulcán/ })).toBeInTheDocument()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('aviso inactivo muestra banner y similares; contacto oculto', async () => {
+    const AuthCtx = await import('../contexts/AuthContext')
+    const spy = vi.spyOn(AuthCtx, 'useAuth').mockReturnValue({
+      token: 't', user: { id: 9, email: 'a@b.co' }, loading: false,
+      login: vi.fn(), logout: vi.fn(), refresh: vi.fn(),
+    })
+    try {
+      const similar = { ...pub, id: 2, titulo: 'Vecina Tulcán', estado: 'ACTIVO' }
+      api.get.mockImplementation((url) => {
+        if (url.endsWith('/similares')) return Promise.resolve({ data: { items: [similar], total: 1 } })
+        if (url.endsWith('/vista')) return Promise.resolve({ data: { vistas: 5, contada: true } })
+        return Promise.resolve({ data: { ...pub, usuario_id: 9, estado: 'PAUSADO', telefono_whatsapp: '573001234567' } })
+      })
+      renderDetalle()
+      expect(await screen.findByText(/temporalmente pausada o desactualizada/)).toBeInTheDocument()
+      expect(await screen.findByText('Inmuebles similares disponibles en esta zona')).toBeInTheDocument()
+      expect(await screen.findByText('Vecina Tulcán')).toBeInTheDocument()
+      expect(screen.queryByRole('link', { name: /Contactar por WhatsApp/ })).not.toBeInTheDocument()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('404 muestra cortesía de no disponible', async () => {
+    api.get.mockRejectedValue({ response: { status: 404 } })
+    renderDetalle()
+    expect(await screen.findByText('Esta publicación no se encuentra disponible actualmente')).toBeInTheDocument()
   })
 })

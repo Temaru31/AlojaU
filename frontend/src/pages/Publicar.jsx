@@ -5,7 +5,9 @@ import UploadFotos from '../components/UploadFotos'
 import MapPicker from '../components/MapPicker'
 import ZonaSelect from '../components/ZonaSelect'
 import { notifyToast } from '../components/Toast'
-import { emitAuthChange } from '../contexts/AuthContext'
+import { emitAuthChange, useAuth } from '../contexts/AuthContext'
+import ContadorCaracteres from '../components/ContadorCaracteres'
+import { LIMITES, estadoRango, RANGO_CLS } from '../constants'
 
 const SERVICIOS = [
   { id: 1, nombre: 'WiFi Fibra' },
@@ -16,6 +18,7 @@ const SERVICIOS = [
 ]
 
 export default function Publicar() {
+  const { refresh } = useAuth()
   const [token, setToken] = useState(() => localStorage.getItem('alojau_token') || '')
   const [loginEmail, setLoginEmail] = useState('')
   const [loginPass, setLoginPass] = useState('')
@@ -40,6 +43,7 @@ export default function Publicar() {
   })
   const [errors, setErrors] = useState({})
   const [submitError, setSubmitError] = useState('')
+  const [submitPhoneGate, setSubmitPhoneGate] = useState(false)
   const [submitOk, setSubmitOk] = useState(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -107,7 +111,7 @@ export default function Publicar() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    setSubmitError(''); setSubmitOk(null)
+    setSubmitError(''); setSubmitOk(null); setSubmitPhoneGate(false)
     if (!validate()) return
     if (!token) {
       setSubmitError('Debes iniciar sesión como ARRENDADOR')
@@ -134,16 +138,24 @@ export default function Publicar() {
     try {
       const r = await api.post('/api/publicaciones', payload, { headers: { Authorization: `Bearer ${token}` } })
       setSubmitOk(r.data)
+      // v13.2 reactividad de rol: si hubo promoción, re-sincroniza el perfil.
+      if (r.data?.rol_actualizado) {
+        try { await refresh?.() } catch { /* noop */ }
+        emitAuthChange()
+      }
     } catch (err) {
       const detail = err.response?.data?.detail
       if (Array.isArray(detail)) {
         setSubmitError(detail.map(d => `${d.loc?.join('.')}: ${d.msg}`).join(' | '))
       } else if (typeof detail === 'string') {
         setSubmitError(detail)
+        setSubmitPhoneGate(err.response?.status === 400)
       } else if (err.response?.status === 401) {
         setSubmitError('No autorizado. Verifica tu token ARRENDADOR.')
       } else if (err.response?.status === 403) {
-        setSubmitError('Solo ARRENDADOR puede publicar (403)')
+        const d = typeof detail === 'string' ? detail : ''
+        // v13: email sin confirmar o scope insuficiente.
+        setSubmitError(d || 'Solo ARRENDADOR puede publicar (403). Si tu cuenta es de estudiante, se promueve sola al publicar; confirma tu correo en Mi Perfil si se solicita.')
       } else {
         setSubmitError(err.message || 'Error al publicar')
       }
@@ -240,6 +252,9 @@ export default function Publicar() {
               </svg>
               <p className="font-semibold text-emerald-800">¡Publicación creada! Estado: {submitOk.estado}</p>
             </div>
+            {submitOk.rol_actualizado && (
+              <p className="text-sm text-emerald-700 mt-1">🎉 Tu cuenta ahora es <b>Arrendador</b>: tu panel se actualizó solo.</p>
+            )}
             <p className="text-sm text-emerald-700 mt-1">{submitOk.mensaje || ''}</p>
             {submitOk.indice_confianza != null && (
               <p className="text-xs text-emerald-600 mt-2">Índice confianza: <b>{submitOk.indice_confianza}</b> — {submitOk.advertencia}</p>
@@ -247,30 +262,49 @@ export default function Publicar() {
             <p className="text-xs text-emerald-500 mt-2">ID {submitOk.id} — No aparece en catálogo hasta ser aprobada.</p>
           </div>
         )}
-        {submitError && <p className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 mb-4 text-sm break-words">{submitError}</p>}
+        {submitError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+            <p className="text-red-700 text-sm break-words">{submitError}</p>
+            {submitPhoneGate && (
+              <Link to="/perfil" className="inline-block mt-2 text-xs font-semibold text-navy-700 underline hover:text-navy-900">
+                Vincular mi número en Mi Perfil →
+              </Link>
+            )}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="card p-6 md:p-8 space-y-5" noValidate>
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Titulo de la publicacion * <span className="text-neutral-400 font-normal">(10-150)</span></label>
-            <input
-              value={form.titulo}
-              onChange={e => setForm({ ...form, titulo: e.target.value })}
-              placeholder="Ej: Habitacion amoblada cerca al Tulcan"
-              className={`input-field ${errors.titulo ? '!border-red-300 !shadow-none' : ''}`}
-              required
-            />
+            <div className="relative">
+              <input
+                value={form.titulo}
+                onChange={e => setForm({ ...form, titulo: e.target.value })}
+                placeholder="Ej: Habitacion amoblada cerca al Tulcan"
+                maxLength={LIMITES.titulo.max}
+                aria-describedby="titulo-contador"
+                className={`input-field ${errors.titulo ? '!border-red-300 !shadow-none' : RANGO_CLS[estadoRango(form.titulo.trim().length, LIMITES.titulo.min, LIMITES.titulo.max)]}`}
+                required
+              />
+              <ContadorCaracteres id="titulo-contador" len={form.titulo.trim().length} min={LIMITES.titulo.min} max={LIMITES.titulo.max} />
+            </div>
             {errors.titulo && <p className="text-xs text-red-600 mt-1">{errors.titulo}</p>}
           </div>
 
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Descripcion * <span className="text-neutral-400 font-normal">(20-2000)</span></label>
-            <textarea
-              value={form.descripcion}
-              onChange={e => setForm({ ...form, descripcion: e.target.value })}
-              rows={3}
-              placeholder="Amoblada, baño privado, WiFi 200MB, cerca universidad..."
-              className={`input-field resize-none ${errors.descripcion ? '!border-red-300 !shadow-none' : ''}`}
-            />
+            <div className="relative">
+              <textarea
+                value={form.descripcion}
+                onChange={e => setForm({ ...form, descripcion: e.target.value })}
+                rows={3}
+                placeholder="Amoblada, baño privado, WiFi 200MB, cerca universidad..."
+                maxLength={LIMITES.descripcion.max}
+                aria-describedby="descripcion-contador"
+                className={`input-field resize-none ${errors.descripcion ? '!border-red-300 !shadow-none' : RANGO_CLS[estadoRango(form.descripcion.trim().length, LIMITES.descripcion.min, LIMITES.descripcion.max)]}`}
+              />
+              <ContadorCaracteres id="descripcion-contador" len={form.descripcion.trim().length} min={LIMITES.descripcion.min} max={LIMITES.descripcion.max} />
+            </div>
             {errors.descripcion && <p className="text-xs text-red-600 mt-1">{errors.descripcion}</p>}
           </div>
 
@@ -332,25 +366,35 @@ export default function Publicar() {
 
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Direccion referencial *</label>
-            <input
-              value={form.direccion_referencial}
-              onChange={e => setForm({ ...form, direccion_referencial: e.target.value })}
-              placeholder="No compartas tu direccion exacta"
-              className={`input-field ${errors.direccion_referencial ? '!border-red-300 !shadow-none' : ''}`}
-              required
-            />
+            <div className="relative">
+              <input
+                value={form.direccion_referencial}
+                onChange={e => setForm({ ...form, direccion_referencial: e.target.value })}
+                placeholder="No compartas tu direccion exacta"
+                maxLength={LIMITES.direccion.max}
+                aria-describedby="direccion-contador"
+                className={`input-field ${errors.direccion_referencial ? '!border-red-300 !shadow-none' : RANGO_CLS[estadoRango(form.direccion_referencial.trim().length, LIMITES.direccion.min, LIMITES.direccion.max)]}`}
+                required
+              />
+              <ContadorCaracteres id="direccion-contador" len={form.direccion_referencial.trim().length} min={LIMITES.direccion.min} max={LIMITES.direccion.max} />
+            </div>
             {errors.direccion_referencial && <p className="text-xs text-red-600 mt-1">{errors.direccion_referencial}</p>}
           </div>
 
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Reglas de convivencia *</label>
-            <textarea
-              value={form.reglas_convivencia}
-              onChange={e => setForm({ ...form, reglas_convivencia: e.target.value })}
-              placeholder="Describe las reglas de convivencia..."
-              rows={3}
-              className={`input-field resize-none ${errors.reglas_convivencia ? '!border-red-300 !shadow-none' : ''}`}
-            />
+            <div className="relative">
+              <textarea
+                value={form.reglas_convivencia}
+                onChange={e => setForm({ ...form, reglas_convivencia: e.target.value })}
+                placeholder="Describe las reglas de convivencia..."
+                rows={3}
+                maxLength={LIMITES.reglas.max}
+                aria-describedby="reglas-contador"
+                className={`input-field resize-none ${errors.reglas_convivencia ? '!border-red-300 !shadow-none' : RANGO_CLS[estadoRango(form.reglas_convivencia.trim().length, LIMITES.reglas.min, LIMITES.reglas.max)]}`}
+              />
+              <ContadorCaracteres id="reglas-contador" len={form.reglas_convivencia.trim().length} min={LIMITES.reglas.min} max={LIMITES.reglas.max} />
+            </div>
             {errors.reglas_convivencia && <p className="text-xs text-red-600 mt-1">{errors.reglas_convivencia}</p>}
           </div>
 
@@ -433,7 +477,9 @@ export default function Publicar() {
 
           <div className="pt-2">
             <button type="submit" disabled={submitting} aria-disabled={submitting} className="btn-accent w-full justify-center disabled:opacity-60 disabled:cursor-wait">
-              {submitting ? 'Guardando publicación...' : 'Enviar a revision'}
+              {submitting
+                ? (<span className="inline-flex items-center gap-2"><span aria-hidden="true" className="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />Guardando publicación...</span>)
+                : 'Enviar a revision'}
             </button>
             <p className="text-xs text-neutral-400 text-center mt-3">
               Requiere cuenta de arrendador. Estado inicial: PENDIENTE.

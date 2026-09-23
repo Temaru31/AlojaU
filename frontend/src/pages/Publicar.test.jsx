@@ -180,7 +180,8 @@ describe('Publicar (HU-005: solo ARRENDADOR, nace PENDIENTE)', () => {
 
     api.post.mockRejectedValueOnce({ response: { status: 403, data: {} } })
     fireEvent.click(screen.getByRole('button', { name: 'Enviar a revision' }))
-    expect(await screen.findByText('Solo ARRENDADOR puede publicar (403)')).toBeInTheDocument()
+    // v13: el 403 guía hacia verificación de correo / promoción automática.
+    expect(await screen.findByText(/Solo ARRENDADOR puede publicar/)).toBeInTheDocument()
 
     api.post.mockRejectedValueOnce({ response: { data: { detail: [{ loc: ['body', 'titulo'], msg: 'corto' }] } } })
     fireEvent.click(screen.getByRole('button', { name: 'Enviar a revision' }))

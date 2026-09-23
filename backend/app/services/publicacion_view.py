@@ -15,7 +15,8 @@ def whatsapp_link(titulo: str, pub_id: int, tel: Optional[str]) -> Optional[str]
     return f"https://wa.me/{tel}?text={urlquote(f'Hola, vi {titulo} (ID {pub_id}) en AlojaU y me interesa.')}"
 
 
-def mock_to_out(pub: dict, campus_id: Optional[int] = None) -> dict:
+def mock_to_out(pub: dict, campus_id: Optional[int] = None,
+                mostrar_vistas: bool = True) -> dict:
     """Convierte dict mock a payload detalle (Haversine + Trust + alias compat)."""
     dist = None
     if campus_id and campus_id in MOCK_CAMPUS and pub.get("latitud") is not None and pub.get("longitud") is not None:
@@ -73,6 +74,11 @@ def mock_to_out(pub: dict, campus_id: Optional[int] = None) -> dict:
         "telefono_whatsapp": tel,
         "whatsapp_url": whatsapp_link(pub["titulo"], pub["id"], tel),
         "usuario_id": pub.get("usuario_id"),
+        # v15.2 paridad mock (sin ids de foto ni contador en memoria).
+        "created_at": pub.get("fecha_publicacion"),
+        "updated_at": pub.get("fecha_renovacion"),
+        "vistas": (pub.get("vistas", 0) or 0) if mostrar_vistas else None,
+        "imagenes": [],
         # Oleada 2: coords para MapaZona modo aviso + deep-link (eran internas, ahora visibles).
         "latitud": pub.get("latitud"),
         "longitud": pub.get("longitud"),
@@ -118,7 +124,8 @@ def trust_for_row(p, reportes_activos: int, tel_ver: bool) -> dict:
     )
 
 
-def build_card(p, dist, trust: dict, zona_nombre, tel: Optional[str]) -> dict:
+def build_card(p, dist, trust: dict, zona_nombre, tel: Optional[str],
+               mostrar_vistas: bool = True) -> dict:
     """Item GET /api/publicaciones (canónicos + alias compat)."""
     return {
         "id": p.id, "titulo": p.titulo, "descripcion": p.descripcion,
@@ -136,10 +143,16 @@ def build_card(p, dist, trust: dict, zona_nombre, tel: Optional[str]) -> dict:
         "nivel_confianza": trust["nivel"], "nivel": trust["nivel"],
         "telefono_whatsapp": tel if tel else None,
         "usuario_id": p.usuario_id,
+        # v15.2 frescura + métricas (aditivos, sin romper contratos).
+        "fecha_publicacion": p.fecha_publicacion,
+        "created_at": p.fecha_publicacion,
+        "updated_at": p.fecha_renovacion,
+        "vistas": (getattr(p, "vistas", 0) or 0) if mostrar_vistas else None,
     }
 
 
-def build_detail(p, reportes_activos: int, u, dist, campus_ref: Optional[dict] = None) -> dict:
+def build_detail(p, reportes_activos: int, u, dist, campus_ref: Optional[dict] = None,
+                 mostrar_vistas: bool = True) -> dict:
     """Detalle GET /api/publicaciones/{id} (canónicos + alias compat)."""
     tel_ver = bool(u.telefono_verificado) if u else False
     trust = trust_for_row(p, reportes_activos, tel_ver)
@@ -167,10 +180,21 @@ def build_detail(p, reportes_activos: int, u, dist, campus_ref: Optional[dict] =
         "longitud": float(p.longitud) if p.longitud is not None else None,
         # 004 POIs: referencia resuelta con ?campus_id= (mapa dinámico del Detalle).
         "campus_ref": campus_ref,
+        # v15.2 autoría + frescura + métricas + gestión multimedia (aditivos).
+        "usuario_id": p.usuario_id,
+        "fecha_publicacion": p.fecha_publicacion,
+        "created_at": p.fecha_publicacion,
+        "updated_at": p.fecha_renovacion,
+        "vistas": (getattr(p, "vistas", 0) or 0) if mostrar_vistas else None,
+        "imagenes": [
+            {"id": im.id, "url": im.url, "orden": im.orden}
+            for im in sorted(p.imagenes, key=lambda i: i.orden)
+        ],
     }
 
 
-def cards_for_page(pubs, reportes_map: dict, users_map: dict, dist_map: dict, campus_id=None) -> list:
+def cards_for_page(pubs, reportes_map: dict, users_map: dict, dist_map: dict, campus_id=None,
+                   mostrar_vistas: bool = True) -> list:
     """Items GET /api/publicaciones desde agregados en memoria (sin queries)."""
     out = []
     for p in pubs:
@@ -179,7 +203,8 @@ def cards_for_page(pubs, reportes_map: dict, users_map: dict, dist_map: dict, ca
         trust = trust_for_row(p, reportes_map.get(p.id, 0), tel_ver)
         zona_nombre = _zona_display(p)
         tel = u.telefono_whatsapp if tel_ver and u else None
-        out.append(build_card(p, dist_map.get(p.id) if campus_id else None, trust, zona_nombre, tel))
+        out.append(build_card(p, dist_map.get(p.id) if campus_id else None, trust, zona_nombre, tel,
+                              mostrar_vistas))
     return out
 
 

@@ -3,7 +3,15 @@
 -- Fotos Unsplash estables con coherencia semántica (?auto=format&fit=crop&w=800&q=80):
 --   Habitación -> dormitorio/escritorio · Apartaestudio -> ambiente integrado/cocina ·
 --   Compartido -> sala/áreas comunes.
-TRUNCATE publicaciones_audit, reportes_publicacion, imagenes_publicacion, publicacion_campus, publicacion_servicios, publicaciones, servicios_catalogo, campus_universitarios, zonas_barrios, ciudades, usuarios RESTART IDENTITY CASCADE;
+TRUNCATE publicaciones_audit, reportes_publicacion, imagenes_publicacion, publicacion_campus, publicacion_servicios, publicaciones, servicios_catalogo, campus_universitarios, zonas_barrios, ciudades, usuarios, sesiones, password_resets, otp_codes, rate_limit_attempts, vistas_dedup, system_settings RESTART IDENTITY CASCADE;
+
+-- v15.2: settings canónicos (espejo de migración 005). Sin esto, filas de
+-- otros entornos/tests contaminan la tabla entre reseeds.
+INSERT INTO system_settings (clave, valor, tipo, descripcion) VALUES
+('dias_vigencia_publicacion', '30', 'int', 'Días de vigencia al publicar/renovar'),
+('max_reportes_para_pausa_automatica', '3', 'int', 'Reportes que pausan el aviso'),
+('auto_aprobar_arrendadores_verificados', 'false', 'bool', 'Auto-aprobar verificados')
+ON CONFLICT (clave) DO NOTHING;
 
 -- 1 ciudad
 INSERT INTO ciudades (id, nombre, departamento) VALUES (1, 'Popayán', 'Cauca') ON CONFLICT (nombre) DO NOTHING;
@@ -72,7 +80,14 @@ INSERT INTO publicaciones (id, usuario_id, zona_barrio_id, titulo, descripcion, 
 (15, 3, 5, 'Apartaestudio Catay norte', 'Apartaestudio en Catay con cocina, suspendido por reportes en revisión', 'APARTAESTUDIO', 600000, 200000, 'No fiestas, visitas coordinadas', 'Calle 9 # 11-15 Catay', 2.4390000, -76.5990000, 'PAUSADO_POR_REPORTE', 35, NOW() + INTERVAL '25 days'),
 (16, 3, 6, 'Habitación Alfonso López', 'Habitación amplia en Alfonso López, suspendida por reportes en revisión', 'HABITACION_FAMILIAR', 370000, 120000, 'Convivencia familiar tranquila', 'Calle 18 # 6-30 Alfonso López', 2.4360000, -76.6110000, 'PAUSADO_POR_REPORTE', 35, NOW() + INTERVAL '25 days')
 ON CONFLICT (id) DO NOTHING;
-SELECT setval('publicaciones_id_seq', 16, true);
+-- v14.1: secuencias al max(id) en TODAS las tablas con ids explícitos
+-- (antes solo publicaciones/usuarios: cualquier INSERT sin id colisionaba).
+SELECT setval('publicaciones_id_seq', (SELECT max(id) FROM publicaciones), true);
+SELECT setval('usuarios_id_seq', (SELECT max(id) FROM usuarios), true);
+SELECT setval('ciudades_id_seq', (SELECT max(id) FROM ciudades), true);
+SELECT setval('zonas_barrios_id_seq', (SELECT max(id) FROM zonas_barrios), true);
+SELECT setval('campus_universitarios_id_seq', (SELECT max(id) FROM campus_universitarios), true);
+SELECT setval('servicios_catalogo_id_seq', (SELECT max(id) FROM servicios_catalogo), true);
 
 -- Servicios por publicación (11 sin servicios a propósito: completitud 30 -> índice bajo)
 INSERT INTO publicacion_servicios (publicacion_id, servicio_id) VALUES

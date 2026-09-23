@@ -19,6 +19,22 @@ NUEVOS_FK = ["idx_reportes_usuario", "idx_audit_usuario"]
 # Índices nacidos en la 004 (viven en 004_pois_categoria, no en la 002).
 POST_002 = ["idx_campus_ciudad_categoria"]
 
+# v13 Enterprise Auth: índices nacidos en la 007 (cobertura propia abajo).
+POST_007 = ["idx_ratelimit_clave_creado", "idx_otp_email_creado",
+            "idx_pwreset_email_creado", "idx_sesiones_usuario"]
+MIG_007 = REPO / "alembic" / "versions" / "007_auth_enterprise.py"
+SQL_007 = REPO / "db" / "migrations" / "007_auth_enterprise.sql"
+
+# v13.1 soft-delete: índice nacido en la 008 (cobertura propia abajo).
+POST_008 = ["idx_usuarios_eliminado"]
+MIG_008 = REPO / "alembic" / "versions" / "008_cuenta_soft_delete.py"
+SQL_008 = REPO / "db" / "migrations" / "008_cuenta_soft_delete.sql"
+
+# v15.2 vistas: índice nacido en la 011 (cobertura propia abajo).
+POST_011 = ["idx_vistas_dedup_dia"]
+MIG_011 = REPO / "alembic" / "versions" / "011_metrica_vistas.py"
+SQL_011 = REPO / "db" / "migrations" / "011_metrica_vistas.sql"
+
 
 def _model_index_names() -> list[str]:
     return re.findall(r'Index\("([^"]+)"', MODELS.read_text(encoding="utf-8"))
@@ -40,7 +56,7 @@ def test_migracion_002_cubre_drift_y_fk_nuevas():
                  "idx_reportes_pub_estado", "idx_audit_pub"):
             continue
         # ...y salvo los nacidos en migraciones posteriores (tienen su propia cobertura).
-        if n in POST_002:
+        if n in POST_002 or n in POST_007 or n in POST_008 or n in POST_011:
             continue
         assert n in mig, f"{n} falta en 002_alineacion_indices.py"
     # ...y las FK nuevas en ambos lados.
@@ -66,3 +82,39 @@ def test_migracion_002_encadena_001_y_001_sin_rutas_absolutas():
     mig001 = MIG_001.read_text(encoding="utf-8")
     assert "/home/" not in mig001 and "/Users/" not in mig001, "001 aún tiene rutas absolutas"
     assert 'revision' in mig002 and '002_alineacion_indices' in mig002
+
+
+def test_migracion_007_cubre_indices_auth():
+    """v13: los índices de rate_limit/otp/resets/sesiones viven en la 007."""
+    mig = MIG_007.read_text(encoding="utf-8")
+    sql = SQL_007.read_text(encoding="utf-8")
+    schema = SCHEMA.read_text(encoding="utf-8")
+    assert "down_revision" in mig and "006_barrio_texto" in mig
+    for n in POST_007:
+        assert n in mig, f"{n} falta en 007_auth_enterprise.py"
+        assert n in sql, f"{n} falta en 007_auth_enterprise.sql"
+        assert n in schema, f"{n} falta en schema.sql"
+
+
+def test_migracion_008_cubre_indice_soft_delete():
+    """v13.1: idx_usuarios_eliminado vive en la 008."""
+    mig = MIG_008.read_text(encoding="utf-8")
+    sql = SQL_008.read_text(encoding="utf-8")
+    schema = SCHEMA.read_text(encoding="utf-8")
+    assert "down_revision" in mig and "007_auth_enterprise" in mig
+    for n in POST_008:
+        assert n in mig, f"{n} falta en 008_cuenta_soft_delete.py"
+        assert n in sql, f"{n} falta en 008_cuenta_soft_delete.sql"
+        assert n in schema, f"{n} falta en schema.sql"
+
+
+def test_migracion_011_cubre_indice_vistas():
+    """v15.2: idx_vistas_dedup_dia vive en la 011."""
+    mig = MIG_011.read_text(encoding="utf-8")
+    sql = SQL_011.read_text(encoding="utf-8")
+    schema = SCHEMA.read_text(encoding="utf-8")
+    assert "down_revision" in mig and "010_fk_cascade_and_sequences" in mig
+    for n in POST_011:
+        assert n in mig, f"{n} falta en 011_metrica_vistas.py"
+        assert n in sql, f"{n} falta en 011_metrica_vistas.sql"
+        assert n in schema, f"{n} falta en schema.sql"

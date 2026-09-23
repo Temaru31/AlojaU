@@ -55,3 +55,22 @@ describe('AuthContext', () => {
     expect(inicialesDe({})).toBe('?')
   })
 })
+
+describe('AuthContext v14.1 (memoización)', () => {
+  it('value y refresh estables entre renders sin cambio de estado', async () => {
+    let first = null
+    let last = null
+    const Cap = () => {
+      const v = useAuth()
+      if (!first) first = v
+      last = v
+      return <span data-testid="listo">ok</span>
+    }
+    const { rerender } = render(<AuthProvider><Cap /></AuthProvider>)
+    await screen.findByTestId('listo')
+    rerender(<AuthProvider><Cap /></AuthProvider>)
+    await screen.findByTestId('listo')
+    expect(last.refresh).toBe(first.refresh)
+    expect(last).toBe(first)
+  })
+})

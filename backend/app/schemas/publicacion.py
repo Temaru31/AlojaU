@@ -65,36 +65,6 @@ class PublicacionUpdate(BaseModel):
             raise ValueError("Envía al menos 1 campo para editar")
         return self
 
-class DesgloseConfianza(BaseModel):
-    completitud: int
-    telefono: int
-    fotos: int
-    vigencia: int
-    reportes: int
-
-class PublicacionOut(BaseModel):
-    id: int
-    titulo: str
-    tipo_inmueble: str
-    canon_mensual: float
-    deposito_requerido: float
-    zona_nombre: Optional[str] = None
-    direccion_referencial: str
-    estado: str
-    servicios: list[str] = []
-    fotos: list[str] = []
-    num_fotos: int = 0
-    distancia_geodesica_m: Optional[int] = None
-    indice_confianza: int = 0
-    desglose: Optional[DesgloseConfianza] = None
-    nivel_confianza: str = "basico"
-    advertencia_confianza: str = "Informativo, no garantiza seguridad. Verificar antes de pagar."
-    telefono_whatsapp: Optional[str] = None
-    whatsapp_url: Optional[str] = None
-    fecha_renovacion: Optional[str] = None
-    fecha_expiracion: Optional[str] = None
-
-
 # --- F1 DTOs estrictos (OpenAPI explícito, alias documentados, sin extra="allow") ---
 class DesgloseOut(BaseModel):
     """Desglose índice 40+20+15+15+10 (usado en Card/Detail DTOs)."""
@@ -165,6 +135,19 @@ class PublicacionCardOut(BaseModel):
     nivel: str  # alias compat
     telefono_whatsapp: Optional[str] = None
     usuario_id: int
+    # v15.2 frescura + métricas (aditivos).
+    fecha_publicacion: Optional[datetime] = None
+    created_at: Optional[datetime] = None  # alias = fecha_publicacion
+    updated_at: Optional[datetime] = None  # alias = fecha_renovacion
+    vistas: Optional[int] = None  # None = oculto (setting o no dueño)
+
+
+class ImagenOut(BaseModel):
+    """Foto con id para gestión del dueño (borrar/reordenar/portada)."""
+
+    id: int
+    url: str
+    orden: int
 
 
 class PaginatedPublicaciones(BaseModel):
@@ -215,6 +198,13 @@ class PublicacionDetailOut(BaseModel):
     longitud: Optional[float] = None
     # 004 POIs: referencia resuelta cuando se pide ?campus_id= (mapa dinámico).
     campus_ref: Optional[CampusRefOut] = None
+    # v15.2 autoría + frescura + métricas + gestión multimedia (aditivos).
+    usuario_id: int
+    fecha_publicacion: Optional[datetime] = None
+    created_at: Optional[datetime] = None  # alias = fecha_publicacion
+    updated_at: Optional[datetime] = None  # alias = fecha_renovacion
+    vistas: Optional[int] = None  # None = oculto (setting o no dueño)
+    imagenes: List[ImagenOut] = []
 
 
 class PublicacionCreatedOut(BaseModel):
@@ -225,6 +215,11 @@ class PublicacionCreatedOut(BaseModel):
     desglose: DesgloseOut
     advertencia: Optional[str] = None
     mensaje: Optional[str] = None
+    # v13.2 reactividad de rol: el frontend refresca el perfil si cambió.
+    rol: Optional[str] = None
+    rol_actualizado: bool = False
+    # v15.2 auto-moderación (None cuando el flag está OFF).
+    moderacion: Optional[dict] = None
 
 
 class RenovacionOut(BaseModel):

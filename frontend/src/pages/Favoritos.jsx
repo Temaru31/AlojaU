@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import { useFavoritos } from '../contexts/FavoritosContext'
+import { useAuth } from '../contexts/AuthContext'
 import SmartImage from '../components/SmartImage'
 import { formatDistancia } from '../utils/formatters'
 
@@ -19,6 +20,8 @@ const TIPO_LABEL = {
 
 export default function Favoritos() {
   const { ids, remove, clear, count } = useFavoritos()
+  // v14.1: con sesión, el dueño ve sus PENDIENTE en vez de "No vigente".
+  const { token: authToken } = useAuth()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
 
@@ -33,9 +36,10 @@ export default function Favoritos() {
     let isMounted = true
     setLoading(true)
 
+    const cfg = authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : {}
     const fetchPromises = ids.map(async (id) => {
       try {
-        const res = await api.get(`/api/publicaciones/${id}`)
+        const res = await api.get(`/api/publicaciones/${id}`, cfg)
         const pub = res.data
 
         const ahora = new Date()
@@ -87,7 +91,7 @@ export default function Favoritos() {
     return () => {
       isMounted = false
     }
-  }, [ids])
+  }, [ids, authToken])
 
   // Manejador para limpiar todos los favoritos
   const handleLimpiar = () => {

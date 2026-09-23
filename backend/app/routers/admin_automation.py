@@ -48,6 +48,7 @@ class SettingOut(BaseModel):
     valor: str
     tipo: str = "int"
     descripcion: str | None = None
+    seccion: str = "general"
 
 
 class SettingPatch(BaseModel):
@@ -55,9 +56,23 @@ class SettingPatch(BaseModel):
 
 
 DEFAULTS = {
-    "dias_vigencia_publicacion": ("30", "int", "Días de vigencia al publicar/renovar"),
-    "max_reportes_para_pausa_automatica": ("3", "int", "Reportes que pausan el aviso"),
-    "auto_aprobar_arrendadores_verificados": ("false", "bool", "Auto-aprobar verificados"),
+    # (valor, tipo, descripcion, seccion). Secciones UI: publicaciones,
+    # moderacion, visibilidad. Añadir clave = aparece sola en el panel.
+    "dias_vigencia_publicacion": ("30", "int", "Días de vigencia al publicar/renovar", "publicaciones"),
+    "max_reportes_para_pausa_automatica": ("3", "int", "Reportes que pausan el aviso", "moderacion"),
+    "auto_aprobar_arrendadores_verificados": ("false", "bool", "Auto-aprobar verificados", "moderacion"),
+    # v15.2 auto-moderación + UX (ver services/auto_moderation.py).
+    "moderacion_automatica": ("false", "bool", "Switch global de moderación automática", "moderacion"),
+    "umbral_aprobacion_ia": ("0.85", "float", "Score mínimo (0-1) para auto-aprobar", "moderacion"),
+    "dias_desactualizada": ("30", "int", "Días para badge 'Desactualizada'", "publicaciones"),
+    "titulo_min": ("10", "int", "Mínimo de caracteres del título", "publicaciones"),
+    "titulo_max": ("150", "int", "Máximo de caracteres del título", "publicaciones"),
+    "descripcion_min": ("20", "int", "Mínimo de caracteres de la descripción", "publicaciones"),
+    "descripcion_max": ("2000", "int", "Máximo de caracteres de la descripción", "publicaciones"),
+    "fotos_min_publicar": ("3", "int", "Mínimo de fotos al publicar", "publicaciones"),
+    "palabras_prohibidas": ("viagra,casino,cripto,x1000", "str", "Spam separado por comas", "moderacion"),
+    # v15.x visibilidad de vistas (False = solo dueño/admin, prudente).
+    "vistas_visibles_publico": ("false", "bool", "Mostrar vistas a todo visitante", "visibilidad"),
 }
 
 
@@ -65,7 +80,11 @@ DEFAULTS = {
 async def listar_settings(
     db: AsyncSession = Depends(get_session), admin: dict = Depends(require_admin)
 ):
-    """Lista system_settings (ADMIN). TTL 5min en memoria; sin tabla -> defaults (sin cachear)."""
+    """Lista system_settings (ADMIN). TTL 5min en memoria.
+
+    v15.2: unión DEFAULTS + overrides de BD (el admin siempre ve todas las
+    claves tunables; la BD solo sobrescribe valores). Sin tabla -> defaults.
+    """
     hit = _cache_get()
     if hit is not None:
         return hit
@@ -73,13 +92,16 @@ async def listar_settings(
         from app.models import SystemSetting
 
         rows = (await db.execute(select(SystemSetting))).scalars().all()
-        payload = [SettingOut(clave=r.clave, valor=r.valor, tipo=r.tipo, descripcion=r.descripcion) for r in rows]
-        if not payload:
-            raise ValueError("tabla vacía")
+        por_clave = {r.clave: r for r in rows}
+        payload = [
+            SettingOut(clave=k, valor=por_clave[k].valor if k in por_clave else v,
+                       tipo=t, descripcion=d, seccion=s)
+            for k, (v, t, d, s) in DEFAULTS.items()
+        ]
     except Exception:
         # Fallback a defaults SIN cachear: un fallo transitorio de DB no debe
         # envenenar la caché 5 minutos (hallazgo QA/DB multi-agente).
-        return [SettingOut(clave=k, valor=v, tipo=t, descripcion=d) for k, (v, t, d) in DEFAULTS.items()]
+        return [SettingOut(clave=k, valor=v, tipo=t, descripcion=d, seccion=s) for k, (v, t, d, s) in DEFAULTS.items()]
     _cache_set(payload)
     return payload
 
@@ -92,7 +114,7 @@ async def editar_setting(
     """Edita un setting con validación de tipo/rango (ADMIN). Invalida el caché."""
     if clave not in DEFAULTS:
         raise HTTPException(status_code=404, detail=f"setting '{clave}' desconocido")
-    _, tipo, desc = DEFAULTS[clave]
+    _, tipo, desc, _sec = DEFAULTS[clave]
     if tipo == "int":
         try:
             iv = int(payload.valor)
@@ -102,8 +124,27 @@ async def editar_setting(
             raise HTTPException(status_code=422, detail="vigencia 1..365 días")
         if clave == "max_reportes_para_pausa_automatica" and not 1 <= iv <= 20:
             raise HTTPException(status_code=422, detail="umbral 1..20")
+        if clave == "dias_desactualizada" and not 1 <= iv <= 365:
+            raise HTTPException(status_code=422, detail="rango 1..365 días")
+        if clave in ("titulo_min", "descripcion_min") and not 1 <= iv <= 100:
+            raise HTTPException(status_code=422, detail="rango 1..100")
+        if clave == "titulo_max" and not 10 <= iv <= 150:
+            raise HTTPException(status_code=422, detail="rango 10..150")
+        if clave == "descripcion_max" and not 100 <= iv <= 5000:
+            raise HTTPException(status_code=422, detail="rango 100..5000")
+        if clave == "fotos_min_publicar" and not 1 <= iv <= 10:
+            raise HTTPException(status_code=422, detail="rango 1..10")
+    if tipo == "float":
+        try:
+            fv = float(payload.valor)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="valor debe ser decimal")
+        if clave == "umbral_aprobacion_ia" and not 0.0 <= fv <= 1.0:
+            raise HTTPException(status_code=422, detail="rango 0..1")
     if tipo == "bool" and payload.valor.lower() not in ("true", "false"):
         raise HTTPException(status_code=422, detail="valor debe ser true|false")
+    if tipo == "str" and len(payload.valor) > 2000:
+        raise HTTPException(status_code=422, detail="máximo 2000 caracteres")
     try:
         from datetime import datetime, timezone
 
@@ -118,16 +159,20 @@ async def editar_setting(
             db.add(SystemSetting(clave=clave, valor=payload.valor, tipo=tipo, descripcion=desc))
         await db.commit()
         clear_settings_cache()
-        return SettingOut(clave=clave, valor=payload.valor, tipo=tipo, descripcion=desc)
+        return SettingOut(clave=clave, valor=payload.valor, tipo=tipo, descripcion=desc,
+                          seccion=_sec)
     except HTTPException:
         raise
-    except Exception:
+    except Exception as e:
+        # v15.2 fix false-200 (V14.0 M1): un fallo de persistencia NUNCA se
+        # reporta como éxito. Rollback + 503 ruidoso (sin mock: admin es prod).
+        import logging as _logging
+        _logging.getLogger("alojau.admin").error("[settings] persistencia falló: %r", e)
         try:
             await db.rollback()
         except Exception:
             pass
-        clear_settings_cache()
-        return SettingOut(clave=clave, valor=payload.valor, tipo=tipo, descripcion=desc)
+        raise HTTPException(status_code=503, detail="No se pudo guardar el ajuste")
 
 
 @router.post("/evaluar/{pub_id}", summary="Admin: evaluar pausa automática por reportes")

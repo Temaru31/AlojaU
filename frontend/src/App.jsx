@@ -11,6 +11,12 @@ const Comparar = lazy(() => import('./pages/Comparar'))
 const Favoritos = lazy(() => import('./pages/Favoritos'))
 const AdminReportes = lazy(() => import('./pages/AdminReportes'))
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'))
+// v13 Enterprise Auth: OAuth callback, recovery y legal (Ley 1581).
+const AuthCallback = lazy(() => import('./pages/AuthCallback'))
+const Recuperar = lazy(() => import('./pages/Recuperar'))
+const Restablecer = lazy(() => import('./pages/Restablecer'))
+const Terminos = lazy(() => import('./pages/Terminos'))
+const Privacidad = lazy(() => import('./pages/Privacidad'))
 import ProtectedAdminRoute from './components/ProtectedAdminRoute'
 import ColdStartBanner from './components/ColdStartBanner'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -303,7 +309,11 @@ function Footer() {
         </div>
         <div className="border-t border-neutral-150 mt-8 pt-6 flex flex-col sm:flex-row justify-between items-center gap-2">
           <p className="text-xs text-neutral-400">2026 AlojaU. Todos los derechos reservados.</p>
-          <p className="text-xs text-neutral-400">Universidad del Cauca</p>
+          <p className="text-xs text-neutral-400 flex gap-3">
+            <Link to="/terminos" className="hover:text-navy-600 underline">Términos</Link>
+            <Link to="/privacidad" className="hover:text-navy-600 underline">Privacidad (Ley 1581)</Link>
+            <span>Universidad del Cauca</span>
+          </p>
         </div>
       </div>
     </footer>
@@ -339,7 +349,11 @@ function App() {
                     <Route path="/comparar" element={<Comparar />} />
                     <Route path="/publicar" element={<Publicar />} />
                     <Route path="/perfil" element={<Perfil />} />
-                    <Route path="/mis-publicaciones" element={<MisPublicaciones />} />
+                    <Route path="/auth/callback" element={<AuthCallback />} />
+                    <Route path="/recuperar" element={<Recuperar />} />
+                    <Route path="/restablecer" element={<Restablecer />} />
+                    <Route path="/terminos" element={<Terminos />} />
+                    <Route path="/privacidad" element={<Privacidad />} />                    <Route path="/mis-publicaciones" element={<MisPublicaciones />} />
                     <Route path="/admin/dashboard" element={<ProtectedAdminRoute><AdminDashboard /></ProtectedAdminRoute>} />
                     <Route path="/admin/reportes" element={<ProtectedAdminRoute><AdminReportes /></ProtectedAdminRoute>} />
                   </Routes>

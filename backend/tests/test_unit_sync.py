@@ -57,8 +57,9 @@ def test_token_sin_sub_401():
 
 
 def test_optional_user_none_e_invalido():
-    assert get_optional_user(None) is None
-    assert get_optional_user("Bearer totalmente.invalido") is None
+    import asyncio
+    assert asyncio.run(get_optional_user(None)) is None
+    assert asyncio.run(get_optional_user("Bearer totalmente.invalido")) is None
 
 
 # --- vista sync --------------------------------------------------------------

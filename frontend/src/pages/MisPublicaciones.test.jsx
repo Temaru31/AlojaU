@@ -6,7 +6,7 @@ import EditarPublicacionModal from '../components/EditarPublicacionModal'
 import { api } from '../services/api'
 import * as Auth from '../contexts/AuthContext'
 
-vi.mock('../services/api', () => ({ api: { get: vi.fn(), patch: vi.fn() } }))
+vi.mock('../services/api', () => ({ api: { get: vi.fn(), patch: vi.fn(), delete: vi.fn() } }))
 
 afterEach(() => cleanup())
 beforeEach(() => vi.clearAllMocks())
@@ -232,5 +232,124 @@ describe('EditarPublicacionModal', () => {
     renderModal()
     fireEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
     expect(await screen.findByText(/Solo el dueño/)).toBeInTheDocument()
+  })
+})
+
+describe('MisPublicaciones v13.2 (borrado dueño + reactividad de rol)', () => {
+  it('eliminar pide confirmación en dos pasos y luego llama DELETE', async () => {
+    api.get.mockResolvedValue({ data: paged([{ ...pub1 }]) })
+    const refresh = vi.fn()
+    vi.spyOn(Auth, 'useAuth').mockReturnValue({
+      token: 't', user: { email: 'a@b.co' }, loading: false,
+      login: vi.fn(), logout: vi.fn(), refresh,
+    })
+    render(<MemoryRouter><MisPublicaciones /></MemoryRouter>)
+    expect(await screen.findByText('Habitación Tulcán')).toBeInTheDocument()
+    api.delete.mockResolvedValue({ data: { id: 3, eliminada: true, rol: 'ARRENDADOR', rol_actualizado: false } })
+    fireEvent.click(screen.getByRole('button', { name: 'Eliminar Habitación Tulcán' }))
+    // Primer clic: pide confirmar, aún no borra.
+    expect(api.delete).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /Confirmar eliminación/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Confirmar eliminación/ }))
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith('/api/publicaciones/3', expect.anything()))
+    // Sin democión: no refresca el perfil.
+    expect(refresh).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.queryByText('Habitación Tulcán')).not.toBeInTheDocument())
+  })
+
+  it('si el backend reporta democión, refresca el perfil', async () => {
+    api.get.mockResolvedValue({ data: paged([{ ...pub1 }]) })
+    const refresh = vi.fn()
+    vi.spyOn(Auth, 'useAuth').mockReturnValue({
+      token: 't', user: { email: 'a@b.co' }, loading: false,
+      login: vi.fn(), logout: vi.fn(), refresh,
+    })
+    render(<MemoryRouter><MisPublicaciones /></MemoryRouter>)
+    expect(await screen.findByText('Habitación Tulcán')).toBeInTheDocument()
+    api.delete.mockResolvedValue({ data: { id: 3, eliminada: true, rol: 'ESTUDIANTE', rol_actualizado: true } })
+    fireEvent.click(screen.getByRole('button', { name: 'Eliminar Habitación Tulcán' }))
+    fireEvent.click(screen.getByRole('button', { name: /Confirmar eliminación/ }))
+    await waitFor(() => expect(refresh).toHaveBeenCalled())
+  })
+})
+
+describe('MisPublicaciones v15.2 (switch estado + vistas)', () => {
+  it('switch pausar/reanudar actualiza el item', async () => {
+    api.get.mockResolvedValue({ data: paged([{ ...pub1, estado: 'ACTIVO' }]) })
+    vi.spyOn(Auth, 'useAuth').mockReturnValue({
+      token: 't', user: { email: 'a@b.co' }, loading: false,
+      login: vi.fn(), logout: vi.fn(), refresh: vi.fn(),
+    })
+    render(<MemoryRouter><MisPublicaciones /></MemoryRouter>)
+    expect(await screen.findByText('Habitación Tulcán')).toBeInTheDocument()
+    api.patch.mockResolvedValue({ data: { id: 3, estado: 'PAUSADO', rol_actualizado: false } })
+    fireEvent.click(screen.getByRole('button', { name: 'Pausar Habitación Tulcán' }))
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith(
+      '/api/publicaciones/3/estado', { estado: 'PAUSADO' }, expect.anything()))
+    expect(await screen.findByRole('button', { name: 'Reanudar Habitación Tulcán' })).toBeInTheDocument()
+  })
+
+  it('muestra contador de vistas cuando el backend lo trae', async () => {
+    api.get.mockResolvedValue({ data: paged([{ ...pub1, vistas: 42 }]) })
+    vi.spyOn(Auth, 'useAuth').mockReturnValue({
+      token: 't', user: { email: 'a@b.co' }, loading: false,
+      login: vi.fn(), logout: vi.fn(), refresh: vi.fn(),
+    })
+    render(<MemoryRouter><MisPublicaciones /></MemoryRouter>)
+    expect(await screen.findByText('Habitación Tulcán')).toBeInTheDocument()
+    expect(screen.getByLabelText('42 vistas')).toBeInTheDocument()
+  })
+})
+
+describe('MisPublicaciones v15.2 (gestor multimedia en modal)', () => {
+  const conFotos = {
+    ...pub1,
+    estado: 'ACTIVO',
+    fotos: ['https://a/1.jpg', 'https://a/2.jpg'],
+    imagenes: [
+      { id: 11, url: 'https://a/1.jpg', orden: 1 },
+      { id: 12, url: 'https://a/2.jpg', orden: 2 },
+    ],
+  }
+
+  const renderConFotos = (detalle) => {
+    api.get.mockImplementation((url) => {
+      if (String(url).includes('/mias') || String(url).endsWith('/mias')) {
+        return Promise.resolve({ data: paged([conFotos]) })
+      }
+      return Promise.resolve({ data: detalle })
+    })
+    vi.spyOn(Auth, 'useAuth').mockReturnValue({
+      token: 't', user: { email: 'a@b.co' }, loading: false,
+      login: vi.fn(), logout: vi.fn(), refresh: vi.fn(),
+    })
+    render(<MemoryRouter><MisPublicaciones /></MemoryRouter>)
+  }
+
+  it('muestra portada y borra en dos pasos', async () => {
+    renderConFotos(conFotos)
+    expect(await screen.findByText('Habitación Tulcán')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Editar Habitación Tulcán' }))
+    expect(await screen.findByText('Fotos del aviso (2/10)')).toBeInTheDocument()
+    expect(screen.getByText('Portada', { selector: 'span' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Eliminar la foto 2' }))
+    expect(api.delete).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar eliminación de la foto 2' }))
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith(
+      '/api/publicaciones/upload/12', expect.anything()))
+  })
+
+  it('cambia la portada reordenando', async () => {
+    renderConFotos(conFotos)
+    expect(await screen.findByText('Habitación Tulcán')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Editar Habitación Tulcán' }))
+    expect(await screen.findByText('Fotos del aviso (2/10)')).toBeInTheDocument()
+    api.patch.mockResolvedValue({ data: { publicacion_id: 3, orden: [12, 11], portada_id: 12 } })
+    fireEvent.click(screen.getByRole('button', { name: 'Usar como portada la foto 2' }))
+    await waitFor(() => expect(api.patch).toHaveBeenCalledWith(
+      '/api/publicaciones/upload/orden',
+      { publicacion_id: 3, orden_ids: [12, 11] },
+      expect.anything(),
+    ))
   })
 })

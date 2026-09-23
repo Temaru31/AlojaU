@@ -63,20 +63,21 @@ def test_b0_fk_servicio_404():
     assert r.status_code in (404, 201)
 
 def test_b0_require_admin():
+    import asyncio
     from app.core.security import require_admin
     from fastapi import HTTPException
     # arrendador -> 403
     try:
-        require_admin("Bearer mock-token-arrendador")
+        asyncio.run(require_admin("Bearer mock-token-arrendador"))
         assert False, "arrendador debe dar 403 en require_admin"
     except HTTPException as e:
         assert e.status_code == 403
     # admin -> ok
-    u = require_admin("Bearer mock-token-admin")
+    u = asyncio.run(require_admin("Bearer mock-token-admin"))
     assert u["rol"] == "ADMIN"
     # sin token -> 401
     try:
-        require_admin(None)
+        asyncio.run(require_admin(None))
         assert False, "sin token debe dar 401"
     except HTTPException as e:
         assert e.status_code == 401

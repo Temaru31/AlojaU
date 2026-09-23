@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import { useComparar } from '../contexts/CompararContext'
+import { useAuth } from '../contexts/AuthContext'
 import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
 import SmartImage from '../components/SmartImage'
 import BadgeConfianza from '../components/BadgeConfianza'
@@ -24,18 +25,21 @@ export function humanizarTipoComparar(tipo) {
 
 export default function Comparar() {
   const { comparar, clear, toggle, error } = useComparar()
+  // v14.1: con sesión, el dueño ve sus PENDIENTE en vez de "no disponible".
+  const { token: authToken } = useAuth()
   const [pubs, setPubs] = useState([])
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     if (comparar.length === 0) { setPubs([]); return }
     setLoading(true)
+    const cfg = authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : {}
     Promise.all(comparar.map(id =>
-      api.get(`/api/publicaciones/${id}`).then(r => r.data).catch(() => ({ id, titulo: `ID ${id} no disponible`, error: true }))
+      api.get(`/api/publicaciones/${id}`, cfg).then(r => r.data).catch(() => ({ id, titulo: `ID ${id} no disponible`, error: true }))
     ))
       .then(setPubs)
       .finally(() => setLoading(false))
-  }, [comparar])
+  }, [comparar, authToken])
 
   const rows = [
     { label: 'Título', key: 'titulo', render: (p) => p.titulo || <NoInformado /> },

@@ -99,9 +99,42 @@ def ts_rank_order(Publicacion, q: str):
     ).desc()
 
 
+def dueno_activo_clause(Publicacion):
+    """v14.1 Ley 1581: excluye avisos de cuentas en soft-delete.
+
+    NOT EXISTS correlacionado (sin JOIN: no altera forma de COUNT/página).
+    Excepción documentada: cola de moderación admin (pendientes) SÍ los
+    muestra — el admin debe ver lo que existe para moderar/purgar.
+    """
+    from app.models import Usuario as _U
+    return ~select(_U.id).where(
+        (_U.id == Publicacion.usuario_id) & (_U.eliminado_en.is_not(None))
+    ).exists()
+
+
+async def leer_ajuste(db, clave: str, default: str) -> str:
+    """Lee system_settings (clave UNIQUE, 1 query). Sin tabla/fila -> default."""
+    try:
+        from app.models import SystemSetting as _SS
+        row = (await db.execute(
+            select(_SS).where(_SS.clave == clave))).scalars().first()
+        return row.valor if row else default
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        return default
+
+
+async def vistas_publicas(db) -> bool:
+    """¿Ve todo visitante el contador? Default False (prudente: dueño/admin)."""
+    return (await leer_ajuste(db, "vistas_visibles_publico", "false")).lower() == "true"
+
+
 def lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servicios, q: Optional[str] = None, q_mode: Optional[str] = None, ciudad_id: Optional[int] = None):
     """Filtros HU-001/002 + Oleada 2 (q tokenizada) + multiciudad compartidos por COUNT y página."""
-    conds = [Publicacion.estado == "ACTIVO"]
+    conds = [Publicacion.estado == "ACTIVO", dueno_activo_clause(Publicacion)]
     if precio_min is not None:
         conds.append(Publicacion.canon_mensual >= precio_min)
     if precio_max is not None:
@@ -223,7 +256,11 @@ async def fetch_page_aggregates(db: AsyncSession, pubs, campus_id: Optional[int]
 
     user_ids = {p.usuario_id for p in pubs}
     users = (
-        (await db.execute(select(Usuario).where(Usuario.id.in_(user_ids)))).scalars().all()
+        (await db.execute(select(Usuario).where(
+            Usuario.id.in_(user_ids),
+            # v14.1: dueños eliminados no se hidratan (ni teléfono ni verificado).
+            Usuario.eliminado_en.is_(None),
+        ))).scalars().all()
         if user_ids
         else []
     )

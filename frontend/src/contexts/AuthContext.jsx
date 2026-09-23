@@ -5,7 +5,7 @@
 // Sincronización: Perfil/Publicar emiten 'alojau:auth-change' tras login/logout;
 // además se escucha 'storage' (multi-pestaña). El perfil se valida contra
 // GET /api/auth/perfil; si el token es inválido (401) se limpia solo.
-import { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react'
 import { api } from '../services/api'
 
 const AuthContext = createContext(null)
@@ -90,8 +90,17 @@ export function AuthProvider({ children }) {
     emitAuthChange()
   }, [])
 
+  const refresh = useCallback(() => sync(readToken()), [sync])
+
+  // v14.1: value memoizado — sin esto cada setLoading crea objeto nuevo y
+  // re-renderiza a todos los consumidores (Nav, Perfil, MisPublicaciones…).
+  const value = useMemo(
+    () => ({ token, user, loading, login, logout, refresh }),
+    [token, user, loading, login, logout, refresh],
+  )
+
   return (
-    <AuthContext.Provider value={{ token, user, loading, login, logout, refresh: () => sync(readToken()) }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   )

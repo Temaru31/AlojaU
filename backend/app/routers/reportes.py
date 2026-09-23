@@ -84,7 +84,7 @@ async def crear_reporte(
     authorization: Optional[str] = Header(None),
 ):
     """Crea reporte PENDIENTE (anónimo si no hay token). 404 si la publicación no existe."""
-    user = get_optional_user(authorization)
+    user = await get_optional_user(authorization)
     try:
         from app.models import Publicacion, ReportePublicacion
 

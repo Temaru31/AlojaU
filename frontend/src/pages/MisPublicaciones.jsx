@@ -115,13 +115,14 @@ const FILTROS = [
   { value: '', label: 'Todas' },
   { value: 'ACTIVO', label: 'Publicadas' },
   { value: 'PENDIENTE', label: 'En revisión' },
+  { value: 'PAUSADO', label: 'Pausadas' },
   { value: 'EXPIRADO', label: 'Vencidas' },
 ]
 
 const PAGE_SIZE = 12
 
 export default function MisPublicaciones() {
-  const { token } = useAuth()
+  const { token, refresh } = useAuth()
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [pages, setPages] = useState(1)
@@ -132,6 +133,56 @@ export default function MisPublicaciones() {
   const [reloadKey, setReloadKey] = useState(0)
   const [editando, setEditando] = useState(null)
   const [renovando, setRenovando] = useState(null)
+  // v13.2: borrado del dueño en dos pasos (elimina -> confirma).
+  const [aEliminar, setAEliminar] = useState(null)
+  const [eliminando, setEliminando] = useState(false)
+  // v15.2: switch ACTIVA/PAUSADA del dueño.
+  const [cambiandoEstado, setCambiandoEstado] = useState(null)
+
+  const handleEstado = async (p) => {
+    const nuevo = p.estado === 'ACTIVO' ? 'PAUSADO' : 'ACTIVO'
+    setCambiandoEstado(p.id)
+    setError('')
+    try {
+      const r = await api.patch(`/api/publicaciones/${p.id}/estado`, { estado: nuevo }, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      setItems(prev => prev.map(x => x.id === p.id ? { ...x, estado: r.data?.estado || nuevo } : x))
+      if (r.data?.rol_actualizado) {
+        try { await refresh?.() } catch { /* noop */ }
+      }
+    } catch (err) {
+      setError(err?.response?.data?.detail || 'No se pudo cambiar el estado.')
+    } finally {
+      setCambiandoEstado(null)
+    }
+  }
+
+  const handleEliminar = async (p) => {
+    if (aEliminar !== p.id) {
+      setAEliminar(p.id)
+      return
+    }
+    setEliminando(true)
+    setError('')
+    try {
+      const r = await api.delete(`/api/publicaciones/${p.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      setItems(prev => prev.filter(x => x.id !== p.id))
+      setTotal(t => Math.max(0, t - 1))
+      setAEliminar(null)
+      // v13.2 reactividad de rol: si hubo democión, re-sincroniza el perfil.
+      if (r.data?.rol_actualizado) {
+        try { await refresh?.() } catch { /* noop */ }
+      }
+    } catch (err) {
+      setError(err?.response?.data?.detail || 'No se pudo eliminar la publicación.')
+      setAEliminar(null)
+    } finally {
+      setEliminando(false)
+    }
+  }
 
   // OLA4: AbortController — cambiar de filtro/página aborta la petición anterior
   // para que una respuesta tardía no pise los resultados actuales.
@@ -339,6 +390,11 @@ export default function MisPublicaciones() {
                             · Confianza {p.indice_confianza}/100
                           </span>
                         )}
+                        {typeof p.vistas === 'number' && (
+                          <span className="text-xs font-normal text-neutral-400 ml-2" aria-label={`${p.vistas} vistas`}>
+                            · 👁 {p.vistas}
+                          </span>
+                        )}
                       </p>
 
                       {/* Fechas de vigencia */}
@@ -362,6 +418,21 @@ export default function MisPublicaciones() {
 
                     {/* Acciones de la tarjeta */}
                     <div className="flex flex-wrap items-center justify-end gap-2 pt-3 mt-3 border-t border-neutral-100">
+                      {/* v15.2 switch ACTIVA/PAUSADA del dueño */}
+                      {(p.estado === 'ACTIVO' || p.estado === 'PAUSADO') && (
+                        <button
+                          onClick={() => handleEstado(p)}
+                          disabled={cambiandoEstado === p.id}
+                          aria-label={p.estado === 'ACTIVO' ? `Pausar ${p.titulo}` : `Reanudar ${p.titulo}`}
+                          aria-pressed={p.estado === 'ACTIVO'}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition disabled:opacity-50 ${p.estado === 'ACTIVO'
+                            ? 'border-amber-300 text-amber-700 hover:bg-amber-50'
+                            : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'
+                            }`}
+                        >
+                          {cambiandoEstado === p.id ? '…' : p.estado === 'ACTIVO' ? '⏸ Pausar' : '▶ Reanudar'}
+                        </button>
+                      )}
                       <button
                         onClick={() => setRenovando(p)}
                         aria-label={`Renovar ${p.titulo}`}
@@ -376,6 +447,20 @@ export default function MisPublicaciones() {
                         className="px-3 py-1.5 rounded-lg text-xs font-medium border border-neutral-200 text-neutral-600 hover:border-navy-300 hover:text-navy-700 transition"
                       >
                         Editar
+                      </button>
+
+                      <button
+                        onClick={() => handleEliminar(p)}
+                        disabled={eliminando && aEliminar === p.id}
+                        aria-label={aEliminar === p.id ? `Confirmar eliminación de ${p.titulo}` : `Eliminar ${p.titulo}`}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${aEliminar === p.id
+                          ? 'bg-red-600 border-red-600 text-white hover:bg-red-700'
+                          : 'border-neutral-200 text-neutral-400 hover:border-red-300 hover:text-red-600'
+                          }`}
+                      >
+                        {aEliminar === p.id
+                          ? (eliminando ? 'Eliminando…' : '¿Confirmar?')
+                          : 'Eliminar'}
                       </button>
 
                       <Link

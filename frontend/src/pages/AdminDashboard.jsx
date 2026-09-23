@@ -38,6 +38,40 @@ const SETTING_LABELS = {
     titulo: 'Límite de reportes para pausa',
     leyenda: 'Número de denuncias pendientes necesarias para suspender temporalmente un aviso',
   },
+  moderacion_automatica: {
+    titulo: 'Moderación automática (IA)',
+    leyenda: 'Si está ON, las reglas + heurística pueden aprobar avisos sin revisión humana',
+  },
+  umbral_aprobacion_ia: {
+    titulo: 'Umbral de aprobación IA',
+    leyenda: 'Score mínimo 0-1 para auto-aprobar (ej. 0.85)',
+  },
+  dias_desactualizada: {
+    titulo: 'Días para badge Desactualizada',
+    leyenda: 'Desde la última renovación, el aviso muestra insignia de desactualizado',
+  },
+  titulo_min: { titulo: 'Título: mínimo', leyenda: 'Caracteres mínimos del título' },
+  titulo_max: { titulo: 'Título: máximo', leyenda: 'Caracteres máximos del título' },
+  descripcion_min: { titulo: 'Descripción: mínimo', leyenda: 'Caracteres mínimos de la descripción' },
+  descripcion_max: { titulo: 'Descripción: máximo', leyenda: 'Caracteres máximos de la descripción' },
+  fotos_min_publicar: { titulo: 'Fotos mínimas', leyenda: 'Fotos mínimas exigidas al publicar' },
+  palabras_prohibidas: { titulo: 'Palabras prohibidas', leyenda: 'Spam separado por comas para la automoderación' },
+  vistas_visibles_publico: {
+    titulo: 'Vistas visibles para visitantes',
+    leyenda: 'ON: todo visitante ve el contador. OFF: solo el dueño y el admin',
+  },
+}
+
+// v15.x: secciones del panel (agrupan por `seccion` del backend; sin sección -> General).
+const SECCIONES = {
+  publicaciones: { titulo: '📰 Publicaciones y contenido', hint: 'Límites de texto, fotos y vigencia de avisos.' },
+  moderacion: { titulo: '🛡️ Moderación y auto-moderación', hint: 'Reglas automáticas, umbrales e IA.' },
+  visibilidad: { titulo: '👁️ Visibilidad', hint: 'Qué ve cada rol en la plataforma.' },
+  general: { titulo: '⚙️ General', hint: 'Otros ajustes del sistema.' },
+}
+
+function seccionDe(s) {
+  return SECCIONES[s.seccion] ? s.seccion : 'general'
 }
 
 function etiquetaSetting(s) {
@@ -97,10 +131,16 @@ function AjustesSistema({ token }) {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {error && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2" role="alert">{error}</p>}
       {ok && <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2" role="status">{ok}</p>}
-      {(settings || []).map((s) => {
+      {Object.keys(SECCIONES).filter(sec => (settings || []).some(s => seccionDe(s) === sec)).map((sec) => (
+        <section key={sec} aria-label={SECCIONES[sec].titulo} className="space-y-3">
+          <div>
+            <h3 className="text-sm font-bold text-navy-900">{SECCIONES[sec].titulo}</h3>
+            <p className="text-[11px] text-neutral-400">{SECCIONES[sec].hint}</p>
+          </div>
+          {(settings || []).filter(s => seccionDe(s) === sec).map((s) => {
         const meta = etiquetaSetting(s)
         const modificado = String(draft[s.clave] ?? '') !== String(s.valor)
         const guardando = saving === s.clave
@@ -128,6 +168,26 @@ function AjustesSistema({ token }) {
                     <span aria-hidden="true" className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-all ${String(draft[s.clave]) === 'true' ? 'left-[22px]' : 'left-1'}`} />
                   </button>
                 </span>
+              ) : s.tipo === 'float' ? (
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="1"
+                  aria-label={meta.titulo}
+                  value={draft[s.clave] ?? ''}
+                  onChange={(e) => setDraft((d) => ({ ...d, [s.clave]: e.target.value }))}
+                  className="input-field w-28"
+                />
+              ) : s.tipo === 'str' ? (
+                <input
+                  type="text"
+                  aria-label={meta.titulo}
+                  value={draft[s.clave] ?? ''}
+                  onChange={(e) => setDraft((d) => ({ ...d, [s.clave]: e.target.value }))}
+                  className="input-field w-64"
+                  maxLength={2000}
+                />
               ) : (
                 <input
                   type="number"
@@ -135,8 +195,6 @@ function AjustesSistema({ token }) {
                   value={draft[s.clave] ?? ''}
                   onChange={(e) => setDraft((d) => ({ ...d, [s.clave]: e.target.value }))}
                   className="input-field w-28"
-                  min={s.clave === 'dias_vigencia_publicacion' ? 1 : 1}
-                  max={s.clave === 'dias_vigencia_publicacion' ? 365 : 20}
                 />
               )}
               <button
@@ -162,6 +220,8 @@ function AjustesSistema({ token }) {
         </article>
         )
       })}
+        </section>
+      ))}
       {settings && settings.length === 0 && (
         <div className="card p-8 text-center">
           <p className="text-sm font-medium text-neutral-700">Sin ajustes configurados</p>
