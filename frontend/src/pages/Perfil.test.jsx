@@ -290,6 +290,42 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
     expect(patchSpy.mock.calls[0][1]).toMatchObject({ preferencias: { 'roomie.buscando': true } })
   })
 
+  it('tabs Entrar/Crear cuenta conmutan sin token', async () => {
+    mockPerfil()
+    vi.spyOn(api, 'post').mockImplementation((url) => {
+      if (url === '/api/auth/login') return Promise.resolve({ data: { access_token: 'tok-nuevo' } })
+      return Promise.resolve({ data: {} })
+    })
+    render(
+      <BrowserRouter>
+        <Perfil />
+      </BrowserRouter>
+    )
+    expect(screen.getByRole('tab', { name: 'Entrar' })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(screen.getByRole('tab', { name: 'Crear cuenta' }))
+    expect(screen.getByRole('tab', { name: 'Crear cuenta' })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('checklist refleja foto/tags/bio y hash inválido cae a datos', async () => {
+    window.location.hash = '#inexistente'
+    localStorage.setItem('alojau_token', 'mock-token-test')
+    mockPerfil({
+      ...PERFIL_BASE,
+      bio: 'Hola soy estudiante',
+      foto_perfil_url: 'https://x.com/foto.jpg',
+      email_verificado: true,
+      telefono_verificado: true,
+      preferencias: { 'filtros.mascotas': true },
+    })
+    render(
+      <BrowserRouter>
+        <Perfil />
+      </BrowserRouter>
+    )
+    await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
+    expect(screen.getByText(/Completa tu perfil \(100%\)/)).toBeInTheDocument()
+  })
+
   it('helpers de teléfono CO', () => {
     expect(telefonoALocal('573001234567')).toBe('3001234567')
     expect(telefonoALocal('+573001234567')).toBe('3001234567')

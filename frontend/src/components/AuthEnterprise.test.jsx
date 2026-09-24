@@ -11,6 +11,9 @@ import {
   signInWithGoogle,
   getCallbackCode,
   exchangeCodeForSession,
+  guardarRedirectPostLogin,
+  leerRedirectPostLogin,
+  POST_LOGIN_REDIRECT_KEY,
   __resetSupabaseClientForTests,
 } from '../services/supabaseClient'
 
@@ -67,6 +70,56 @@ describe('supabaseClient (OAuth resiliente)', () => {
   it('redirect prod usa el dominio canónico con guion', () => {
     expect(getOAuthRedirect({ PROD: true })).toBe('https://aloja-u.vercel.app/auth/callback')
     expect(getOAuthRedirect({})).toBe('http://localhost:5173/auth/callback')
+  })
+
+  it('SDK ok retorna via sdk sin tocar location', async () => {
+    window.supabase = { auth: { signInWithOAuth: vi.fn().mockResolvedValue({ error: null }) } }
+    const env = { VITE_SUPABASE_URL: 'https://xxx.supabase.co', VITE_SUPABASE_ANON_KEY: 'anon' }
+    const r = await signInWithGoogle(env)
+    expect(r).toEqual({ via: 'sdk' })
+    expect(window.supabase.auth.signInWithOAuth).toHaveBeenCalledWith({
+      provider: 'google',
+      options: { redirectTo: 'http://localhost:5173/auth/callback' },
+    })
+  })
+
+  it('SDK con error devuelve redirect estándar a la URL canónica', async () => {
+    let href = ''
+    Object.defineProperty(window, 'location', {
+      value: {}, writable: true, configurable: true,
+    })
+    Object.defineProperty(window.location, 'href', { set: (v) => { href = v }, configurable: true })
+    window.supabase = { auth: { signInWithOAuth: vi.fn().mockResolvedValue({ error: new Error('popup') }) } }
+    const env = { VITE_SUPABASE_URL: 'https://xxx.supabase.co', VITE_SUPABASE_ANON_KEY: 'anon' }
+    const r = await signInWithGoogle(env)
+    expect(r.via).toBe('redirect')
+    expect(href).toContain('https://xxx.supabase.co/auth/v1/authorize')
+    expect(href).toContain('provider=google')
+  })
+
+  it('redirect post-login valida y rechaza open-redirect', () => {
+    guardarRedirectPostLogin('/publicar')
+    expect(sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY)).toBe('/publicar')
+    expect(leerRedirectPostLogin()).toBe('/publicar')
+    expect(sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY)).toBeNull()
+    guardarRedirectPostLogin('https://evil.com/x')
+    expect(sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY)).toBeNull()
+    guardarRedirectPostLogin('//evil.com/x')
+    expect(leerRedirectPostLogin()).toBe('/')
+    expect(leerRedirectPostLogin()).toBe('/')
+  })
+
+  it('SDK que lanza excepción también cae al redirect', async () => {
+    Object.defineProperty(window, 'location', {
+      value: {}, writable: true, configurable: true,
+    })
+    let href = ''
+    Object.defineProperty(window.location, 'href', { set: (v) => { href = v }, configurable: true })
+    window.supabase = { auth: { signInWithOAuth: () => { throw new Error('boom') } } }
+    const env = { VITE_SUPABASE_URL: 'https://xxx.supabase.co', VITE_SUPABASE_ANON_KEY: 'anon' }
+    const r = await signInWithGoogle(env)
+    expect(r.via).toBe('redirect')
+    expect(href).toContain('/auth/v1/authorize')
   })
 })
 

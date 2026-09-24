@@ -58,6 +58,28 @@ describe('AuthCallback retorno post-login (M5)', () => {
     await waitFor(() => expect(verVista()).toBe('/'), { timeout: 3000 })
   })
 
+  it('error de Google muestra detalle y salida a perfil', async () => {
+    renderEn('/auth/callback', '#error=access_denied&error_description=denegado')
+    expect(await screen.findByText(/No se pudo completar/)).toBeInTheDocument()
+    expect(screen.getByText(/denegado/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Mi Perfil/ })).toHaveAttribute('href', '/perfil')
+    expect(api.post).not.toHaveBeenCalled()
+  })
+
+  it('sin credenciales de Google pide revisar configuración', async () => {
+    renderEn('/auth/callback', '')
+    expect(await screen.findByText(/sin token ni código/)).toBeInTheDocument()
+    expect(api.post).not.toHaveBeenCalled()
+  })
+
+  it('fallo de vinculación en backend muestra mensaje y no guarda token', async () => {
+    const tok = jwtFake({ email: 'g@x.co', sub: 'sup-1' })
+    api.post.mockRejectedValue({ response: { data: { detail: 'Email ya registrado' } } })
+    renderEn('/auth/callback', `#access_token=${tok}`)
+    expect(await screen.findByText(/Email ya registrado/)).toBeInTheDocument()
+    expect(localStorage.getItem('alojau_token')).toBeNull()
+  })
+
   it('redirect malicioso se ignora (open-redirect)', async () => {
     sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, 'https://evil.com/x')
     const tok = jwtFake({ email: 'g@x.co', sub: 'sup-1' })

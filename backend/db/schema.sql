@@ -146,7 +146,8 @@ CREATE TABLE IF NOT EXISTS publicaciones (
   longitud DECIMAL(10,7) CHECK (longitud BETWEEN -180 AND 180),
   estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE' CHECK (estado IN ('PENDIENTE','ACTIVO','PAUSADO','ARRENDADO','EXPIRADO','RECHAZADO','DESACTIVADO','PAUSADO_POR_REPORTE','REVISION_REQUERIDA')),  -- 005: 9 estados (ver chk_estado en modelos)
   indice_confianza SMALLINT NOT NULL DEFAULT 0 CHECK (indice_confianza BETWEEN 0 AND 100),
-  vistas INTEGER NOT NULL DEFAULT 0,  -- v15.2 métrica (dedup diaria por IP)  fecha_publicacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  vistas INTEGER NOT NULL DEFAULT 0,  -- v15.2 métrica (dedup diaria por IP)
+  fecha_publicacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   fecha_renovacion TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   fecha_expiracion TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '30 days')
 );

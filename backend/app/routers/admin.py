@@ -417,20 +417,30 @@ async def ver_auditoria(
     from app.models import PublicacionesAudit
     from app.core.pagination import paginate_params
 
-    conds = []
-    if publicacion_id:
-        conds.append(PublicacionesAudit.publicacion_id == publicacion_id)
-    if evento:
-        conds.append(PublicacionesAudit.evento == evento)
-    total = (await db.execute(
-        select(func.count()).select_from(PublicacionesAudit).where(*conds))).scalar() or 0
-    offset, size_norm = paginate_params(page, size)
-    rows = (await db.execute(
-        select(PublicacionesAudit).where(*conds)
-        .order_by(PublicacionesAudit.id.desc()).limit(size_norm).offset(offset)
-    )).scalars().all()
-    return {"items": [
-        {"id": r.id, "publicacion_id": r.publicacion_id, "usuario_id": r.usuario_id,
-         "evento": r.evento, "detalle": r.detalle,
-         "creado_en": r.creado_en.isoformat() if r.creado_en else None}
-        for r in rows], "total": total, "page": page, "size": size_norm}
+    try:
+        conds = []
+        if publicacion_id:
+            conds.append(PublicacionesAudit.publicacion_id == publicacion_id)
+        if evento:
+            conds.append(PublicacionesAudit.evento == evento)
+        total = (await db.execute(
+            select(func.count()).select_from(PublicacionesAudit).where(*conds))).scalar() or 0
+        offset, size_norm = paginate_params(page, size)
+        rows = (await db.execute(
+            select(PublicacionesAudit).where(*conds)
+            .order_by(PublicacionesAudit.id.desc()).limit(size_norm).offset(offset)
+        )).scalars().all()
+        return {"items": [
+            {"id": r.id, "publicacion_id": r.publicacion_id, "usuario_id": r.usuario_id,
+             "evento": r.evento, "detalle": r.detalle,
+             "creado_en": r.creado_en.isoformat() if r.creado_en else None}
+            for r in rows], "total": total, "page": page, "size": size_norm}
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[DB fallback] auditoria falló: {e!r}", exc_info=True)
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")

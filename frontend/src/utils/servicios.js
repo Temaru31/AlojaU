@@ -8,8 +8,3 @@ export const SERVICIOS = [
   { id: 4, nombre: 'Amoblado' },
   { id: 5, nombre: 'Lavadora' },
 ]
-
-export function nombresServicios(ids = []) {
-  const porId = new Map(SERVICIOS.map((s) => [s.id, s.nombre]))
-  return (ids || []).map((id) => porId.get(id) || `Servicio ${id}`)
-}

@@ -28,6 +28,18 @@ describe('portada (BUG#1)', () => {
     expect(fotosOrdenadas({})).toEqual([])
   })
 
+  it('soporta fotos como objetos {url} y pubs nulos', () => {
+    expect(portadaUrl(null)).toBeNull()
+    expect(portadaUrl(undefined)).toBeNull()
+    expect(portadaUrl({ fotos: [{ url: 'https://o.jpg' }] })).toBe('https://o.jpg')
+    expect(portadaUrl({ fotos: [{}] })).toBeNull()
+    expect(portadaUrl({ imagenes: [{ id: 1, orden: 1 }] })).toBeNull()
+    expect(fotosOrdenadas(null)).toEqual([])
+    expect(fotosOrdenadas({ fotos: 'no-array' })).toEqual([])
+    expect(imagenesOrdenadas(null)).toEqual([])
+    expect(imagenesOrdenadas({ imagenes: 'no-array' })).toEqual([])
+  })
+
   it('card usa portada tras refetch (heap invertido -> portada estable)', () => {
     // Simula refetch donde el heap invirtió el orden pero imagenes conserva orden.
     const refetch = {

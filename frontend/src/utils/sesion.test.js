@@ -29,6 +29,17 @@ describe('etiquetaDispositivo', () => {
       .toBe('Firefox en Linux')
   })
 
+  it('Edge/Opera/macOS y etiquetas parciales', () => {
+    expect(etiquetaDispositivo('Mozilla/5.0 (Windows NT 10.0) Edg/120.0'))
+      .toBe('Edge en Windows')
+    expect(etiquetaDispositivo('Mozilla/5.0 (X11; Linux x86_64) OPR/106.0'))
+      .toBe('Opera en Linux')
+    expect(etiquetaDispositivo('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) Version/17.0 Safari/605.1'))
+      .toBe('Safari en macOS')
+    expect(etiquetaDispositivo('SoloSistema Windows NT')).toBe('Windows')
+    expect(etiquetaDispositivo('Chrome/120.0')).toBe('Chrome')
+  })
+
   it('iOS (CriOS/FxiOS/EdgiOS) y fallbacks seguros', () => {
     expect(etiquetaDispositivo('Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) CriOS/120.0 Safari/604.1'))
       .toBe('Chrome en iPhone')

@@ -5,6 +5,11 @@ venv/
 .venv/
 *.egg-info/
 .env
+# Cobertura local (la mide el CI; no se versiona)
+.coverage
+htmlcov/
+coverage/
+coverage.xml
 # Node
 node_modules/
 dist/

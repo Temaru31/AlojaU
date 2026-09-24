@@ -135,11 +135,21 @@ async def listar_reportes(
     """Lista reportes (filtro opcional por estado), más recientes primero."""
     from app.models import ReportePublicacion
 
-    stmt = select(ReportePublicacion).order_by(ReportePublicacion.id.desc())
-    if estado:
-        stmt = stmt.where(ReportePublicacion.estado == estado)
-    rows = (await db.execute(stmt)).scalars().all()
-    return [_to_out(r) for r in rows]
+    try:
+        stmt = select(ReportePublicacion).order_by(ReportePublicacion.id.desc())
+        if estado:
+            stmt = stmt.where(ReportePublicacion.estado == estado)
+        rows = (await db.execute(stmt)).scalars().all()
+        return [_to_out(r) for r in rows]
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[reportes listar] DB falló: {e!r}", exc_info=True)
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router.patch("/{reporte_id}", response_model=ReporteOut, summary="HU-010B Revisar reporte (solo ADMIN)")
@@ -152,15 +162,29 @@ async def revisar_reporte(
     """confirmar -> CONFIRMADO (revisado, procede) | descartar -> DESCARTADO. Solo desde PENDIENTE."""
     from app.models import ReportePublicacion
 
-    rep = await db.get(ReportePublicacion, reporte_id)
-    if not rep:
-        raise HTTPException(status_code=404, detail="Reporte no encontrado")
-    if rep.estado != "PENDIENTE":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Reporte ya revisado (estado {rep.estado})",
-        )
-    rep.estado = "CONFIRMADO" if payload.accion == "confirmar" else "DESCARTADO"
-    await db.commit()
-    await db.refresh(rep)
-    return _to_out(rep)
+    try:
+        rep = await db.get(ReportePublicacion, reporte_id)
+        if not rep:
+            raise HTTPException(status_code=404, detail="Reporte no encontrado")
+        if rep.estado != "PENDIENTE":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Reporte ya revisado (estado {rep.estado})",
+            )
+        rep.estado = "CONFIRMADO" if payload.accion == "confirmar" else "DESCARTADO"
+        await db.commit()
+        await db.refresh(rep)
+        return _to_out(rep)
+    except HTTPException:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[reportes revisar] DB falló: {e!r}", exc_info=True)
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
