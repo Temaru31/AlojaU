@@ -108,6 +108,8 @@ export default function Perfil() {
   // v13: sesiones activas + revocación global.
   const [sesiones, setSesiones] = useState(null)
   const [revocando, setRevocando] = useState(false)
+  // M2: revocar todo cierra ESTA sesión también -> confirma en 2 pasos.
+  const [aRevocar, setARevocar] = useState(false)
 
   // v13.1: eliminación de cuenta (soft-delete 30 días).
   const [mostrarEliminar, setMostrarEliminar] = useState(false)
@@ -153,16 +155,28 @@ export default function Perfil() {
 
   const revocarTodas = async () => {
     if (!token) return
+    if (!aRevocar) {
+      setARevocar(true)
+      return
+    }
     setRevocando(true)
     setError('')
     try {
       const r = await api.post('/api/auth/sesiones/revocar-todas', {}, {
         headers: { Authorization: `Bearer ${token}` },
       })
-      setSuccessMsg(r.data?.mensaje || 'Sesiones revocadas. Vuelve a iniciar sesión.')
-      setSesiones([])
+      setSuccessMsg(r.data?.mensaje || 'Sesiones revocadas.')
+      // M2: este token también murió -> limpieza total + raíz (sin fantasma).
+      setARevocar(false)
+      limpiarSesionLocal()
+      setToken('')
+      setPerfil(null)
+      setSesiones(null)
+      emitAuthChange()
+      try { window.location.replace('/') } catch { /* SSR/tests */ }
     } catch (err) {
       setError(err?.response?.data?.detail || 'No se pudieron revocar las sesiones.')
+      setARevocar(false)
     } finally {
       setRevocando(false)
     }
@@ -198,6 +212,7 @@ export default function Perfil() {
       setBio(res.data.bio || '')
       setFotoUrl(res.data.foto_perfil_url || '')
       setTags(res.data.preferencias || {})
+      setTagsDirty(false)
     } catch {
       setError('No se pudo cargar el perfil. Por favor inicia sesión nuevamente.')
       setPerfil(null)
@@ -314,6 +329,7 @@ export default function Perfil() {
       setBio(res.data.bio || '')
       setFotoUrl(res.data.foto_perfil_url || '')
       setTags(res.data.preferencias || {})
+      setTagsDirty(false)
       setSuccessMsg('Datos de contacto actualizados con éxito.')
     } catch (err) {
       setError(err?.response?.data?.detail || 'Error al actualizar el perfil')
@@ -322,21 +338,18 @@ export default function Perfil() {
     }
   }
 
-  // v13.2: etiquetas opt-in con guardado inmediato (merge en backend).
-  const toggleTag = async (key) => {
+  // M2: etiquetas transaccionales (borrador local; se guardan con el form).
+  const [tagsDirty, setTagsDirty] = useState(false)
+  const mismosPrefs = (a, b) => {
+    const ka = Object.keys(a || {}).filter(k => a[k]).sort()
+    const kb = Object.keys(b || {}).filter(k => b[k]).sort()
+    return ka.length === kb.length && ka.every((k, i) => k === kb[i])
+  }
+  const toggleTag = (key) => {
     const next = { ...tags, [key]: !tags[key] }
     setTags(next)
+    setTagsDirty(!mismosPrefs(next, perfil?.preferencias || {}))
     setError('')
-    try {
-      const res = await api.patch('/api/auth/perfil', { preferencias: { [key]: next[key] } },
-        { headers: { Authorization: `Bearer ${token}` } }
-      )
-      setPerfil(res.data)
-      setTags(res.data.preferencias || next)
-    } catch (err) {
-      setTags(tags)
-      setError(err?.response?.data?.detail || 'No se pudo guardar la etiqueta.')
-    }
   }
 
   const handleSolicitarVerificacion = async () => {
@@ -531,7 +544,7 @@ export default function Perfil() {
               aria-selected={tab === t.id}
               aria-controls={`panel-${t.id}`}
               onClick={() => irTab(t.id)}
-              className={`shrink-0 inline-flex items-center gap-1.5 px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 -mb-px transition ${tab === t.id
+              className={`shrink-0 inline-flex items-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-[44px] text-xs sm:text-sm font-semibold border-b-2 -mb-px transition ${tab === t.id
                 ? 'border-gold-400 text-navy-900'
                 : 'border-transparent text-neutral-400 hover:text-navy-700'
                 }`}
@@ -701,18 +714,12 @@ export default function Perfil() {
               </div>
             </section>
 
-            <button
-              type="submit"
-              disabled={saving}
-              className="px-4 py-2 bg-neutral-800 text-white text-xs font-semibold rounded-md hover:bg-navy-900 transition disabled:opacity-50"
-            >
-              {saving ? 'Guardando...' : 'Guardar cambios'}
-            </button>
-            </form>
-
-            {/* v13.2 etiquetas opt-in para personalizar tu experiencia */}
+            {/* M2 etiquetas transaccionales: viven en el form y se guardan con todo. */}
             <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-4 space-y-3">
-              <h3 className="text-xs sm:text-sm font-semibold text-navy-900">Tus etiquetas</h3>
+              <h3 className="text-xs sm:text-sm font-semibold text-navy-900">
+                Tus etiquetas
+                {tagsDirty && <span className="ml-2 font-semibold text-amber-700">· sin guardar</span>}
+              </h3>
               <p className="text-xs text-neutral-500">
                 Opcionales y revocables: sirven para priorizar avisos afines (ej. que acepten mascotas) y avisarte de roomies. Nada sensible.
               </p>
@@ -738,7 +745,17 @@ export default function Perfil() {
               </div>
             </div>
 
-            {/* OLA2-M4: verificación solo-lectura (la otorga un administrador) */}            <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-4 space-y-3">
+            <button
+              type="submit"
+              disabled={saving}
+              className="px-4 py-2 bg-neutral-800 text-white text-xs font-semibold rounded-md hover:bg-navy-900 transition disabled:opacity-50"
+            >
+              {saving ? 'Guardando...' : 'Guardar cambios'}
+            </button>
+            </form>
+
+            {/* Verificación solo-lectura (la otorga un administrador) */}
+            <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-4 space-y-3">
               <h3 className="text-xs sm:text-sm font-semibold text-navy-900">Verificación de teléfono</h3>
               <p className="text-xs text-neutral-500">
                 {estaVerificado
@@ -855,10 +872,15 @@ export default function Perfil() {
               <button
                 type="button"
                 onClick={revocarTodas}
+                onBlur={() => setARevocar(false)}
                 disabled={revocando}
-                className="px-4 py-2 text-xs font-semibold text-red-600 border border-red-200 rounded-md hover:bg-red-50 transition disabled:opacity-50"
+                aria-label={aRevocar ? 'Confirmar cierre en todos los dispositivos' : 'Cerrar sesión en todos los dispositivos'}
+                className={`px-4 py-2 text-xs font-semibold rounded-md border transition disabled:opacity-50 ${aRevocar
+                  ? 'bg-red-600 border-red-600 text-white hover:bg-red-700'
+                  : 'text-red-600 border-red-200 hover:bg-red-50'
+                  }`}
               >
-                {revocando ? 'Cerrando…' : 'Cerrar sesión en todos los dispositivos'}
+                {revocando ? 'Cerrando…' : aRevocar ? '¿Cerrar todas? Incluye este dispositivo' : 'Cerrar sesión en todos los dispositivos'}
               </button>
             </div>
             {/* v13.1 zona de peligro: eliminar cuenta (gracia 30 días recuperable) */}

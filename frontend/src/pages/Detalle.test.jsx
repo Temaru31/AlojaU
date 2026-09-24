@@ -397,6 +397,32 @@ describe('Detalle v15.2 (dueño, inactivo y similares)', () => {
     }
   })
 
+  it('M4 dueño ve Historial del inmueble; tercero no', async () => {
+    const AuthCtx = await import('../contexts/AuthContext')
+    const spy = vi.spyOn(AuthCtx, 'useAuth').mockReturnValue({
+      token: 't', user: { id: 9, email: 'a@b.co' }, loading: false,
+      login: vi.fn(), logout: vi.fn(), refresh: vi.fn(),
+    })
+    try {
+      api.get.mockImplementation((url) => {
+        if (url.endsWith('/similares')) return Promise.resolve({ data: { items: [], total: 0 } })
+        if (url.endsWith('/vista')) return Promise.resolve({ data: { vistas: 1, contada: true } })
+        if (url.endsWith('/historial')) return Promise.resolve({ data: { id: 1, items: [
+          { id: 5, evento: 'CREATED', detalle: null, creado_en: '2026-09-10T10:00:00-05:00' },
+          { id: 9, evento: 'PAUSED', detalle: null, creado_en: '2026-09-12T10:00:00-05:00' },
+        ] } })
+        return Promise.resolve({ data: { ...pub, usuario_id: 9 } })
+      })
+      renderDetalle()
+      expect(await screen.findByRole('heading', { name: /Historial del inmueble/ })).toBeInTheDocument()
+      expect(screen.getByText('Creada')).toBeInTheDocument()
+      expect(screen.getByText('Pausada')).toBeInTheDocument()
+      expect(screen.queryByText('CREATED')).not.toBeInTheDocument()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('aviso inactivo muestra banner y similares; contacto oculto', async () => {
     const AuthCtx = await import('../contexts/AuthContext')
     const spy = vi.spyOn(AuthCtx, 'useAuth').mockReturnValue({

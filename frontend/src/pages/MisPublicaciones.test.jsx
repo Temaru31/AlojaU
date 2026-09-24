@@ -288,7 +288,7 @@ describe('MisPublicaciones v13.2 (borrado dueño + reactividad de rol)', () => {
 })
 
 describe('MisPublicaciones v15.2 (switch estado + vistas)', () => {
-  it('switch pausar/reanudar actualiza el item', async () => {
+  it('pausar exige confirmación en 2 pasos; reanudar es directo', async () => {
     api.get.mockResolvedValue({ data: paged([{ ...pub1, estado: 'ACTIVO' }]) })
     vi.spyOn(Auth, 'useAuth').mockReturnValue({
       token: 't', user: { email: 'a@b.co' }, loading: false,
@@ -297,7 +297,11 @@ describe('MisPublicaciones v15.2 (switch estado + vistas)', () => {
     render(<MemoryRouter><MisPublicaciones /></MemoryRouter>)
     expect(await screen.findByText('Habitación Tulcán')).toBeInTheDocument()
     api.patch.mockResolvedValue({ data: { id: 3, estado: 'PAUSADO', rol_actualizado: false } })
+    // Primer clic solo arma la confirmación (sin PATCH).
     fireEvent.click(screen.getByRole('button', { name: 'Pausar Habitación Tulcán' }))
+    expect(api.patch).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /Confirmar pausa/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Confirmar pausa/ }))
     await waitFor(() => expect(api.patch).toHaveBeenCalledWith(
       '/api/publicaciones/3/estado', { estado: 'PAUSADO' }, expect.anything()))
     expect(await screen.findByRole('button', { name: 'Reanudar Habitación Tulcán' })).toBeInTheDocument()

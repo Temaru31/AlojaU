@@ -244,6 +244,52 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
     expect(screen.getByText(/✓ Correo verificado/)).toBeInTheDocument()
   })
 
+  it('M2 revocar-todas exige 2 pasos y luego limpia la sesión', async () => {
+    localStorage.setItem('alojau_token', 'mock-token-test')
+    mockPerfil({ ...PERFIL_BASE, auth_provider: 'password' })
+    vi.spyOn(api, 'post').mockResolvedValue({ data: { mensaje: 'ok', revocadas: 2 } })
+    const replaceSpy = vi.fn()
+    Object.defineProperty(window, 'location', { value: { replace: replaceSpy }, writable: true })
+
+    render(
+      <BrowserRouter>
+        <Perfil />
+      </BrowserRouter>
+    )
+    await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('tab', { name: /Seguridad/ }))
+    // Primer clic solo arma la confirmación.
+    fireEvent.click(screen.getByRole('button', { name: /todos los dispositivos/ }))
+    expect(api.post).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /Confirmar cierre/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Confirmar cierre/ }))
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith(
+      '/api/auth/sesiones/revocar-todas', {}, expect.anything()))
+    await waitFor(() => expect(localStorage.getItem('alojau_token')).toBeNull())
+    expect(replaceSpy).toHaveBeenCalledWith('/')
+  })
+
+  it('M2 tags no guardan al clic: van con Guardar cambios', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem('alojau_token', 'mock-token-test')
+    mockPerfil({ ...PERFIL_BASE, preferencias: {} })
+    const patchSpy = vi.spyOn(api, 'patch').mockResolvedValueOnce({ data: { ...PERFIL_BASE, preferencias: {} } })
+
+    render(
+      <BrowserRouter>
+        <Perfil />
+      </BrowserRouter>
+    )
+    await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
+    // Clic en tag: sin PATCH, con aviso de sin guardar.
+    await user.click(screen.getByRole('button', { name: /Busco roomie/ }))
+    expect(patchSpy).not.toHaveBeenCalled()
+    expect(screen.getByText(/sin guardar/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /Guardar cambios/i }))
+    await waitFor(() => expect(patchSpy).toHaveBeenCalledOnce())
+    expect(patchSpy.mock.calls[0][1]).toMatchObject({ preferencias: { 'roomie.buscando': true } })
+  })
+
   it('helpers de teléfono CO', () => {
     expect(telefonoALocal('573001234567')).toBe('3001234567')
     expect(telefonoALocal('+573001234567')).toBe('3001234567')

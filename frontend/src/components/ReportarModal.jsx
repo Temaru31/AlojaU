@@ -100,8 +100,13 @@ export default function ReportarModal({ publicacionId, titulo = '', onClose }) {
 
             <div className="flex gap-2 justify-end">
               <button type="button" onClick={onClose} className="btn-ghost text-sm">Cancelar</button>
-              <button type="submit" disabled={sending} className="btn-accent text-sm disabled:opacity-50">
-                {sending ? 'Enviando…' : 'Enviar anónimo'}
+              <button type="submit" disabled={sending} aria-busy={sending || undefined} className="btn-accent text-sm disabled:opacity-50">
+                {sending ? (
+                  <span className="inline-flex items-center gap-2">
+                    <span aria-hidden="true" className="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+                    Enviando…
+                  </span>
+                ) : 'Enviar anónimo'}
               </button>
             </div>
             <p className="text-[11px] text-neutral-400 mt-3">Sin cuenta. Solo guardamos motivo y detalle.</p>

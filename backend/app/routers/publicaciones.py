@@ -870,6 +870,48 @@ async def cambiar_estado_dueno(
             "rol_actualizado": False, "mensaje": f"Aviso {nuevo.lower()} (mock)."}
 
 
+@router.get("/{pub_id}/historial", summary="Dueño: historial del aviso")
+async def historial_aviso(
+    pub_id: int = Path(..., ge=1, le=1000000),
+    db: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """M4 historial del inmueble: eventos del aviso (creada, pausada,
+    aprobada...) en orden cronológico. Solo dueño o ADMIN (401/403/404).
+    Sin PG en dev: lista vacía (el mock no persiste auditoría).
+    """
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    try:
+        from app.models import Publicacion, PublicacionesAudit
+
+        pub = await db.get(Publicacion, pub_id)
+        if not pub:
+            raise HTTPException(status_code=404, detail="Publicación no encontrada")
+        if not _is_owner_or_admin(user, pub.usuario_id):
+            raise HTTPException(status_code=403, detail="Solo el dueño puede ver el historial")
+        rows = (await db.execute(
+            select(PublicacionesAudit).where(PublicacionesAudit.publicacion_id == pub_id)
+            .order_by(PublicacionesAudit.id.asc()).limit(50)
+        )).scalars().all()
+        return {"id": pub_id, "items": [
+            {"id": r.id, "evento": r.evento, "detalle": r.detalle,
+             "creado_en": r.creado_en.isoformat() if r.creado_en else None}
+            for r in rows]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[DB fallback] historial {pub_id} falló: {e!r}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    return {"id": pub_id, "items": [], "mock": True}
+
+
 @router.get("/{pub_id}/similares", summary="Inmuebles similares en la zona (excluye el actual)")
 async def similares(
     pub_id: int = Path(..., ge=1, le=1000000),

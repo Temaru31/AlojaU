@@ -6,10 +6,14 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
+import { formatearSesionFecha } from '../utils/sesion'
+import { etiquetaEvento } from '../utils/historial'
+import InfoTooltip from '../components/InfoTooltip'
 
 const authHead = (token) => ({ headers: { Authorization: `Bearer ${token}` } })
 
-function Stat({ label, value, tone }) {
+// M1: tarjetas KPI con ayuda contextual (datos en vivo de /api/admin/metricas).
+function Stat({ label, value, tone, ayuda }) {
   const tones = {
     navy: 'bg-navy-50 border-navy-100 text-navy-800',
     amber: 'bg-amber-50 border-amber-200 text-amber-700',
@@ -19,7 +23,10 @@ function Stat({ label, value, tone }) {
   return (
     <div className={`rounded-xl border p-4 text-center ${tones[tone] || tones.navy}`}>
       <p className="text-2xl font-extrabold">{value ?? '—'}</p>
-      <p className="text-[11px] font-medium opacity-80 mt-0.5">{label}</p>
+      <p className="text-[11px] font-medium opacity-80 mt-0.5 inline-flex items-center gap-1 justify-center">
+        {label}
+        {ayuda && <InfoTooltip texto={ayuda} />}
+      </p>
     </div>
   )
 }
@@ -61,6 +68,26 @@ const SETTING_LABELS = {
     leyenda: 'ON: todo visitante ve el contador. OFF: solo el dueño y el admin',
   },
 }
+
+// M1: ayuda ampliada por ajuste (la leyenda corta vive en SETTING_LABELS).
+const SETTING_AYUDA = {
+  moderacion_automatica: 'Si está ON, las reglas + heurística pueden aprobar avisos sin revisión humana. Con OFF (recomendado al inicio), todo pasa por tu bandeja.',
+  umbral_aprobacion_ia: 'Solo aplica con moderación automática ON. Más alto = más estricto (menos auto-aprobados).',
+  auto_aprobar_arrendadores_verificados: 'PENDIENTE: aún no surte efecto en el flujo de publicación; hoy todos los avisos nacen PENDIENTE. Próximamente permitirá auto-aprobar a verificados.',
+  vistas_visibles_publico: 'ON expone el contador a cualquier visitante. OFF (prudente) lo muestra solo al dueño y al admin.',
+  max_reportes_para_pausa_automatica: 'Al alcanzar este número de reportes, el aviso se pausa solo y avisa en la bandeja.',
+  titulo_min: 'Mínimo exigido al publicar y al editar (el formulario lo valida antes de enviar).',
+  titulo_max: 'Máximo exigido al publicar y al editar.',
+  descripcion_min: 'Mínimo exigido al publicar y al editar.',
+  descripcion_max: 'Máximo exigido al publicar y al editar.',
+  fotos_min_publicar: 'Fotos mínimas al publicar (el gestor de edición exige al menos 1).',
+  dias_desactualizada: 'Días tras la renovación para mostrar el badge "Desactualizada" en el detalle.',
+  dias_vigencia_publicacion: 'Vigencia estándar al publicar y al renovar (renovar suma 30 días).',
+  palabras_prohibidas: 'Lista anti-spam de la automoderación, separada por comas.',
+}
+
+// Claves sin efecto real todavía (badge veraz, no roadmap inventado).
+const SETTING_PENDIENTE = new Set(['auto_aprobar_arrendadores_verificados'])
 
 // v15.x: secciones del panel (agrupan por `seccion` del backend; sin sección -> General).
 const SECCIONES = {
@@ -148,7 +175,15 @@ function AjustesSistema({ token }) {
         <article key={s.clave} className="card p-4">
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-navy-800">{meta.titulo}</p>
+              <p className="text-sm font-semibold text-navy-800 inline-flex items-center gap-1.5 flex-wrap">
+                {meta.titulo}
+                {SETTING_PENDIENTE.has(s.clave) && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-300">
+                    PENDIENTE
+                  </span>
+                )}
+                {SETTING_AYUDA[s.clave] && <InfoTooltip texto={SETTING_AYUDA[s.clave]} />}
+              </p>
               {meta.leyenda && <p className="text-[11px] text-neutral-400 mt-0.5">{meta.leyenda}</p>}
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -163,7 +198,8 @@ function AjustesSistema({ token }) {
                     aria-checked={String(draft[s.clave]) === 'true'}
                     aria-label={meta.titulo}
                     onClick={() => setDraft((d) => ({ ...d, [s.clave]: String(d[s.clave]) === 'true' ? 'false' : 'true' }))}
-                    className={`relative w-11 h-7 rounded-full transition ${String(draft[s.clave]) === 'true' ? 'bg-emerald-500' : 'bg-neutral-300'}`}
+                    // M3 táctil: área 44px vía pseudo-elemento (sin deformar el track).
+                    className={`relative w-11 h-7 rounded-full transition before:absolute before:-inset-2 before:content-[''] ${String(draft[s.clave]) === 'true' ? 'bg-emerald-500' : 'bg-neutral-300'}`}
                   >
                     <span aria-hidden="true" className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-all ${String(draft[s.clave]) === 'true' ? 'left-[22px]' : 'left-1'}`} />
                   </button>
@@ -227,6 +263,83 @@ function AjustesSistema({ token }) {
           <p className="text-sm font-medium text-neutral-700">Sin ajustes configurados</p>
           <p className="text-xs text-neutral-400">Aplica la migración 005_admin_automation.</p>
         </div>
+      )}
+    </div>
+  )
+}
+
+// M4: historial de cambios (usa GET /api/admin/auditoria existente).
+export function HistorialAdmin({ token }) {
+  const [items, setItems] = useState([])
+  const [page, setPage] = useState(1)
+  const [pages, setPages] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const SIZE = 15
+
+  const cargar = useCallback(async (p) => {
+    if (!token) return
+    setLoading(true)
+    setError('')
+    try {
+      const r = await api.get('/api/admin/auditoria', {
+        params: { page: p, size: SIZE }, ...authHead(token),
+      })
+      setItems(r.data?.items || [])
+      setTotal(r.data?.total || 0)
+      setPages(Math.max(1, Math.ceil((r.data?.total || 0) / SIZE)))
+    } catch {
+      setError('No se pudo cargar el historial.')
+    } finally {
+      setLoading(false)
+    }
+  }, [token])
+
+  useEffect(() => { cargar(page) }, [cargar, page])
+
+  return (
+    <div className="space-y-3">
+      {error && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2" role="alert">{error}</p>}
+      {loading ? (
+        <div className="space-y-2 animate-pulse" aria-label="Cargando historial">
+          {[1, 2, 3].map(i => <div key={i} className="h-14 bg-neutral-150 rounded-lg" />)}
+        </div>
+      ) : items.length === 0 ? (
+        <div className="card p-8 text-center">
+          <p className="text-sm font-medium text-neutral-700">Sin actividad registrada</p>
+          <p className="text-xs text-neutral-400">Las aprobaciones, ajustes y eliminaciones aparecerán aquí.</p>
+        </div>
+      ) : (
+        <>
+          <ul className="space-y-2">
+            {items.map(a => (
+              <li key={a.id} className="card p-3 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
+                <span className="text-xs font-bold text-navy-800 shrink-0 min-w-32">
+                  {etiquetaEvento(a.evento)}
+                </span>
+                <span className="text-xs text-neutral-500 flex-1 min-w-0 truncate" title={a.detalle || ''}>
+                  {a.detalle || '—'}
+                </span>
+                <span className="text-[11px] text-neutral-400 shrink-0">
+                  {a.publicacion_id != null ? `aviso #${a.publicacion_id} · ` : ''}
+                  {formatearSesionFecha(a.creado_en) || 'fecha desconocida'}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <div className="flex items-center justify-center gap-3 pt-1">
+            <button type="button" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+              className="px-3 py-1.5 text-xs font-semibold rounded-md border border-neutral-200 disabled:opacity-40">
+              ← Anterior
+            </button>
+            <span className="text-xs text-neutral-500">Página {page} de {pages} ({total})</span>
+            <button type="button" onClick={() => setPage(p => Math.min(pages, p + 1))} disabled={page >= pages}
+              className="px-3 py-1.5 text-xs font-semibold rounded-md border border-neutral-200 disabled:opacity-40">
+              Siguiente →
+            </button>
+          </div>
+        </>
       )}
     </div>
   )
@@ -311,6 +424,7 @@ export default function AdminDashboard() {
         {[
           { id: 'moderacion', label: '🛡️ Moderación' },
           { id: 'ajustes', label: '⚙️ Ajustes del Sistema' },
+          { id: 'historial', label: '📜 Historial' },
         ].map((t) => (
           <button
             key={t.id}
@@ -318,7 +432,7 @@ export default function AdminDashboard() {
             role="tab"
             aria-selected={tab === t.id}
             onClick={() => setTab(t.id)}
-            className={`px-4 py-2.5 text-xs sm:text-sm font-semibold border-b-2 -mb-px transition ${tab === t.id
+            className={`px-4 py-2.5 min-h-[44px] text-xs sm:text-sm font-semibold border-b-2 -mb-px transition ${tab === t.id
               ? 'border-gold-400 text-navy-900'
               : 'border-transparent text-neutral-400 hover:text-navy-700'
               }`}
@@ -330,17 +444,25 @@ export default function AdminDashboard() {
 
       {tab === 'ajustes' ? (
         <AjustesSistema token={token} />
+      ) : tab === 'historial' ? (
+        <HistorialAdmin token={token} />
       ) : loading ? (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 animate-pulse">
           {[1, 2, 3, 4].map(i => <div key={i} className="h-20 bg-neutral-150 rounded-xl" />)}
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <Stat label="Alojamientos" value={metricas?.total_publicaciones} tone="navy" />
-            <Stat label="Pendientes" value={metricas?.pendientes} tone="amber" />
-            <Stat label="Reportes activos" value={metricas?.reportes_activos} tone="red" />
-            <Stat label="Verificados" value={metricas?.arrendadores_verificados} tone="emerald" />
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+            <Stat label="Alojamientos" value={metricas?.total_publicaciones} tone="navy"
+              ayuda="Avisos totales en plataforma (todos los estados, sin cuentas eliminadas)." />
+            <Stat label="Usuarios" value={metricas?.total_usuarios} tone="navy"
+              ayuda="Cuentas activas registradas (excluye eliminadas)." />
+            <Stat label="Pendientes" value={metricas?.pendientes} tone="amber"
+              ayuda="Avisos en cola de moderación esperando aprobación o rechazo." />
+            <Stat label="Reportes activos" value={metricas?.reportes_activos} tone="red"
+              ayuda="Denuncias pendientes o confirmadas de la comunidad." />
+            <Stat label="Verificados" value={metricas?.arrendadores_verificados} tone="emerald"
+              ayuda="Arrendadores con teléfono verificado por un administrador." />
           </div>
 
           <div className="flex flex-wrap gap-2 mb-6">

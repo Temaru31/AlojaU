@@ -19,6 +19,15 @@ function mockApi() {
     if (url === '/api/admin/automation/settings') return Promise.resolve({ data: SETTINGS })
     if (url === '/api/admin/metricas') return Promise.resolve({ data: {} })
     if (url === '/api/admin/pendientes') return Promise.resolve({ data: { items: [], total: 0 } })
+    if (url === '/api/admin/auditoria') return Promise.resolve({
+      data: {
+        items: [
+          { id: 1, evento: 'APPROVED', detalle: 'Cambio a ACTIVO por admin', publicacion_id: 7, creado_en: '2026-09-23T22:14:00-05:00' },
+          { id: 2, evento: 'SETTINGS', detalle: 'dias_vigencia_publicacion: 30 -> 31', publicacion_id: null, creado_en: '2026-09-24T10:00:00-05:00' },
+        ],
+        total: 2,
+      },
+    })
     return Promise.resolve({ data: {} })
   })
 }
@@ -41,6 +50,28 @@ describe('AdminDashboard - Ajustes del Sistema', () => {
     expect(screen.getByLabelText('Días de vigencia por aviso')).toHaveValue(30)
     expect(screen.getByRole('switch', { name: 'Aprobación automática a verificados' })).toHaveAttribute('aria-checked', 'false')
     expect(screen.queryByText('dias_vigencia_publicacion')).not.toBeInTheDocument()
+  })
+
+  it('M1 KPIs con usuarios + tooltips y badge PENDIENTE veraz', async () => {
+    mockApi()
+    render(<BrowserRouter><AdminDashboard /></BrowserRouter>)
+    expect(await screen.findByText('Usuarios')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: /Ajustes del Sistema/ }))
+    await waitFor(() => expect(screen.getByText('Aprobación automática a verificados')).toBeInTheDocument())
+    expect(screen.getByText('PENDIENTE')).toBeInTheDocument()
+  })
+
+  it('M4 pestaña Historial: etiquetas humanas + fecha 12h + paginación', async () => {
+    mockApi()
+    render(<BrowserRouter><AdminDashboard /></BrowserRouter>)
+    fireEvent.click(screen.getByRole('tab', { name: /Historial/ }))
+    // Enum crudo nunca visible; fecha en 12h.
+    expect(await screen.findByText('Aprobada')).toBeInTheDocument()
+    expect(screen.getByText('Ajuste del sistema')).toBeInTheDocument()
+    expect(screen.queryByText('APPROVED')).not.toBeInTheDocument()
+    expect(screen.getByText(/23 Sep 2026, 10:14 PM/)).toBeInTheDocument()
+    expect(screen.getByText(/aviso #7/)).toBeInTheDocument()
+    expect(screen.getByText(/Página 1 de 1 \(2\)/)).toBeInTheDocument()
   })
 
   it('switch cambia y Guardar llama PATCH', async () => {

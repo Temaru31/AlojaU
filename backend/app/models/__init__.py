@@ -247,12 +247,14 @@ class ReportePublicacion(Base):
 class PublicacionesAudit(Base):
     __tablename__ = "publicaciones_audit"
     __table_args__ = (
-        CheckConstraint("evento IN ('CREATED','APPROVED','REJECTED','PAUSED','RESUMED','RENTED','EXPIRED','RENEWED','BLOCKED')", name="chk_evento"),
+        # M4 historial: + SETTINGS (ajustes) y CUENTA_DELETE (soft-delete).
+        CheckConstraint("evento IN ('CREATED','APPROVED','REJECTED','PAUSED','RESUMED','RENTED','EXPIRED','RENEWED','BLOCKED','SETTINGS','CUENTA_DELETE')", name="chk_evento"),
         Index("idx_audit_pub", "publicacion_id"),
         Index("idx_audit_evento", "evento"),
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    publicacion_id: Mapped[int] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), nullable=False)
+    # M4: NULL cuando el acto no refiere a un aviso (SETTINGS, CUENTA_DELETE).
+    publicacion_id: Mapped[int | None] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), nullable=True)
     usuario_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
     evento: Mapped[str] = mapped_column(String(20), nullable=False)
     detalle: Mapped[str | None] = mapped_column(Text, nullable=True)

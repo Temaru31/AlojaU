@@ -192,7 +192,8 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
                 type="button"
                 onClick={() => removeFile(p.key)}
                 aria-label={`Quitar ${p.name}`}
-                className="absolute top-1 right-1 bg-black/60 text-white text-xs w-6 h-6 rounded-full hover:bg-red-600"
+                // M3 táctil: área 44px vía pseudo-elemento (el visible sigue w-6).
+                className="absolute top-1 right-1 bg-black/60 text-white text-xs w-6 h-6 rounded-full hover:bg-red-600 before:absolute before:-inset-2.5 before:content-['']"
               >
                 ×
               </button>

@@ -148,10 +148,16 @@ export default function MisPublicaciones() {
   const [eliminando, setEliminando] = useState(false)
   // v15.2: switch ACTIVA/PAUSADA del dueño.
   const [cambiandoEstado, setCambiandoEstado] = useState(null)
+  // M2: pausar oculta la vitrina -> confirmación en 2 pasos (reanudar no).
+  const [aPausar, setAPausar] = useState(null)
   // M6: orden server-side (se envía al backend y resetea la página).
   const [orden, setOrden] = useState('recientes')
 
   const handleEstado = async (p) => {
+    if (p.estado === 'ACTIVO' && aPausar !== p.id) {
+      setAPausar(p.id)
+      return
+    }
     const nuevo = p.estado === 'ACTIVO' ? 'PAUSADO' : 'ACTIVO'
     setCambiandoEstado(p.id)
     setError('')
@@ -160,11 +166,13 @@ export default function MisPublicaciones() {
         headers: { Authorization: `Bearer ${token}` },
       })
       setItems(prev => prev.map(x => x.id === p.id ? { ...x, estado: r.data?.estado || nuevo } : x))
+      setAPausar(null)
       if (r.data?.rol_actualizado) {
         try { await refresh?.() } catch { /* noop */ }
       }
     } catch (err) {
       setError(err?.response?.data?.detail || 'No se pudo cambiar el estado.')
+      setAPausar(null)
     } finally {
       setCambiandoEstado(null)
     }
@@ -453,19 +461,26 @@ export default function MisPublicaciones() {
 
                     {/* Acciones de la tarjeta */}
                     <div className="flex flex-wrap items-center justify-end gap-2 pt-3 mt-3 border-t border-neutral-100">
-                      {/* v15.2 switch ACTIVA/PAUSADA del dueño */}
+                      {/* v15.2 switch ACTIVA/PAUSADA del dueño (pausar: 2 pasos) */}
                       {(p.estado === 'ACTIVO' || p.estado === 'PAUSADO') && (
                         <button
                           onClick={() => handleEstado(p)}
+                          onBlur={() => setAPausar(null)}
                           disabled={cambiandoEstado === p.id}
-                          aria-label={p.estado === 'ACTIVO' ? `Pausar ${p.titulo}` : `Reanudar ${p.titulo}`}
+                          aria-label={p.estado === 'ACTIVO'
+                            ? (aPausar === p.id ? `Confirmar pausa de ${p.titulo}` : `Pausar ${p.titulo}`)
+                            : `Reanudar ${p.titulo}`}
                           aria-pressed={p.estado === 'ACTIVO'}
                           className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition disabled:opacity-50 ${p.estado === 'ACTIVO'
-                            ? 'border-amber-300 text-amber-700 hover:bg-amber-50'
+                            ? (aPausar === p.id
+                              ? 'bg-amber-500 border-amber-500 text-white hover:bg-amber-600'
+                              : 'border-amber-300 text-amber-700 hover:bg-amber-50')
                             : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'
                             }`}
                         >
-                          {cambiandoEstado === p.id ? '…' : p.estado === 'ACTIVO' ? '⏸ Pausar' : '▶ Reanudar'}
+                          {cambiandoEstado === p.id ? '…' : p.estado === 'ACTIVO'
+                            ? (aPausar === p.id ? '¿Pausar?' : '⏸ Pausar')
+                            : '▶ Reanudar'}
                         </button>
                       )}
                       <button

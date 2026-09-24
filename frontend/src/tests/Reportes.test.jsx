@@ -38,6 +38,18 @@ describe('T1 Reportes frontend', () => {
     expect(await screen.findByText(/Gracias, revisaremos/)).toBeInTheDocument()
   })
 
+  it('M5 durante el envío deshabilita y muestra spinner (anti doble-clic)', async () => {
+    let resolver
+    api.post.mockReturnValue(new Promise((res) => { resolver = res }))
+    renderModal()
+    const btn = screen.getByRole('button', { name: 'Enviar anónimo' })
+    fireEvent.click(btn)
+    expect(await screen.findByRole('button', { name: /Enviando/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Enviando/ })).toHaveAttribute('aria-busy', 'true')
+    resolver({ data: { id: 9, estado: 'PENDIENTE' } })
+    expect(await screen.findByText(/Gracias, revisaremos/)).toBeInTheDocument()
+  })
+
   it('modal cierra con tecla Escape (accesibilidad)', async () => {
     const onClose = vi.fn()
     render(<ReportarModal publicacionId={1} titulo="Apto test" onClose={onClose} />)

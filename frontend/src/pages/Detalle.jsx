@@ -12,6 +12,8 @@ import { useAuth } from '../contexts/AuthContext'
 import EditarPublicacionModal from '../components/EditarPublicacionModal'
 import { haceRelativo, estaDesactualizada, fetchConfigPublica, diasDesactualizadaEfectiva } from '../constants'
 import { fotosOrdenadas } from '../utils/portada'
+import { formatearSesionFecha } from '../utils/sesion'
+import { etiquetaEvento } from '../utils/historial'
 import { api as _apiDetalle } from '../services/api'
 
 export function humanizarTipo(tipo) {
@@ -119,6 +121,20 @@ export default function Detalle() {
       .catch(() => { if (vivo) setSimilares([]) })
     return () => { vivo = false }
   }, [pub, id])
+
+  // M4 historial del inmueble: solo se pide si es el dueño (el backend
+  // responde 403 al resto; ni siquiera se intenta sin sesión).
+  const [historial, setHistorial] = useState(null)
+  useEffect(() => {
+    if (!pub || !authToken) { setHistorial(null); return }
+    let vivo = true
+    api.get(`/api/publicaciones/${pub.id}/historial`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    })
+      .then(r => { if (vivo) setHistorial(Array.isArray(r.data?.items) ? r.data.items : []) })
+      .catch(() => { if (vivo) setHistorial(null) })
+    return () => { vivo = false }
+  }, [pub, authToken])
 
   // Catálogo de lugares para resolver ?campus_id= aunque el backend no traiga campus_ref.
   useEffect(() => {
@@ -646,6 +662,26 @@ export default function Detalle() {
       </div>
       {reportOpen && (
         <ReportarModal publicacionId={pub.id} titulo={pub.titulo} onClose={() => setReportOpen(false)} />
+      )}
+      {/* M4 historial del inmueble: solo el dueño ve su trazabilidad. */}
+      {esDueno && historial && historial.length > 0 && (
+        <section aria-label="Historial del inmueble" className="mt-10">
+          <h2 className="font-display text-lg font-bold text-navy-900 mb-3">
+            Historial del inmueble
+          </h2>
+          <ul className="card divide-y divide-neutral-100">
+            {historial.map(h => (
+              <li key={h.id} className="flex items-center gap-3 px-4 py-2.5 text-xs">
+                <span className="font-semibold text-navy-800 shrink-0 min-w-24">
+                  {etiquetaEvento(h.evento)}
+                </span>
+                <span className="text-neutral-400 ml-auto shrink-0">
+                  {formatearSesionFecha(h.creado_en) || 'fecha desconocida'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
       {/* v15.2 similares en la zona (también visibles en avisos inactivos). */}
       {similares.length > 0 && (

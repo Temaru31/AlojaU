@@ -1611,6 +1611,16 @@ async def eliminar_cuenta(data: CuentaEliminarIn,
                 raise HTTPException(status_code=403, detail="Contraseña incorrecta")
         u.eliminado_en = datetime.now(timezone.utc)
         await _revocar_sesiones_usuario(db, u.id)
+        # M4 historial: la auto-eliminación queda auditada (misma transacción).
+        try:
+            from ..models import PublicacionesAudit
+            db.add(PublicacionesAudit(
+                publicacion_id=None, usuario_id=u.id,
+                evento="CUENTA_DELETE",
+                detalle=f"Soft-delete por el usuario (gracia {CUENTA_GRACE_DAYS}d)",
+            ))
+        except Exception:
+            pass
         await db.commit()
         return {"mensaje": (f"Cuenta marcada para eliminación. Tienes {CUENTA_GRACE_DAYS} días "
                             "para recuperarla en /api/auth/cuenta/restaurar."),

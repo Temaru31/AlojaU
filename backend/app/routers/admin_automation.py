@@ -151,12 +151,21 @@ async def editar_setting(
         from app.models import SystemSetting
 
         row = (await db.execute(select(SystemSetting).where(SystemSetting.clave == clave))).scalars().first()
+        anterior = row.valor if row else None
         if row:
             row.valor = payload.valor
             row.actualizado_en = datetime.now(timezone.utc)
         else:
             # Upsert: si la fila no existe (migración sin defaults), créala.
             db.add(SystemSetting(clave=clave, valor=payload.valor, tipo=tipo, descripcion=desc))
+        # M4 historial: el cambio de ajustes queda auditado (misma transacción).
+        from app.models import PublicacionesAudit
+        db.add(PublicacionesAudit(
+            publicacion_id=None,
+            usuario_id=admin.get("id") if isinstance(admin.get("id"), int) else None,
+            evento="SETTINGS",
+            detalle=f"{clave}: {anterior} -> {payload.valor}",
+        ))
         await db.commit()
         clear_settings_cache()
         return SettingOut(clave=clave, valor=payload.valor, tipo=tipo, descripcion=desc,

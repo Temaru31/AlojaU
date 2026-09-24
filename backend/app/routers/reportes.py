@@ -83,13 +83,23 @@ async def crear_reporte(
     db: AsyncSession = Depends(get_session),
     authorization: Optional[str] = Header(None),
 ):
-    """Crea reporte PENDIENTE (anónimo si no hay token). 404 si la publicación no existe."""
+    """Crea reporte PENDIENTE (anónimo si no hay token).
+
+    Anti-oráculo: inexistente y no-ACTIVO responden el MISMO 404 genérico,
+    para no revelar avisos privados/pendientes por diferencia de respuesta.
+    Solo avisos ACTIVO y de dueño activo son reportables.
+    """
     user = await get_optional_user(authorization)
     try:
         from app.models import Publicacion, ReportePublicacion
 
         pub = await db.get(Publicacion, payload.publicacion_id)
-        if not pub:
+        if not pub or pub.estado != "ACTIVO":
+            raise HTTPException(status_code=404, detail="Publicación no encontrada")
+        # Dueño en soft-delete: mismo 404 (el aviso es invisible).
+        from app.models import Usuario
+        dueno = await db.get(Usuario, pub.usuario_id)
+        if dueno is not None and getattr(dueno, "eliminado_en", None) is not None:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
         _check_report_rate_limit(request)
         nuevo = ReportePublicacion(
