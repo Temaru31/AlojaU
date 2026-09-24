@@ -62,9 +62,9 @@ class PublicacionCreate(BaseModel):
 class PublicacionUpdate(BaseModel):
     """Edición parcial del dueño (PATCH /api/publicaciones/{id}).
 
-    Solo campos escalares (sin relaciones): servicios/fotos/zona se editan
-    en T3-ciclo-vida. Al menos 1 campo, todos con las mismas cotas que Create.
-    El estado NO cambia con la edición (re-moderación llega en T2).
+    Escalares + `servicios_ids` opcional (las fotos van por
+    PATCH /{id}/fotos con reconciliación atómica). Al menos 1 campo, todos
+    con las mismas cotas que Create. El estado NO cambia con la edición.
     """
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -76,12 +76,34 @@ class PublicacionUpdate(BaseModel):
     direccion_referencial: Optional[str] = Field(default=None, min_length=10, max_length=200)
     # FASE 3: misma unificación que en Create (ver arriba).
     reglas_convivencia: Optional[str] = Field(default=None, min_length=10, max_length=2000)
+    # M4 edición bufferizada: etiquetas del aviso (reemplazo total, mín 1).
+    servicios_ids: Optional[list[int]] = Field(default=None, min_length=1, max_length=10)
+    # M4 commit único: set completo y ordenado de fotos (posición 0 = portada).
+    # Si viene, escalares + etiquetas + fotos se guardan en UNA transacción.
+    fotos: Optional[list[str]] = Field(default=None, min_length=1, max_length=10)
 
     @field_validator("titulo", "descripcion", "direccion_referencial", "reglas_convivencia")
     @classmethod
     def sin_html(cls, v):
         # Mismo criterio que en creación (PATCH edita estos campos).
         return _rechazar_html(v)
+
+    @field_validator("fotos")
+    @classmethod
+    def fotos_sanas(cls, v):
+        # Mismo criterio que PATCH /{id}/fotos (un solo lugar de verdad para
+        # el set; el endpoint lo reutiliza). 422 si vacías/duplicadas/no-http.
+        if v is None:
+            return v
+        limpias = [str(u or "").strip()[:500] for u in v if str(u or "").strip()]
+        if not limpias:
+            raise ValueError("fotos vacío")
+        if len(set(limpias)) != len(limpias):
+            raise ValueError("fotos duplicadas")
+        for u in limpias:
+            if not (u.startswith("https://") or u.startswith("http://")):
+                raise ValueError("URLs deben ser http(s)")
+        return limpias
 
     @model_validator(mode="after")
     def at_least_one(self):

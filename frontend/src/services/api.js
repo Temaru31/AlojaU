@@ -5,7 +5,9 @@ import axios from 'axios'
 
 export const API_TIMEOUT_MS = 55000
 export const API_MAX_RETRIES = 2
-export const API_SLOW_THRESHOLD_MS = 4000
+// M7: el toast "Despertando el servidor" espera 3.5s; si la API responde
+// antes, el temporizador se destruye sin mostrar nada (ver trackEnd).
+export const API_SLOW_THRESHOLD_MS = 3500
 const RETRYABLE_STATUS = new Set([502, 503, 504])
 const LOCAL_API_FALLBACK = 'http://localhost:8000'
 

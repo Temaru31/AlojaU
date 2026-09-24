@@ -176,6 +176,74 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
     expect(patchSpy.mock.calls[0][1]).toMatchObject({ telefono_whatsapp: '+573001234567' })
   })
 
+  it('M2 Google: sin formulario de contraseña, con tarjeta informativa', async () => {
+    localStorage.setItem('alojau_token', 'mock-token-test')
+    mockPerfil({ ...PERFIL_BASE, auth_provider: 'google', email_verificado: true })
+
+    render(
+      <BrowserRouter>
+        <Perfil />
+      </BrowserRouter>
+    )
+    await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('tab', { name: /Seguridad/ }))
+    expect(screen.queryByLabelText(/Contraseña actual/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Actualizar contraseña/ })).not.toBeInTheDocument()
+    expect(screen.getByText(/inicio de sesión seguro con Google/i)).toBeInTheDocument()
+  })
+
+  it('M2 password: con proveedor local sí muestra el formulario', async () => {
+    localStorage.setItem('alojau_token', 'mock-token-test')
+    mockPerfil({ ...PERFIL_BASE, auth_provider: 'password' })
+
+    render(
+      <BrowserRouter>
+        <Perfil />
+      </BrowserRouter>
+    )
+    await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('tab', { name: /Seguridad/ }))
+    expect(screen.getByLabelText(/Contraseña actual/i)).toBeInTheDocument()
+  })
+
+  it('M2 danger zone: botón bloqueado hasta que el correo coincide letra por letra', async () => {
+    localStorage.setItem('alojau_token', 'mock-token-test')
+    mockPerfil({ ...PERFIL_BASE, auth_provider: 'google' })
+
+    render(
+      <BrowserRouter>
+        <Perfil />
+      </BrowserRouter>
+    )
+    await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('tab', { name: /Seguridad/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Eliminar mi cuenta/ }))
+    const confirmar = screen.getByRole('button', { name: /eliminar mi cuenta/i })
+    expect(confirmar).toBeDisabled()
+    fireEvent.change(screen.getByLabelText(/Correo de confirmación/i), { target: { value: 'otro@x.co' } })
+    expect(confirmar).toBeDisabled()
+    fireEvent.change(screen.getByLabelText(/Correo de confirmación/i), { target: { value: 'arrendador@alojau.com' } })
+    expect(confirmar).not.toBeDisabled()
+    // Google: sin campo de contraseña actual.
+    expect(screen.queryByLabelText(/Contraseña actual para eliminar/i)).not.toBeInTheDocument()
+  })
+
+  it('M3 muestra insignia verde de correo verificado en Datos', async () => {
+    localStorage.setItem('alojau_token', 'mock-token-test')
+    mockPerfil({ ...PERFIL_BASE, email_verificado: true })
+
+    render(
+      <BrowserRouter>
+        <Perfil />
+      </BrowserRouter>
+    )
+    await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
+    expect(screen.getByText(/✓ Correo verificado/)).toBeInTheDocument()
+  })
+
   it('helpers de teléfono CO', () => {
     expect(telefonoALocal('573001234567')).toBe('3001234567')
     expect(telefonoALocal('+573001234567')).toBe('3001234567')

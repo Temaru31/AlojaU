@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
+import GoogleButton from '../components/GoogleButton'
+import { signInWithGoogle, guardarRedirectPostLogin } from '../services/supabaseClient'
 import UploadFotos from '../components/UploadFotos'
 import MapPicker from '../components/MapPicker'
 import ZonaSelect from '../components/ZonaSelect'
@@ -8,14 +10,7 @@ import { notifyToast } from '../components/Toast'
 import { emitAuthChange, useAuth } from '../contexts/AuthContext'
 import ContadorCaracteres from '../components/ContadorCaracteres'
 import { LIMITES, estadoRango, RANGO_CLS } from '../constants'
-
-const SERVICIOS = [
-  { id: 1, nombre: 'WiFi Fibra' },
-  { id: 2, nombre: 'Baño Privado' },
-  { id: 3, nombre: 'Cocina Compartida' },
-  { id: 4, nombre: 'Amoblado' },
-  { id: 5, nombre: 'Lavadora' },
-]
+import { SERVICIOS } from '../utils/servicios'
 
 /**
  * Valida el formulario de publicar contra LIMITES (fuente única de verdad).
@@ -58,12 +53,11 @@ export function validarPublicar(form, lim = LIMITES) {
 }
 
 export default function Publicar() {
-  const { refresh } = useAuth()
+  const { refresh, logout } = useAuth()
   const [token, setToken] = useState(() => localStorage.getItem('alojau_token') || '')
-  const [loginEmail, setLoginEmail] = useState('')
-  const [loginPass, setLoginPass] = useState('')
-  const [loginError, setLoginError] = useState('')
-  const [loginLoading, setLoginLoading] = useState(false)
+  // M5: sin sesión se muestra auth unificado (Google + Mi Perfil), no form legacy.
+  const [googleLoading, setGoogleLoading] = useState(false)
+  const [googleError, setGoogleError] = useState('')
 
   const [form, setForm] = useState({
     titulo: '',
@@ -101,24 +95,23 @@ export default function Publicar() {
     }
   }, [])
 
-  const handleLogin = async (e) => {
-    e.preventDefault()
-    setLoginError(''); setLoginLoading(true)
+  // M5: Google con retorno a /publicar tras el callback.
+  const handleGoogle = async () => {
+    setGoogleError('')
+    setGoogleLoading(true)
+    guardarRedirectPostLogin('/publicar')
     try {
-      const r = await api.post('/api/auth/login', { email: loginEmail, password: loginPass })
-      const t = r.data.access_token
-      localStorage.setItem('alojau_token', t)
-      setToken(t)
-      emitAuthChange()
-    } catch (err) {
-      setLoginError(err.response?.data?.detail || 'Credenciales inválidas')
-    } finally { setLoginLoading(false) }
+      await signInWithGoogle()
+    } catch (e) {
+      setGoogleError(e?.message || 'Google OAuth no está configurado todavía.')
+      setGoogleLoading(false)
+    }
   }
 
+  // M1: cierre total (revoca en BD + limpia sesión + redirige a /).
   const handleLogout = () => {
-    localStorage.removeItem('alojau_token')
     setToken('')
-    emitAuthChange()
+    logout?.()
   }
 
   const validate = () => {
@@ -206,35 +199,19 @@ export default function Publicar() {
               Publicar vivienda
             </h1>
             <p className="text-sm text-neutral-500 mb-6">
-              Debes iniciar sesión como <b>ARRENDADOR</b> para publicar. Estado inicial siempre <span className="font-medium text-gold-600">PENDIENTE</span> hasta ser revisada.
+              Debes iniciar sesión para publicar. Estado inicial siempre <span className="font-medium text-gold-600">PENDIENTE</span> hasta ser revisada (tu cuenta se activa como arrendador al publicar).
             </p>
 
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-navy-800 mb-1.5">Email</label>
-                <input
-                  type="email"
-                  value={loginEmail}
-                  onChange={e => setLoginEmail(e.target.value)}
-                  className="input-field"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-navy-800 mb-1.5">Contraseña</label>
-                <input
-                  type="password"
-                  value={loginPass}
-                  onChange={e => setLoginPass(e.target.value)}
-                  className="input-field"
-                  required
-                />
-              </div>
-              {loginError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-2">{loginError}</p>}
-              <button type="submit" disabled={loginLoading} className="btn-accent w-full justify-center">
-                {loginLoading ? 'Ingresando...' : 'Iniciar sesión como ARRENDADOR'}
-              </button>
-            </form>
+            <GoogleButton loading={googleLoading} onClick={handleGoogle} />
+            {googleError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-2 mt-3" role="alert">{googleError}</p>}
+            <div className="flex items-center gap-3 my-4" aria-hidden="true">
+              <span className="flex-1 h-px bg-neutral-200" />
+              <span className="text-[11px] text-neutral-400">o</span>
+              <span className="flex-1 h-px bg-neutral-200" />
+            </div>
+            <Link to="/perfil" className="btn-secondary w-full justify-center">
+              Entrar con correo en Mi Perfil
+            </Link>
           </div>
         </div>
       </div>

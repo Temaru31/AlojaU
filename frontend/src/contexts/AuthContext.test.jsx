@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { render, screen, cleanup, waitFor } from '@testing-library/react'
-import { AuthProvider, useAuth, inicialesDe } from './AuthContext'
+import { render, screen, cleanup, waitFor, fireEvent, act } from '@testing-library/react'
+import { AuthProvider, useAuth, inicialesDe, limpiarSesionLocal, SESION_KEYS } from './AuthContext'
 import { api } from '../services/api'
 
-vi.mock('../services/api', () => ({ api: { get: vi.fn() } }))
+vi.mock('../services/api', () => ({ api: { get: vi.fn(), post: vi.fn() } }))
 
 afterEach(() => {
   cleanup()
@@ -53,6 +53,70 @@ describe('AuthContext', () => {
     expect(inicialesDe({ email: 'arrendador@alojau.com' })).toBe('AR')
     expect(inicialesDe(null)).toBe('?')
     expect(inicialesDe({})).toBe('?')
+  })
+})
+
+describe('AuthContext M1 (cierre total anti-fantasma)', () => {
+  it('limpiarSesionLocal borra sesión y nada ajeno (ni otro redirect)', () => {
+    for (const k of SESION_KEYS) localStorage.setItem(k, 'x')
+    localStorage.setItem('otra_app_clave', ' intacta ')
+    sessionStorage.setItem('alojau_post_login_redirect', '/publicar')
+    sessionStorage.setItem('tmp', '1')
+    limpiarSesionLocal()
+    for (const k of SESION_KEYS) expect(localStorage.getItem(k)).toBeNull()
+    expect(localStorage.getItem('otra_app_clave')).toBe(' intacta ')
+    expect(sessionStorage.getItem('alojau_post_login_redirect')).toBeNull()
+    expect(sessionStorage.getItem('tmp')).toBe('1')
+  })
+
+  it('logout revoca en BD, limpia todo, anula usuario y reemplaza ruta', async () => {
+    localStorage.setItem('alojau_token', 'tok-salir')
+    localStorage.setItem('favoritos', '[1]')
+    localStorage.setItem('alojau_comparar', '[2]')
+    api.get.mockResolvedValue({ data: { email: 'a@b.co', rol: 'ARRENDADOR' } })
+    api.post.mockResolvedValue({ data: { revocadas: 1 } })
+    const replaceSpy = vi.fn()
+    Object.defineProperty(window, 'location', { value: { replace: replaceSpy }, writable: true })
+
+    const Btn = () => {
+      const { logout, user } = useAuth()
+      return (
+        <>
+          <span data-testid="u">{user ? user.email : 'anonimo'}</span>
+          <button type="button" onClick={() => logout()}>salir</button>
+        </>
+      )
+    }
+    render(<AuthProvider><Btn /></AuthProvider>)
+    await screen.findByText('a@b.co')
+    await act(async () => { fireEvent.click(screen.getByText('salir')) })
+    expect(api.post).toHaveBeenCalledWith('/api/auth/logout', {}, {
+      headers: { Authorization: 'Bearer tok-salir' },
+    })
+    for (const k of SESION_KEYS) expect(localStorage.getItem(k)).toBeNull()
+    expect(await screen.findByTestId('u')).toHaveTextContent('anonimo')
+    expect(replaceSpy).toHaveBeenCalledWith('/')
+  })
+
+  it('logout sin red igual limpia el estado local (best-effort)', async () => {
+    localStorage.setItem('alojau_token', 'tok-x')
+    api.get.mockResolvedValue({ data: { email: 'a@b.co' } })
+    api.post.mockRejectedValue(new Error('red caída'))
+    Object.defineProperty(window, 'location', { value: { replace: vi.fn() }, writable: true })
+    const Btn = () => {
+      const { logout, user } = useAuth()
+      return (
+        <>
+          <span data-testid="u2">{user ? 'hay' : 'anonimo'}</span>
+          <button type="button" onClick={() => logout()}>salir</button>
+        </>
+      )
+    }
+    render(<AuthProvider><Btn /></AuthProvider>)
+    await screen.findByText('hay')
+    await act(async () => { fireEvent.click(screen.getByText('salir')) })
+    expect(localStorage.getItem('alojau_token')).toBeNull()
+    expect(await screen.findByTestId('u2')).toHaveTextContent('anonimo')
   })
 })
 

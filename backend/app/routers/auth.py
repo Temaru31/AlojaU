@@ -14,7 +14,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, Header
 from pydantic import BaseModel, EmailStr, Field, model_validator
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
@@ -410,6 +410,9 @@ class SesionOut(BaseModel):
     ip: Optional[str] = None
     creado_en: Optional[str] = None
     actual: bool = False
+    # M2 UX: user-agent crudo del dispositivo (el frontend lo parsea a
+    # etiqueta amigable tipo "Chrome en Windows"). Aditivo: puede venir None.
+    user_agent: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -678,10 +681,18 @@ async def _purge_user(db: AsyncSession, u) -> None:
     await db.commit()
 
 
-async def _revocar_sesiones_usuario(db: AsyncSession, usuario_id: int) -> int:
+async def _revocar_sesiones_usuario(db: AsyncSession, usuario_id: int,
+                                     jti: str | None = None) -> int:
+    """Revoca sesiones activas del usuario (todas, o solo el jti dado).
+
+    Fuente única para /logout, /logout-all y /sesiones/revocar-todas.
+    No hace commit (lo hace el endpoint dueño de la transacción).
+    """
     from ..models import Sesion
-    res = await db.execute(
-        select(Sesion).where(Sesion.usuario_id == usuario_id, Sesion.revocado.is_(False)))
+    conds = [Sesion.usuario_id == usuario_id, Sesion.revocado.is_(False)]
+    if jti:
+        conds.append(Sesion.jti == jti)
+    res = await db.execute(select(Sesion).where(*conds))
     n = 0
     for s in res.scalars().all():
         s.revocado = True
@@ -1013,10 +1024,11 @@ async def update_perfil(
 _MOCK_OTPS: dict[str, dict] = {}
 
 
-async def _crear_otp(db: AsyncSession, email: str, proposito: str) -> str:
-    """Genera y persiste OTP. Retorna el código plano (solo para tests/dev).
+async def _crear_otp(db: AsyncSession, email: str, proposito: str) -> tuple[str, str]:
+    """Genera y persiste OTP. Retorna (código plano, canal).
 
-    En prod el código viaja por Email/Telegram, nunca en la respuesta.
+    El código es solo para tests/dev; en prod viaja por Email/Telegram,
+    nunca en la respuesta. El canal sí se expone (M3 transparencia UX).
     """
     email = _norm_email(email)
     codigo = f"{secrets.randbelow(1_000_000):06d}"
@@ -1037,12 +1049,16 @@ async def _crear_otp(db: AsyncSession, email: str, proposito: str) -> str:
             "hash": hashlib.sha256(codigo.encode()).hexdigest(),
             "expira": time.monotonic() + 600,
         }
-    _enviar_codigo(email, codigo, proposito)
-    return codigo
+    canal = _enviar_codigo(email, codigo, proposito)
+    return codigo, canal
 
 
-def _enviar_codigo(email: str, codigo: str, proposito: str) -> None:
-    """Envía el OTP: Telegram si hay bot configurado, si no log (dev)."""
+def _enviar_codigo(email: str, codigo: str, proposito: str) -> str:
+    """Envía el OTP y retorna el canal usado ("telegram" o "email").
+
+    Telegram si hay bot configurado y el envío funciona; si no, email
+    (log en dev). El frontend muestra el canal explícito (M3 UX).
+    """
     if settings.TELEGRAM_BOT_TOKEN.strip():
         try:
             import urllib.request
@@ -1059,12 +1075,13 @@ def _enviar_codigo(email: str, codigo: str, proposito: str) -> None:
                 )
                 with urllib.request.urlopen(req, timeout=8) as _:
                     pass
-                return
+                return "telegram"
         except Exception as e:
             logger.warning(f"[otp telegram] falló, usando log: {e!r}")
     # Sin Telegram o sin chat: Email-code simulado (log). En prod con
     # Supabase se envía vía Supabase Auth email; aquí queda trazabilidad.
     logger.info(f"[otp {proposito}] código para {email}: {codigo} (10 min)")
+    return "email"
 
 
 # v14.1: throttle OTP en memoria (cubre mock/dev) + persistente (prod).
@@ -1093,10 +1110,10 @@ async def otp_solicitar(data: OtpSolicitarIn, db: AsyncSession = Depends(get_ses
     _check_otp_mem(_OTP_SOLICITAR, email, OTP_SOL_LIMIT, OTP_SOL_WINDOW_S,
                    "Demasiadas solicitudes de código, espera 15 minutos")
     await _db_rate_check(db, f"otp_sol:{email}", limite=OTP_SOL_LIMIT, ventana_s=int(OTP_SOL_WINDOW_S))
-    await _crear_otp(db, email, data.proposito)
+    _, canal = await _crear_otp(db, email, data.proposito)
     await _db_rate_record(db, f"otp_sol:{email}", False)
     return {"mensaje": "Si el correo existe, enviamos un código de 6 dígitos válido 10 minutos.",
-            "expira_minutos": 10}
+            "expira_minutos": 10, "canal": canal}
 
 
 @router.post("/otp/verificar", summary="Verificar OTP y confirmar email")
@@ -1453,6 +1470,7 @@ async def listar_sesiones(user: dict = Depends(get_current_user),
                 jti=s.jti, ip=s.ip,
                 creado_en=s.creado_en.isoformat() if s.creado_en else None,
                 actual=bool(actual_jti and s.jti == actual_jti),
+                user_agent=getattr(s, "user_agent", None),
             ))
         return out
     except Exception:
@@ -1462,7 +1480,8 @@ async def listar_sesiones(user: dict = Depends(get_current_user),
             pass
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        return [SesionOut(jti=str(actual_jti or "mock"), ip="127.0.0.1", actual=True)]
+        return [SesionOut(jti=str(actual_jti or "mock"), ip="127.0.0.1", actual=True,
+                          user_agent="mock")]
 
 
 @router.post("/sesiones/revocar-todas", summary="Cerrar sesión en todos los dispositivos")
@@ -1470,14 +1489,7 @@ async def revocar_sesiones(user: dict = Depends(get_current_user),
                            db: AsyncSession = Depends(get_session)):
     uid = user.get("id")
     try:
-        from ..models import Sesion
-        res = await db.execute(
-            select(Sesion).where(Sesion.usuario_id == uid, Sesion.revocado.is_(False)))
-        n = 0
-        for s in res.scalars().all():
-            s.revocado = True
-            s.revocado_en = datetime.now(timezone.utc)
-            n += 1
+        n = await _revocar_sesiones_usuario(db, uid)
         await db.commit()
         return {"mensaje": f"Sesiones revocadas: {n}. Vuelve a iniciar sesión.", "revocadas": n}
     except Exception as e:
@@ -1489,6 +1501,84 @@ async def revocar_sesiones(user: dict = Depends(get_current_user),
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         return {"mensaje": "Sesiones revocadas (mock).", "revocadas": 1}
+
+
+def _claims_sin_verificar_revocacion(authorization: str | None) -> dict | None:
+    """Decodifica el Bearer sin exigir sesión activa (logout idempotente).
+
+    Un token ya revocado debe poder cerrar sesión igual (doble clic, multi
+    pestaña). Retorna claims o None si no hay token decodificable.
+    """
+    if not authorization or not authorization.strip():
+        return None
+    parts = authorization.strip().split()
+    if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
+        return None
+    try:
+        from ..core.security import decode_token
+        return decode_token(parts[1].strip())
+    except Exception:
+        return None
+
+
+@router.post("/logout", summary="Cerrar sesión actual (revoca este token)")
+async def logout_actual(
+    db: AsyncSession = Depends(get_session),
+    authorization: str | None = Header(None),
+):
+    """M1 efecto fantasma: revoca el jti del token actual en BD.
+
+    Idempotente: sin token, token legacy sin jti o ya revocado responden 200
+    igual (el frontend limpia el estado local de todas formas). Sin PG en
+    dev responde ok mock.
+    """
+    claims = _claims_sin_verificar_revocacion(authorization)
+    if not claims:
+        return {"mensaje": "Sesión cerrada.", "revocadas": 0}
+    jti = claims.get("jti")
+    uid = claims.get("id")
+    if not jti or not isinstance(uid, int):
+        return {"mensaje": "Sesión cerrada.", "revocadas": 0}
+    try:
+        n = await _revocar_sesiones_usuario(db, uid, jti)
+        await db.commit()
+        return {"mensaje": "Sesión cerrada.", "revocadas": n}
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[logout] DB falló: {e!r}", exc_info=True)
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+        return {"mensaje": "Sesión cerrada (mock).", "revocadas": 1, "mock": True}
+
+
+@router.post("/logout-all", summary="Cerrar sesión en todos los dispositivos")
+async def logout_todas(
+    db: AsyncSession = Depends(get_session),
+    authorization: str | None = Header(None),
+):
+    """Alias explícito de revocación global (misma semántica que
+    /sesiones/revocar-todas). Idempotente como /logout."""
+    claims = _claims_sin_verificar_revocacion(authorization)
+    if not claims or not isinstance(claims.get("id"), int):
+        return {"mensaje": "Sesiones revocadas.", "revocadas": 0}
+    uid = claims["id"]
+    try:
+        n = await _revocar_sesiones_usuario(db, uid)
+        await db.commit()
+        return {"mensaje": f"Sesiones revocadas: {n}. Vuelve a iniciar sesión.",
+                "revocadas": n}
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[logout-all] DB falló: {e!r}", exc_info=True)
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+        return {"mensaje": "Sesiones revocadas (mock).", "revocadas": 1, "mock": True}
 
 
 # ---------------------------------------------------------------------------

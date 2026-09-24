@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
-import { emitAuthChange, inicialesDe } from '../contexts/AuthContext'
+import { emitAuthChange, inicialesDe, limpiarSesionLocal } from '../contexts/AuthContext'
+import { formatearSesionFecha, etiquetaDispositivo } from '../utils/sesion'
 import GoogleButton from '../components/GoogleButton'
 import RegistroForm from '../components/RegistroForm'
 import OtpForm from '../components/OtpForm'
@@ -127,7 +128,8 @@ export default function Perfil() {
         headers: { Authorization: `Bearer ${token}` },
       })
       setSuccessMsg(r.data?.mensaje || 'Cuenta marcada para eliminación.')
-      try { localStorage.removeItem('alojau_token') } catch { /* noop */ }
+      // M1: limpieza total compartida (no solo el token).
+      limpiarSesionLocal()
       setToken('')
       setPerfil(null)
       emitAuthChange()
@@ -208,7 +210,14 @@ export default function Perfil() {
     if (token) {
       cargarPerfil(token)
       cargarSesiones(token)
+      return
     }
+    // M1 efecto fantasma: sin token no quedan datos privados en memoria.
+    setPerfil(null)
+    setSesiones(null)
+    setMisStats(null)
+    setError('')
+    setSuccessMsg('')
   }, [token])
 
   // Stats livianas: 3 totales (size=1) en paralelo; cualquier fallo -> sin stats.
@@ -615,7 +624,18 @@ export default function Perfil() {
               <h3 className="text-sm font-bold text-navy-900">📱 Contacto</h3>
               <p className="text-[11px] text-neutral-400 -mt-2">Cómo te contactan los interesados. El teléfono verificado suma +20 de confianza.</p>
               <div>
-                <label htmlFor="perfil-correo" className="block text-sm font-semibold text-navy-800 mb-1.5">Correo</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label htmlFor="perfil-correo" className="block text-sm font-semibold text-navy-800">Correo</label>
+                  {perfil?.email_verificado ? (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      ✓ Correo verificado
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                      Sin verificar
+                    </span>
+                  )}
+                </div>
                 <input id="perfil-correo" type="email" value={perfil?.email || ''} disabled className="input-field opacity-60" aria-describedby="correo-ayuda" />
                 <p id="correo-ayuda" className="text-[11px] text-neutral-400 mt-1">El correo identifica tu cuenta y no se puede cambiar.</p>
               </div>
@@ -742,11 +762,23 @@ export default function Perfil() {
         {tab === 'seguridad' && (
           <div id="panel-seguridad" role="tabpanel" aria-labelledby="tab-seguridad" aria-label="Seguridad y contraseña" tabIndex={0} className="card p-6 space-y-4">
             <h2 className="text-base font-semibold text-navy-900">Cambiar contraseña</h2>
+            {perfil?.auth_provider === 'google' ? (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4" role="note">
+                <p className="text-sm font-semibold text-emerald-800">
+                  🔐 Tu cuenta utiliza inicio de sesión seguro con Google.
+                </p>
+                <p className="text-xs text-emerald-700 mt-1">
+                  No requiere una contraseña local: entras con tu cuenta de Google y ya está verificada.
+                </p>
+              </div>
+            ) : (
+            <>
             <p className="text-xs text-neutral-500">Te pedimos la actual por seguridad. La nueva debe tener al menos 8 caracteres con letras y números.</p>
             <form onSubmit={handleCambiarPassword} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-navy-800 mb-1.5">Contraseña actual</label>
+                <label htmlFor="perfil-pw-actual" className="block text-sm font-medium text-navy-800 mb-1.5">Contraseña actual</label>
                 <input
+                  id="perfil-pw-actual"
                   type="password"
                   value={pwActual}
                   onChange={e => setPwActual(e.target.value)}
@@ -756,8 +788,9 @@ export default function Perfil() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-navy-800 mb-1.5">Nueva contraseña</label>
+                <label htmlFor="perfil-pw-nueva" className="block text-sm font-medium text-navy-800 mb-1.5">Nueva contraseña</label>
                 <input
+                  id="perfil-pw-nueva"
                   type="password"
                   value={pwNueva}
                   onChange={e => setPwNueva(e.target.value)}
@@ -790,6 +823,8 @@ export default function Perfil() {
                 ¿Olvidaste tu contraseña? Recupérala con un enlace de 15 minutos
               </Link>
             </p>
+            </>
+            )}
             {/* v13: sesiones activas + revocación global */}
             <div className="border-t border-neutral-150 pt-4 space-y-3">
               <h3 className="text-sm font-semibold text-navy-900">Sesiones activas</h3>
@@ -799,14 +834,22 @@ export default function Perfil() {
                 <p className="text-xs text-neutral-400">No hay sesiones registradas (modo sin base de datos).</p>
               ) : (
                 <ul className="space-y-1.5">
-                  {sesiones.map((s) => (
-                    <li key={s.jti} className="flex items-center justify-between text-xs bg-neutral-50 border border-neutral-150 rounded-md px-3 py-2">
-                      <span className="text-neutral-600 truncate">
-                        {s.ip || 'IP desconocida'} · {s.creado_en ? new Date(s.creado_en).toLocaleString() : 'reciente'}
-                        {s.actual ? ' · este dispositivo' : ''}
-                      </span>
-                    </li>
-                  ))}
+                  {sesiones.map((s) => {
+                    const fecha = formatearSesionFecha(s.creado_en) || 'reciente'
+                    return (
+                      <li key={s.jti} className="flex items-center justify-between gap-2 text-xs bg-neutral-50 border border-neutral-150 rounded-md px-3 py-2">
+                        <span className="text-neutral-600 truncate">
+                          {etiquetaDispositivo(s.user_agent)} · {fecha}
+                          {s.actual ? ' · este dispositivo' : ''}
+                        </span>
+                        {s.actual && (
+                          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 shrink-0">
+                            Actual
+                          </span>
+                        )}
+                      </li>
+                    )
+                  })}
                 </ul>
               )}
               <button
@@ -844,9 +887,15 @@ export default function Perfil() {
                     onChange={(e) => setDelEmail(e.target.value)}
                     placeholder={perfil?.email || 'tu@correo.com'}
                     aria-label="Correo de confirmación para eliminar la cuenta"
+                    aria-describedby="delEmail-ayuda"
                     className="input-field"
                     required
                   />
+                  <p id="delEmail-ayuda" className="text-[11px] text-neutral-500" aria-live="polite">
+                    {delEmail.trim() === (perfil?.email || '').trim()
+                      ? '✓ El correo coincide.'
+                      : 'Escríbelo letra por letra, igual que tu correo de cuenta.'}
+                  </p>
                   {perfil?.auth_provider === 'password' && (
                     <input
                       type="password"
@@ -861,7 +910,8 @@ export default function Perfil() {
                   <div className="flex gap-2">
                     <button
                       type="submit"
-                      disabled={eliminando}
+                      disabled={eliminando || delEmail.trim() !== (perfil?.email || '').trim()}
+                      title={delEmail.trim() !== (perfil?.email || '').trim() ? 'El correo debe coincidir letra por letra' : undefined}
                       className="px-4 py-2 text-xs font-bold text-white bg-red-600 rounded-md hover:bg-red-700 transition disabled:opacity-50"
                     >
                       {eliminando ? 'Eliminando…' : 'Sí, eliminar mi cuenta'}

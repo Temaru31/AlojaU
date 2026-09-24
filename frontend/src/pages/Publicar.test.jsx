@@ -3,8 +3,14 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
 import { MemoryRouter } from 'react-router-dom'
 import Publicar from './Publicar'
 import { api } from '../services/api'
+import { AuthProvider } from '../contexts/AuthContext'
+import { signInWithGoogle, POST_LOGIN_REDIRECT_KEY } from '../services/supabaseClient'
 
 vi.mock('../services/api', () => ({ api: { get: vi.fn(), post: vi.fn() } }))
+vi.mock('../services/supabaseClient', async (importOriginal) => {
+  const mod = await importOriginal()
+  return { ...mod, signInWithGoogle: vi.fn() }
+})
 
 // Hijos pesados fuera del foco: se simula su contrato (onUrls/onChange) para
 // verificar la lógica propia de Publicar (login, validación, payload, errores).
@@ -29,7 +35,6 @@ vi.mock('../components/MapPicker', () => ({
 }))
 
 const TOKEN = 'tok-arrendador'
-const LOGIN_OK = { data: { access_token: TOKEN } }
 const CREATED = {
   data: { id: 99, estado: 'PENDIENTE', mensaje: 'Enviada a revisión', indice_confianza: 85, advertencia: 'Informativo' },
 }
@@ -61,34 +66,29 @@ const fillValid = () => {
 }
 
 describe('Publicar (HU-005: solo ARRENDADOR, nace PENDIENTE)', () => {
-  it('sin token muestra el login y no llama a la API', () => {
+  it('sin token muestra auth unificado y no llama a la API', () => {
     renderPage()
     expect(screen.getByText('Publicar vivienda')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Iniciar sesión como ARRENDADOR' })).toBeInTheDocument()
+    // M5: Google + Mi Perfil en vez del form legacy (sin credenciales).
+    expect(screen.getByRole('button', { name: /Continuar con Google/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Mi Perfil/ })).toHaveAttribute('href', '/perfil')
+    expect(screen.queryByPlaceholderText('Ej: Habitacion amoblada cerca al Tulcan')).not.toBeInTheDocument()
     expect(api.post).not.toHaveBeenCalled()
   })
 
-  it('login exitoso guarda el token y muestra el formulario', async () => {
-    api.post.mockResolvedValue(LOGIN_OK)
-    const { container } = renderPage()
-    fireEvent.change(container.querySelector('input[type="email"]'), { target: { value: 'arriendo@popayan.co' } })
-    fireEvent.change(container.querySelector('input[type="password"]'), { target: { value: 'AlojaU123' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Iniciar sesión como ARRENDADOR' }))
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/auth/login', {
-      email: 'arriendo@popayan.co', password: 'AlojaU123',
-    }))
-    expect(localStorage.getItem('alojau_token')).toBe(TOKEN)
-    expect(await screen.findByRole('button', { name: 'Enviar a revision' })).toBeInTheDocument()
+  it('Google guarda retorno a /publicar y delega en supabaseClient', async () => {
+    signInWithGoogle.mockResolvedValue({ via: 'sdk' })
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: /Continuar con Google/i }))
+    await waitFor(() => expect(signInWithGoogle).toHaveBeenCalled())
+    expect(sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY)).toBe('/publicar')
   })
 
-  it('login fallido muestra el detail del backend', async () => {
-    api.post.mockRejectedValue({ response: { data: { detail: 'Credenciales inválidas' } } })
-    const { container } = renderPage()
-    fireEvent.change(container.querySelector('input[type="email"]'), { target: { value: 'x@y.co' } })
-    fireEvent.change(container.querySelector('input[type="password"]'), { target: { value: 'mala' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Iniciar sesión como ARRENDADOR' }))
-    expect(await screen.findByText('Credenciales inválidas')).toBeInTheDocument()
-    expect(localStorage.getItem('alojau_token')).toBeNull()
+  it('Google sin configurar muestra guía accionable', async () => {
+    signInWithGoogle.mockRejectedValue(new Error('Google OAuth no configurado todavía.'))
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: /Continuar con Google/i }))
+    expect(await screen.findByText(/no configurado todavía/i)).toBeInTheDocument()
   })
 
   it('submit vacío bloquea con errores de validación y sin POST', () => {
@@ -188,11 +188,15 @@ describe('Publicar (HU-005: solo ARRENDADOR, nace PENDIENTE)', () => {
     expect(await screen.findByText('body.titulo: corto')).toBeInTheDocument()
   })
 
-  it('cerrar sesión limpia el token y vuelve al login', () => {
+  it('cerrar sesión usa el logout total y vuelve al auth unificado', async () => {
     localStorage.setItem('alojau_token', TOKEN)
-    renderPage()
-    fireEvent.click(screen.getByRole('button', { name: 'Cerrar sesión' }))
-    expect(localStorage.getItem('alojau_token')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Iniciar sesión como ARRENDADOR' })).toBeInTheDocument()
+    api.get.mockResolvedValue({ data: { email: 'a@b.co', rol: 'ARRENDADOR' } })
+    render(<MemoryRouter><AuthProvider><Publicar /></AuthProvider></MemoryRouter>)
+    // M1: el logout total es async (revoca en BD y luego limpia).
+    fireEvent.click(await screen.findByRole('button', { name: 'Cerrar sesión' }))
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/auth/logout', {},
+      expect.objectContaining({ headers: expect.anything() })))
+    await waitFor(() => expect(localStorage.getItem('alojau_token')).toBeNull())
+    expect(screen.getByRole('button', { name: /Continuar con Google/i })).toBeInTheDocument()
   })
 })

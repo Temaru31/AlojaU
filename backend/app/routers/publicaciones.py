@@ -33,6 +33,7 @@ from app.schemas.publicacion import (
     RenovacionOut,
 )
 from app.core.pagination import paginate_params, build_paginated
+from pydantic import BaseModel, Field
 import logging
 logger = logging.getLogger("alojau.publicaciones")
 
@@ -196,11 +197,14 @@ async def mis_publicaciones(
     estado: Optional[str] = Query(None, pattern="^(ACTIVO|PENDIENTE|PAUSADO|PAUSADO_POR_REPORTE|REVISION_REQUERIDA|RECHAZADO|ARRENDADO|EXPIRADO|DESACTIVADO)$", description="Filtra por estado (default todos)"),
     page: int = Query(1, ge=1, le=1000, description="Página 1-indexed"),
     size: int = Query(12, ge=1, le=50, description="Tamaño página"),
+    orden: str = Query("recientes", pattern="^(recientes|vistas|estado)$",
+                       description="Orden del panel: recientes (default), vistas desc o estado"),
     db: AsyncSession = Depends(get_session),
     user: dict = Depends(get_current_user),
 ):
     """Lista las publicaciones del usuario autenticado en TODOS los estados
-    (ACTIVO + PENDIENTE en moderación + otros), más recientes primero, paginado.
+    (ACTIVO + PENDIENTE en moderación + otros), paginado, con orden server-side
+    (M6: el orden en cliente mentiría con paginación multipágina).
     Sin token -> 401. Cada dueño solo ve las suyas (filtro usuario_id).
     NOTA: declarada ANTES de /{pub_id} para que "mias" no caiga en el path param."""
     uid = user.get("id")
@@ -209,6 +213,7 @@ async def mis_publicaciones(
         raise HTTPException(status_code=401, detail="Token sin propietario válido")
     try:
         from app.models import Publicacion
+        from sqlalchemy import case as _case
 
         conds = [Publicacion.usuario_id == uid]
         if estado:
@@ -216,6 +221,19 @@ async def mis_publicaciones(
         total_stmt = select(func.count()).select_from(Publicacion).where(*conds)
         total = (await db.execute(total_stmt)).scalar() or 0
         offset, size_norm = paginate_params(page, size)
+        if orden == "vistas":
+            order_cols = [Publicacion.vistas.desc(), Publicacion.id.desc()]
+        elif orden == "estado":
+            # Mismo orden lógico que el panel (ACTIVO primero, terminales al final).
+            order_cols = [_case(
+                {e: i for i, e in enumerate([
+                    "ACTIVO", "PENDIENTE", "PAUSADO", "PAUSADO_POR_REPORTE",
+                    "REVISION_REQUERIDA", "RECHAZADO", "ARRENDADO",
+                    "EXPIRADO", "DESACTIVADO"])},
+                value=Publicacion.estado, else_=99,
+            ).asc(), Publicacion.id.desc()]
+        else:
+            order_cols = [Publicacion.id.desc()]
         stmt = (
             select(Publicacion)
             .options(
@@ -224,7 +242,7 @@ async def mis_publicaciones(
                 selectinload(Publicacion.zona),
             )
             .where(*conds)
-            .order_by(Publicacion.id.desc())
+            .order_by(*order_cols)
             .limit(size_norm)
             .offset(offset)
         )
@@ -244,10 +262,19 @@ async def mis_publicaciones(
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     # Mock fallback solo dev: filtra por dueño (incluye PENDIENTE, es su bandeja) + pagina en memoria.
+    # Mismo contrato de orden que la rama DB (M6).
     filtradas = [p for p in MOCK_PUBS if p.get("usuario_id") == uid]
     if estado:
         filtradas = [p for p in filtradas if p.get("estado") == estado]
-    filtradas.sort(key=lambda p: p["id"], reverse=True)
+    if orden == "vistas":
+        filtradas.sort(key=lambda p: (-(p.get("vistas", 0) or 0), -p["id"]))
+    elif orden == "estado":
+        _rango = {"ACTIVO": 0, "PENDIENTE": 1, "PAUSADO": 2, "PAUSADO_POR_REPORTE": 3,
+                  "REVISION_REQUERIDA": 4, "RECHAZADO": 5, "ARRENDADO": 6,
+                  "EXPIRADO": 7, "DESACTIVADO": 8}
+        filtradas.sort(key=lambda p: (_rango.get(p.get("estado"), 99), -p["id"]))
+    else:
+        filtradas.sort(key=lambda p: p["id"], reverse=True)
     total = len(filtradas)
     offset, size_norm = paginate_params(page, size)
     items = [view.mock_to_out(p, None, True) for p in filtradas[offset:offset + size_norm]]
@@ -401,24 +428,50 @@ async def editar_publicacion(
     db: AsyncSession = Depends(get_session),
     user: dict = Depends(get_current_user),
 ):
-    """Edición parcial del dueño: titulo/descripcion/tipo/canon/deposito/direccion/reglas.
+    """Edición parcial del dueño: escalares + `servicios_ids` opcional
+    (reemplazo total de etiquetas, con FK validadas). Las fotos van por
+    PATCH /{id}/fotos (reconciliación atómica, M4).
     401 sin token o sin id válido, 403 si no es dueño ni ADMIN, 404 si no existe,
     422 si algún campo viola cotas (iguales a Create) o el body viene vacío.
-    El estado NO cambia (re-moderación llega en T2; cambiarlo aquí sin bandeja
-    escondería el aviso sin forma de re-aprobar). Sin fila de audit: el CHECK de
-    publicaciones_audit no tiene evento EDITED (migración pendiente en T2)."""
+    El estado NO cambia con la edición. Sin fila de audit: el CHECK de
+    publicaciones_audit no tiene evento EDITED (migración pendiente)."""
     cambios = {k: v for k, v in payload.model_dump().items() if v is not None}
+    servicios_nuevos = cambios.pop("servicios_ids", None)
+    if servicios_nuevos is not None:
+        servicios_nuevos = list(dict.fromkeys(servicios_nuevos))
+    # M4 commit único: el set de fotos viaja en el mismo PATCH (ya validado
+    # por el schema). Un solo commit para escalares + etiquetas + fotos.
+    fotos_nuevas = cambios.pop("fotos", None)
     try:
-        from app.models import Publicacion
+        from app.models import Publicacion, PublicacionServicio, ServicioCatalogo
 
         p = await db.get(Publicacion, pub_id)
         if not p:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
         if not _is_owner_or_admin(user, p.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede editar")
+        if servicios_nuevos is not None:
+            for sid in servicios_nuevos:
+                if not await db.get(ServicioCatalogo, sid):
+                    raise HTTPException(status_code=404, detail=f"servicio_id {sid} no existe")
         for k, v in cambios.items():
             setattr(p, k, v)
+        if servicios_nuevos is not None:
+            await db.execute(
+                PublicacionServicio.__table__.delete().where(
+                    PublicacionServicio.publicacion_id == pub_id)
+            )
+            for sid in servicios_nuevos:
+                db.add(PublicacionServicio(publicacion_id=pub_id, servicio_id=sid))
+        if fotos_nuevas is not None:
+            await _reconciliar_fotos_urls(db, pub_id, list(fotos_nuevas))
         await db.commit()
+        # La sesión usa expire_on_commit=False: el DELETE Core no invalida la
+        # colección ORM en el identity map y el re-read la traería rancia.
+        # Se expira explícitamente antes de releer con eager loading.
+        # OJO: AsyncSession.expire es síncrono (no lleva await; await None
+        # lanzaría TypeError y caería al fallback mock con 404 fantasma).
+        db.expire(p, ["servicios"])
         # Re-lee con eager loading (refresh() no recarga relaciones en async).
         stmt = (
             select(Publicacion)
@@ -454,8 +507,138 @@ async def editar_publicacion(
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
     if not _is_owner_or_admin(user, pub.get("usuario_id")):
         raise HTTPException(status_code=403, detail="Solo el dueño puede editar")
+    if fotos_nuevas is not None:
+        # Mock dev: el set ya viene validado por el schema; reemplazo directo.
+        pub["fotos"] = list(fotos_nuevas)
+    if servicios_nuevos is not None:
+        # Mock dev: espejo del reemplazo con el MISMO contrato que PG
+        # (catálogo seed 1-5, máx 10, dedup). Sin PG no hay más servicios.
+        _nombres = {1: "WiFi Fibra", 2: "Baño Privado", 3: "Cocina Compartida",
+                    4: "Amoblado", 5: "Lavadora"}
+        if len(servicios_nuevos) > 10:
+            raise HTTPException(status_code=422, detail="máximo 10 servicios")
+        for sid in servicios_nuevos:
+            if sid not in _nombres:
+                raise HTTPException(status_code=404, detail=f"servicio_id {sid} no existe")
+        pub["servicios_ids"] = list(servicios_nuevos)
+        pub["servicios"] = [_nombres[sid] for sid in servicios_nuevos]
     pub.update(cambios)
     return view.mock_to_out(pub, None, True)
+
+
+async def _reconciliar_fotos_urls(db: AsyncSession, pub_id: int, urls: list[str]) -> list:
+    """Alta/baja/reorden de fotos en UNA pasada (sin commit).
+
+    Fuente única para PATCH /{id} (campo `fotos`) y PATCH /{id}/fotos.
+    Las URLs ya vienen normalizadas y validadas. Usa orden temporal 1000+i
+    para no violar UNIQUE(publicacion_id, orden) a mitad de camino.
+    Retorna las filas finales ordenadas por orden.
+    """
+    from app.models import ImagenPublicacion
+
+    actuales = (await db.execute(
+        select(ImagenPublicacion).where(
+            ImagenPublicacion.publicacion_id == pub_id)
+    )).scalars().all()
+    por_url = {r.url: r for r in actuales}
+    vistas = set(urls)
+    for r in actuales:
+        if r.url not in vistas:
+            await db.delete(r)
+    await db.flush()
+    vivas = [por_url[u] for u in urls if u in por_url]
+    for i, row in enumerate(vivas):
+        row.orden = 1000 + i
+    await db.flush()
+    for i, url in enumerate(urls, start=1):
+        row = por_url.get(url)
+        if row is not None and url in vistas:
+            row.orden = i
+        else:
+            db.add(ImagenPublicacion(publicacion_id=pub_id, url=url, orden=i))
+    await db.flush()
+    return (await db.execute(
+        select(ImagenPublicacion).where(ImagenPublicacion.publicacion_id == pub_id)
+        .order_by(ImagenPublicacion.orden.asc())
+    )).scalars().all()
+
+
+class FotosSetIn(BaseModel):
+    """Set completo y ordenado de fotos (la posición 0 es la portada)."""
+    fotos: list[str] = Field(min_length=1, max_length=10)
+
+
+@router.patch("/{pub_id}/fotos", summary="Dueño: reemplazar set de fotos (atómico)")
+async def reemplazar_fotos(
+    pub_id: int = Path(..., ge=1, le=1000000),
+    payload: FotosSetIn = ...,
+    db: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """M4 edición bufferizada: el frontend acumula altas/bajas/reorden en
+    estado local y commitea UNA vez aquí (1 transacción: altas + bajas +
+    reorden 1..N). Solo dueño o ADMIN. 401/403/404/422.
+
+    Las URLs deben venir de `POST /upload/una` (storage) o externas http(s);
+    duplicadas o no-http → 422. Sin fila de audit (sin evento FOTOS en el
+    CHECK de auditoría).
+    """
+    urls = [str(u or "").strip()[:500] for u in (payload.fotos or []) if str(u or "").strip()]
+    if not urls:
+        raise HTTPException(status_code=422, detail="fotos vacío")
+    if len(urls) > 10:
+        raise HTTPException(status_code=422, detail="Máximo 10 fotos por aviso")
+    if len(set(urls)) != len(urls):
+        raise HTTPException(status_code=422, detail="fotos duplicadas")
+    for u in urls:
+        if not (u.startswith("https://") or u.startswith("http://")):
+            raise HTTPException(status_code=422, detail="URLs deben ser http(s)")
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    try:
+        from app.models import ImagenPublicacion, Publicacion
+
+        pub = await db.get(Publicacion, pub_id)
+        if not pub:
+            raise HTTPException(status_code=404, detail="Publicación no encontrada")
+        if not _is_owner_or_admin(user, pub.usuario_id):
+            raise HTTPException(status_code=403, detail="Solo el dueño puede editar fotos")
+        await _reconciliar_fotos_urls(db, pub_id, urls)
+        await db.commit()
+        filas = (await db.execute(
+            select(ImagenPublicacion).where(ImagenPublicacion.publicacion_id == pub_id)
+            .order_by(ImagenPublicacion.orden.asc())
+        )).scalars().all()
+        return {"id": pub_id,
+                "fotos": [r.url for r in filas],
+                "imagenes": [{"id": r.id, "url": r.url, "orden": r.orden} for r in filas],
+                "total": len(filas)}
+    except HTTPException:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        raise
+    except Exception as e:
+        logger.error(f"[DB fallback] fotos {pub_id} falló: {e!r}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    if not _mock_enabled():
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    pub = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
+    if not pub:
+        raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    if not _is_owner_or_admin(user, pub.get("usuario_id")):
+        raise HTTPException(status_code=403, detail="Solo el dueño puede editar fotos")
+    pub["fotos"] = list(urls)
+    return {"id": pub_id, "fotos": list(urls),
+            "imagenes": view._mock_imagenes(pub), "total": len(urls), "mock": True}
+
 
 @router.patch("/{pub_id}/renovar", response_model=RenovacionOut, summary="PA-01 Renovar vigencia 30 días (solo propietario)")
 async def renovar_publicacion(

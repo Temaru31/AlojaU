@@ -201,10 +201,11 @@ describe('MisPublicaciones', () => {
 })
 
 describe('EditarPublicacionModal', () => {
-  const renderModal = (onSaved = vi.fn()) => render(
+  // M4: el modal bufferiza fotos+tags; el pub trae lo mínimo real (cards).
+  const renderModal = (onSaved = vi.fn(), extra = {}) => render(
     <MemoryRouter>
       <EditarPublicacionModal
-        pub={{ id: 1, titulo: 'Habitación cerca Tulcán - 320m', descripcion: 'Descripción con más de veinte caracteres ok', tipo_inmueble: 'APARTAESTUDIO', canon_mensual: 500000, deposito_requerido: 0, direccion_referencial: 'Calle 5 # 2-10 Tulcán', reglas_convivencia: 'Reglas de convivencia claras' }}
+        pub={{ id: 1, titulo: 'Habitación cerca Tulcán - 320m', descripcion: 'Descripción con más de veinte caracteres ok', tipo_inmueble: 'APARTAESTUDIO', canon_mensual: 500000, deposito_requerido: 0, direccion_referencial: 'Calle 5 # 2-10 Tulcán', reglas_convivencia: 'Reglas de convivencia claras', servicios_ids: [1], fotos: ['https://a/1.jpg'], imagenes: [{ id: 7, url: 'https://a/1.jpg', orden: 1 }], ...extra }}
         token="tok"
         onClose={vi.fn()}
         onSaved={onSaved}
@@ -220,13 +221,24 @@ describe('EditarPublicacionModal', () => {
     expect(api.patch).not.toHaveBeenCalled()
   })
 
-  it('guarda PATCH y avisa al padre', async () => {
+  it('guarda PATCH escalares+tags y avisa al padre', async () => {
     const onSaved = vi.fn()
     api.patch.mockResolvedValue({ data: { id: 1, titulo: 'Habitación cerca Tulcán - 320m' } })
+    api.get.mockResolvedValue({ data: { fotos: ['https://a/1.jpg'], imagenes: [{ id: 7, url: 'https://a/1.jpg', orden: 1 }] } })
     renderModal(onSaved)
     fireEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
     await waitFor(() => expect(api.patch).toHaveBeenCalledWith('/api/publicaciones/1', expect.objectContaining({ titulo: 'Habitación cerca Tulcán - 320m' }), expect.anything()))
+    // Sin cambios en fotos: NO llama al endpoint de fotos.
+    expect(api.patch).toHaveBeenCalledTimes(1)
     expect(onSaved).toHaveBeenCalled()
+  })
+
+  it('exige al menos 1 servicio antes de guardar', async () => {
+    renderModal()
+    fireEvent.click(screen.getByRole('button', { name: 'WiFi Fibra' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+    expect(await screen.findByText(/al menos 1 servicio/i)).toBeInTheDocument()
+    expect(api.patch).not.toHaveBeenCalled()
   })
 
   it('403 muestra permiso denegado', async () => {
@@ -303,10 +315,49 @@ describe('MisPublicaciones v15.2 (switch estado + vistas)', () => {
   })
 })
 
-describe('MisPublicaciones v15.2 (gestor multimedia en modal)', () => {
+describe('MisPublicaciones M6 (orden server-side + etiquetas de pausa)', () => {
+  it('dropdown envía ?orden= al backend y resetea a página 1', async () => {
+    api.get.mockResolvedValue({ data: paged([{ ...pub1 }]) })
+    vi.spyOn(Auth, 'useAuth').mockReturnValue({
+      token: 't', user: { email: 'a@b.co' }, loading: false,
+      login: vi.fn(), logout: vi.fn(), refresh: vi.fn(),
+    })
+    render(<MemoryRouter><MisPublicaciones /></MemoryRouter>)
+    await screen.findByText('Habitación Tulcán')
+    expect(api.get).toHaveBeenLastCalledWith('/api/publicaciones/mias',
+      expect.objectContaining({ params: expect.objectContaining({ orden: 'recientes' }) }))
+    fireEvent.change(screen.getByLabelText(/Ordenar mis publicaciones/i), { target: { value: 'vistas' } })
+    await waitFor(() => expect(api.get).toHaveBeenLastCalledWith('/api/publicaciones/mias',
+      expect.objectContaining({ params: expect.objectContaining({ orden: 'vistas', page: 1 }) })))
+  })
+
+  it('distingue pausa del arrendador vs moderación', async () => {
+    api.get.mockResolvedValue({
+      data: paged([
+        { ...pub1, id: 10, estado: 'PAUSADO' },
+        { ...pub1, id: 11, estado: 'PAUSADO_POR_REPORTE' },
+      ]),
+    })
+    vi.spyOn(Auth, 'useAuth').mockReturnValue({
+      token: 't', user: { email: 'a@b.co' }, loading: false,
+      login: vi.fn(), logout: vi.fn(), refresh: vi.fn(),
+    })
+    render(<MemoryRouter><MisPublicaciones /></MemoryRouter>)
+    expect((await screen.findAllByText('Habitación Tulcán')).length).toBe(2)
+    expect(screen.getByText(/Pausada por el Arrendador/)).toBeInTheDocument()
+    expect(screen.getByText(/Pausada por Moderación/)).toBeInTheDocument()
+  })
+})
+
+describe('MisPublicaciones M4 (edición bufferizada en modal)', () => {
   const conFotos = {
     ...pub1,
     estado: 'ACTIVO',
+    descripcion: 'Descripción con más de veinte caracteres ok',
+    deposito_requerido: 0,
+    direccion_referencial: 'Calle 5 # 2-10 Tulcán',
+    reglas_convivencia: 'Reglas de convivencia claras',
+    servicios_ids: [1],
     fotos: ['https://a/1.jpg', 'https://a/2.jpg'],
     imagenes: [
       { id: 11, url: 'https://a/1.jpg', orden: 1 },
@@ -328,7 +379,7 @@ describe('MisPublicaciones v15.2 (gestor multimedia en modal)', () => {
     render(<MemoryRouter><MisPublicaciones /></MemoryRouter>)
   }
 
-  it('muestra portada y borra en dos pasos', async () => {
+  it('borrar en dos pasos NO toca la BD hasta Guardar', async () => {
     renderConFotos(conFotos)
     expect(await screen.findByText('Habitación Tulcán')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Editar Habitación Tulcán' }))
@@ -337,21 +388,51 @@ describe('MisPublicaciones v15.2 (gestor multimedia en modal)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Eliminar la foto 2' }))
     expect(api.delete).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Confirmar eliminación de la foto 2' }))
-    await waitFor(() => expect(api.delete).toHaveBeenCalledWith(
-      '/api/publicaciones/upload/12', expect.anything()))
+    // Buffer local: sin DELETE ni PATCH todavía, con aviso de cambios.
+    expect(api.delete).not.toHaveBeenCalled()
+    expect(api.patch).not.toHaveBeenCalled()
+    expect(await screen.findByText(/sin guardar/i)).toBeInTheDocument()
+    // Guardar commitea TODO en UN solo PATCH (escalares + fotos).
+    api.patch.mockResolvedValue({ data: { id: 3 } })
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+    await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+    expect(api.patch).toHaveBeenCalledWith(
+      '/api/publicaciones/3',
+      expect.objectContaining({ fotos: ['https://a/1.jpg'] }),
+      expect.anything())
+    expect(api.delete).not.toHaveBeenCalled()
   })
 
-  it('cambia la portada reordenando', async () => {
+  it('portada reordena local y commitea en Guardar', async () => {
     renderConFotos(conFotos)
     expect(await screen.findByText('Habitación Tulcán')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Editar Habitación Tulcán' }))
     expect(await screen.findByText('Fotos del aviso (2/10)')).toBeInTheDocument()
-    api.patch.mockResolvedValue({ data: { publicacion_id: 3, orden: [12, 11], portada_id: 12 } })
     fireEvent.click(screen.getByRole('button', { name: 'Usar como portada la foto 2' }))
+    // Sin llamadas inmediatas (ni /orden ni DELETE).
+    expect(api.patch).not.toHaveBeenCalled()
+    expect(api.delete).not.toHaveBeenCalled()
+    api.patch.mockResolvedValue({ data: { id: 3 } })
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+    await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+    expect(api.patch).toHaveBeenCalledWith(
+      '/api/publicaciones/3',
+      expect.objectContaining({ fotos: ['https://a/2.jpg', 'https://a/1.jpg'] }),
+      expect.anything())
+  })
+
+  it('etiquetas pre-pobladas y se envían en Guardar', async () => {
+    renderConFotos(conFotos)
+    expect(await screen.findByText('Habitación Tulcán')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Editar Habitación Tulcán' }))
+    expect(await screen.findByText('Fotos del aviso (2/10)')).toBeInTheDocument()
+    // WiFi (id 1) viene activo desde servicios_ids.
+    expect(screen.getByRole('button', { name: 'WiFi Fibra' })).toHaveAttribute('aria-pressed', 'true')
+    api.patch.mockResolvedValue({ data: { id: 3 } })
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+    // Sin cambios en tags: no envía servicios_ids.
     await waitFor(() => expect(api.patch).toHaveBeenCalledWith(
-      '/api/publicaciones/upload/orden',
-      { publicacion_id: 3, orden_ids: [12, 11] },
-      expect.anything(),
-    ))
+      '/api/publicaciones/3', expect.not.objectContaining({ servicios_ids: expect.anything() }), expect.anything()))
+    expect(api.patch).toHaveBeenCalledTimes(1)
   })
 })

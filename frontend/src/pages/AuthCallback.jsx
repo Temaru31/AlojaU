@@ -12,7 +12,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../services/api'
-import { parseAuthCallbackHash, getCallbackCode, exchangeCodeForSession } from '../services/supabaseClient'
+import { parseAuthCallbackHash, getCallbackCode, exchangeCodeForSession, leerRedirectPostLogin } from '../services/supabaseClient'
 import { emitAuthChange } from '../contexts/AuthContext'
 
 function decodeJwtPayload(token) {
@@ -98,7 +98,9 @@ export default function AuthCallback() {
           // el backend dice si la cuenta nació ahora para el mensaje correcto.
           setEsNuevo(!!r.data?.es_nuevo)
           setEstado('ok')
-          setTimeout(() => navigate('/'), 900)
+          // M5: vuelve a donde estaba (ej. /publicar) o al inicio.
+          const destino = leerRedirectPostLogin()
+          setTimeout(() => navigate(destino), 900)
         }
       } catch (e) {
         if (vivo) {
@@ -129,8 +131,8 @@ export default function AuthCallback() {
             </h1>
             <p className="text-sm text-neutral-500">
               {esNuevo
-                ? 'Tu cuenta de estudiante está lista. Te llevamos al inicio…'
-                : 'Sesión iniciada. Te llevamos al inicio…'}
+                ? 'Tu cuenta de estudiante está lista. Te llevamos de vuelta…'
+                : 'Sesión iniciada. Te llevamos de vuelta…'}
             </p>
           </>
         )}

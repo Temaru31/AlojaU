@@ -82,18 +82,27 @@ export function formatFechaExpiracion(fechaRaw) {
   })
 }
 
-// Labels amigables (nunca enum crudo)
+// Labels amigables (nunca enum crudo). M6: la pausa del dueño se distingue
+// de la pausa por moderación (el arrendador debe saber por qué no se ve).
 const ESTADO_LABEL = {
   ACTIVO: 'Publicada',
   PENDIENTE: 'En revisión',
   EXPIRADO: 'Vencida',
-  PAUSADO: 'Pausada',
-  PAUSADO_POR_REPORTE: 'Pausada por reportes',
-  REVISION_REQUERIDA: 'Revisión requerida',
+  PAUSADO: '⏸️ Pausada por el Arrendador',
+  PAUSADO_POR_REPORTE: '⚠️ Pausada por Moderación',
+  REVISION_REQUERIDA: '⚠️ En revisión de Moderación',
   RECHAZADO: 'Rechazada',
   ARRENDADO: 'Arrendada',
   DESACTIVADO: 'Desactivada',
 }
+
+// M6: orden del panel (server-side vía ?orden=: ordenar en cliente mentiría
+// con paginación multipágina).
+export const ORDENES_MIS_PUBS = [
+  { value: 'recientes', label: 'Más recientes' },
+  { value: 'vistas', label: 'Más vistas' },
+  { value: 'estado', label: 'Estado' },
+]
 
 const ESTADO_STYLE = {
   ACTIVO: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -139,6 +148,8 @@ export default function MisPublicaciones() {
   const [eliminando, setEliminando] = useState(false)
   // v15.2: switch ACTIVA/PAUSADA del dueño.
   const [cambiandoEstado, setCambiandoEstado] = useState(null)
+  // M6: orden server-side (se envía al backend y resetea la página).
+  const [orden, setOrden] = useState('recientes')
 
   const handleEstado = async (p) => {
     const nuevo = p.estado === 'ACTIVO' ? 'PAUSADO' : 'ACTIVO'
@@ -197,7 +208,7 @@ export default function MisPublicaciones() {
     setLoading(true)
     setError('')
     api.get('/api/publicaciones/mias', {
-      params: { page, size: PAGE_SIZE, ...(filtro ? { estado: filtro } : {}) },
+      params: { page, size: PAGE_SIZE, ...(filtro ? { estado: filtro } : {}), orden },
       headers: { Authorization: `Bearer ${token}` },
       signal: controller.signal,
     })
@@ -221,9 +232,10 @@ export default function MisPublicaciones() {
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [token, page, filtro, reloadKey])
+  }, [token, page, filtro, orden, reloadKey])
 
   const cambiarFiltro = (v) => { setFiltro(v); setPage(1) }
+  const cambiarOrden = (v) => { setOrden(v); setPage(1) }
 
   // Estado no autenticado
   if (!token) {
@@ -254,22 +266,37 @@ export default function MisPublicaciones() {
         </h1>
       </div>
 
-      {/* Filtros por estado */}
-      <div className="flex flex-wrap gap-2 mb-4" role="group" aria-label="Filtrar por estado">
-        {FILTROS.map(f => (
-          <button type="button"
-            key={f.value}
-            onClick={() => cambiarFiltro(f.value)}
-            aria-pressed={filtro === f.value}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${
-              filtro === f.value
-                ? 'bg-navy-800 text-white border-navy-800'
-                : 'bg-white border-neutral-200 text-neutral-600 hover:border-navy-300'
-            }`}
+      {/* Filtros por estado + orden del panel */}
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar por estado">
+          {FILTROS.map(f => (
+            <button type="button"
+              key={f.value}
+              onClick={() => cambiarFiltro(f.value)}
+              aria-pressed={filtro === f.value}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${
+                filtro === f.value
+                  ? 'bg-navy-800 text-white border-navy-800'
+                  : 'bg-white border-neutral-200 text-neutral-600 hover:border-navy-300'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <label className="ml-auto inline-flex items-center gap-1.5 text-xs text-neutral-500">
+          Ordenar:
+          <select
+            value={orden}
+            onChange={e => cambiarOrden(e.target.value)}
+            aria-label="Ordenar mis publicaciones"
+            className="text-xs font-medium border border-neutral-200 rounded-lg px-2 py-1.5 bg-white text-neutral-700"
           >
-            {f.label}
-          </button>
-        ))}
+            {ORDENES_MIS_PUBS.map(o => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {/* Alerta de error: la sesión vencida guía a re-ingresar (reintentar no sirve sin token). */}

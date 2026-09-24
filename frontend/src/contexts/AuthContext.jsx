@@ -20,6 +20,29 @@ export const emitAuthChange = () => {
   }
 }
 
+// M1 efecto fantasma: claves de sesión/datos locales de AlojaU. Centralizar
+// aquí evita que un logout deje favoritos, comparador, historial o perfil
+// de otro usuario visibles. No toca claves ajenas a la app ni cachés
+// geográficos impersonales (ej. geocode).
+export const SESION_KEYS = [
+  'alojau_token',
+  'favoritos',
+  'alojau_favoritos',
+  'alojau_comparar',
+  'alojau_contactos',
+  'alojau_historial',
+  'alojau_config_publica',
+]
+
+export function limpiarSesionLocal() {
+  for (const k of SESION_KEYS) {
+    try { localStorage.removeItem(k) } catch { /* noop */ }
+  }
+  // Selectivo (no clear()): otra pestaña duplicada podría estar a mitad de
+  // un retorno OAuth con su redirect pendiente.
+  try { sessionStorage.removeItem('alojau_post_login_redirect') } catch { /* noop */ }
+}
+
 const readToken = () => {
   try {
     return localStorage.getItem(TOKEN_KEY) || ''
@@ -82,12 +105,25 @@ export function AuthProvider({ children }) {
     emitAuthChange()
   }, [sync])
 
-  const logout = useCallback(() => {
-    try { localStorage.removeItem(TOKEN_KEY) } catch { /* noop */ }
+  // M1 cierre total: revoca en BD (best-effort), limpia todo rastro local,
+  // resetea el usuario y reemplaza la ruta para no dejar estados en memoria.
+  const logout = useCallback(async () => {
+    const t = readToken()
+    if (t) {
+      try {
+        await api.post('/api/auth/logout', {}, {
+          headers: { Authorization: `Bearer ${t}` },
+        })
+      } catch { /* best-effort: el estado local se limpia igual */ }
+    }
+    limpiarSesionLocal()
     setToken('')
     setUser(null)
     setLoading(false)
     emitAuthChange()
+    try {
+      window.location.replace('/')
+    } catch { /* SSR/tests sin location */ }
   }, [])
 
   const refresh = useCallback(() => sync(readToken()), [sync])

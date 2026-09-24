@@ -44,7 +44,7 @@ function ScrollToTop() {
 function Nav() {
   const { count: favCount } = useFavoritos()
   const { count: compCount, max: compMax } = useComparar()
-  const { token, user, logout } = useAuth()
+  const { token, user, loading: authLoading, logout } = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [userOpen, setUserOpen] = useState(false)
   const location = useLocation()
@@ -52,6 +52,10 @@ function Nav() {
 
   const closeMenu = () => setMobileOpen(false)
   const closeUser = () => setUserOpen(false)
+  // M1 efecto fantasma: la sesión se decide por usuario verificado, no por
+  // token crudo (un token muerto/401 no debe mostrar avatar ni "Mis pubs").
+  const sesionActiva = !!token && !!user && !authLoading
+  const verificando = !!token && (!user || authLoading)
   const displayName = user?.nombre_completo?.trim() || user?.email?.split('@')[0] || 'Mi cuenta'
 
   // BUG-12: cierre del menú móvil con Esc (+ dropdown de usuario)
@@ -92,7 +96,7 @@ function Nav() {
               >
                 Comparar {compCount > 0 && <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full ml-1">{compCount}/{compMax}</span>}
               </Link>
-              {token && (
+              {sesionActiva && (
                 <Link
                   to="/mis-publicaciones"
                   className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive('/mis-publicaciones') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
@@ -106,11 +110,17 @@ function Nav() {
 
           <div className="hidden md:flex items-center gap-3">
             {favCount > 0 && <span className="text-sm text-neutral-500" aria-label={`${favCount} favoritos`}>♡ {favCount}</span>}
-            {/* Fase 1: navbar según sesión — anónimo solo "Iniciar Sesión", sin duplicar "Mi Perfil". */}
-            {!token ? (
-              <Link to="/perfil" className="px-3 py-2 text-sm font-medium rounded-md text-neutral-500 hover:text-navy-700 hover:bg-neutral-100 transition-colors">
-                Iniciar Sesión
-              </Link>
+            {/* Navbar según sesión verificada; con token sin verificar aún, placeholder neutro. */}
+            {!sesionActiva ? (
+              verificando ? (
+                <span className="px-3 py-2 text-sm text-neutral-300 animate-pulse" aria-label="Verificando sesión">
+                  •••
+                </span>
+              ) : (
+                <Link to="/perfil" className="px-3 py-2 text-sm font-medium rounded-md text-neutral-500 hover:text-navy-700 hover:bg-neutral-100 transition-colors">
+                  Iniciar Sesión
+                </Link>
+              )
             ) : (
               <div className="relative">
                 <button type="button"
@@ -208,14 +218,14 @@ function Nav() {
               <span>Comparar</span>
               <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${compCount} de ${compMax} para comparar`}>{compCount}/{compMax}</span>
             </Link>
-            {/* Fase 1: drawer móvil sin duplicados — misma estructura que desktop. */}
+            {/* Drawer móvil con la misma regla de sesión verificada que desktop. */}
             <Link
               to="/perfil"
               onClick={closeMenu}
               aria-current={isActive('/perfil') ? 'page' : undefined}
               className={mobileLinkCls(isActive('/perfil'))}
             >
-              {token ? (
+              {sesionActiva ? (
                 <span className="flex items-center gap-2">
                   <span aria-hidden="true" className="w-6 h-6 rounded-full bg-navy-800 text-white text-[10px] font-bold flex items-center justify-center">
                     {inicialesDe(user)}
@@ -233,7 +243,7 @@ function Nav() {
               <span>Favoritos</span>
               {favCount > 0 && <span className="bg-red-100 text-red-700 text-[11px] px-1.5 py-0.5 rounded-full">{favCount}</span>}
             </Link>
-            {token && (
+            {sesionActiva && (
               <>
                 <Link
                   to="/mis-publicaciones"

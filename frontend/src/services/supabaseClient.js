@@ -81,6 +81,28 @@ export async function getSupabaseClient(env = import.meta.env) {
   return _sdkClient
 }
 
+// M5: destino post-login (ej. "/publicar"). Se guarda en sessionStorage
+// (no en la URL de redirect: Supabase solo acepta URLs registradas).
+export const POST_LOGIN_REDIRECT_KEY = 'alojau_post_login_redirect'
+
+export function guardarRedirectPostLogin(destino) {
+  try {
+    if (typeof destino === 'string' && destino.startsWith('/') && !destino.startsWith('//')) {
+      sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, destino)
+    }
+  } catch { /* noop */ }
+}
+
+export function leerRedirectPostLogin() {
+  try {
+    const v = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY) || '/'
+    sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
+    return v.startsWith('/') && !v.startsWith('//') ? v : '/'
+  } catch {
+    return '/'
+  }
+}
+
 export async function signInWithGoogle(env = import.meta.env) {
   const redirectTo = getOAuthRedirect(env)
   let sb = null
