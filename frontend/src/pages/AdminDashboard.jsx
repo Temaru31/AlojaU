@@ -24,7 +24,7 @@ function Stat({ label, value, tone }) {
   )
 }
 
-// Tarea 2: claves internas de PostgreSQL -> etiquetas de dominio.
+// Claves internas de PostgreSQL -> etiquetas de dominio.
 const SETTING_LABELS = {
   dias_vigencia_publicacion: {
     titulo: 'Días de vigencia por aviso',
@@ -81,7 +81,7 @@ function etiquetaSetting(s) {
   return { titulo: titulo.charAt(0).toUpperCase() + titulo.slice(1), leyenda: s.descripcion || '' }
 }
 
-// Tarea 3: gestor visual de system_settings (GET/PATCH /api/admin/automation/settings).
+// Gestor visual de system_settings (GET/PATCH /api/admin/automation/settings).
 function AjustesSistema({ token }) {
   const [settings, setSettings] = useState(null)
   const [loading, setLoading] = useState(true)

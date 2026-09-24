@@ -22,7 +22,7 @@ function tabDesdeHash() {
   return 'datos'
 }
 
-// Tarea 5 (v4): indicativo +57 separado del número local (10 dígitos CO).
+// Indicativo +57 separado del número local (10 dígitos CO).
 // canónico E.164: '+57' + local. Ej: '573001234567' <-> '3001234567'.
 export function telefonoALocal(raw = '') {
   const d = String(raw || '').replace(/\D/g, '')
@@ -169,7 +169,7 @@ export default function Perfil() {
   // Resumen del dueño (totales vía /mias; si falla se oculta en silencio).
   const [misStats, setMisStats] = useState(null)
 
-  // Tarea 2: pestañas sincronizadas con el hash (#datos, #seguridad, #confianza, #avisos).
+  // Pestañas sincronizadas con el hash (#datos, #seguridad, #confianza, #avisos).
   useEffect(() => {
     const onHash = () => setTab(tabDesdeHash())
     window.addEventListener('hashchange', onHash)
@@ -511,7 +511,7 @@ export default function Perfil() {
           </div>
         )}
 
-        {/* Tarea 2: pestañas con hash (#datos, #seguridad, #confianza, #avisos). */}
+        {/* Pestañas con hash (#datos, #seguridad, #confianza, #avisos). */}
         <div className="flex gap-1 overflow-x-auto border-b border-neutral-150" role="tablist" aria-label="Secciones del perfil">
           {TABS.map((t) => (
             <button

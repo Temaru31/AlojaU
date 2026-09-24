@@ -29,7 +29,7 @@ export function resolverBarrio(texto, zonas = []) {
 }
 
 /**
- * ZonaSelect — combobox de barrios (Tarea 3, v10).
+ * ZonaSelect — combobox de barrios (catálogo o texto libre).
  * Input editable + datalist: catálogo de Popayán + zonas de la API.
  * Contrato: value { zona_barrio_id, barrio_texto } + onChange(mismo).
  */

@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://alojau:alojau123@localhost:5432/alojau"
     SECRET_KEY: str = "cambia_esto_en_produccion_muy_largo_32_chars_min"
     ALGORITHM: str = "HS256"  # HS256 fijo para Sprint1 (Tabla18)
-    # T2: 2h (antes 8h) — acorta la ventana de exposición de un Bearer token
-    # comprometido en localStorage. Sin refresh/revocación por alcance.
+    # 2h: acorta la ventana de exposición de un Bearer token comprometido
+    # en localStorage. Sin refresh/revocación por alcance.
     ACCESS_TOKEN_EXPIRE_HOURS: int = 2
 
     # Sprint1: permite funcionar sin PG (mock en memoria) si no hay DB
@@ -129,7 +129,7 @@ class Settings(BaseSettings):
 
     @property
     def mock_enabled(self) -> bool:
-        # B0-2: mock solo si flag True Y ENV!=prod (doble check settings + entorno).
+        # Mock solo si flag True Y ENV!=prod (doble check settings + entorno).
         return bool(self.USE_MOCK_FALLBACK) and self.ENV != "prod" and os.getenv("ENV", "dev") != "prod"
 
     class Config:

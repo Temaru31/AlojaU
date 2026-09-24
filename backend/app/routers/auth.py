@@ -340,8 +340,8 @@ class RegisterOut(BaseModel):
 class LoginOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    # T2 (ramaDavid): fuente única settings — create_token usa el mismo valor,
-    # así el contrato siempre refleja la expiración real (hoy 2h, antes 8h).
+    # Fuente única settings (integración ramaDavid): create_token usa el mismo
+    # valor, así el contrato siempre refleja la expiración real (2h).
     expires_in_hours: int = settings.ACCESS_TOKEN_EXPIRE_HOURS
     rol: str
     mock: bool = False
@@ -491,7 +491,7 @@ def _check_login_rate_limit(request: Request):
     hist = _LOGIN_ATTEMPTS.get(ip, [])
     hist = [t for t in hist if now - t < LOGIN_WINDOW_S]
     if len(hist) >= LOGIN_LIMIT:
-        raise HTTPException(status_code=429, detail="Demasiados intentos de login, espera 1 minuto (B0-7)")
+        raise HTTPException(status_code=429, detail="Demasiados intentos de login, espera 1 minuto")
     hist.append(now)
     _LOGIN_ATTEMPTS[ip] = hist
 

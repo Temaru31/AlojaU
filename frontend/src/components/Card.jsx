@@ -15,10 +15,10 @@ export default function Card({ pub, lugarNombre = null }) {
   const indice = pub.indice_confianza ?? 0
 
   const canon = pub.canon_mensual ?? pub.canon
-  // BUG-08: fallback unificado a "No informado"
+  // Fallback unificado a "No informado".
   const zona = pub.zona_nombre || pub.zona || 'No informado'
   const dist = pub.distancia_geodesica_m ?? pub.dist_m
-  // BUG-08: num_fotos real (??, no valor inventado)
+  // num_fotos real (sin valor inventado).
   const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? (typeof pub.fotos === 'number' ? pub.fotos : 0))
   // BUG#1: la portada es orden=1 (ver utils/portada). La API ya trae
   // fotos[0] ordenada, pero se resuelve vía helper para sobrevivir a
@@ -34,7 +34,7 @@ export default function Card({ pub, lugarNombre = null }) {
   const isFav = favHook.isFav(pub.id)
   const isComp = compHook.isSelected(pub.id)
 
-  // Tarea 2 (v4): carousel táctil en la tarjeta (sin abrir el detalle).
+  // Carousel táctil en la tarjeta (sin abrir el detalle).
   const fotos = fotosOrdenadas(pub)
   const [fotoIdx, setFotoIdx] = useState(0)
   const touchX = useRef(null)

@@ -28,7 +28,7 @@ export function isRetryableError(err) {
   return true
 }
 
-// Tarea 3 (v4): mensajes sencillos en español para usuarios no técnicos.
+// Mensajes sencillos en español para usuarios no técnicos.
 // No reemplaza `detail` del backend: el interceptor lo adjunta como
 // `err.mensajeAmigable` sin romper lecturas existentes de err.response.
 export function mensajeAmigable(err) {

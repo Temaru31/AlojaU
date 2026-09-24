@@ -156,7 +156,7 @@ async def list_publicaciones(
 
     servicios_ids = view.parse_servicios_param(servicios)
 
-    # Intento DB real con fallback mock solo en dev (B0-2 fail-closed 503 en prod)
+    # Intento DB real con fallback mock solo en dev (fail-closed 503 en prod)
     try:
         try:
             ciudad_id_res = await repo.resolver_ciudad_id(db, ciudad_id, ciudad_slug)
@@ -312,7 +312,7 @@ async def get_publicacion(
             No expone datos que no deban ser públicos (email propietario, etc)
     HU-007: incluye indice_confianza 0-100 + desglose 40+20+15+15+10 + disclaimer
     HU-008: telefono_whatsapp solo si verificado + whatsapp_url wa.me
-    B0-6: PENDIENTE (y no-ACTIVO) privado -> 404 salvo owner/admin.
+    PENDIENTE (y no-ACTIVO) es privado -> 404 salvo owner/admin.
     """
     current_user = await get_optional_user(authorization)
     try:
@@ -323,7 +323,7 @@ async def get_publicacion(
             if (u is not None and getattr(u, "eliminado_en", None) is not None
                     and not (current_user and current_user.get("rol") == "ADMIN")):
                 raise HTTPException(status_code=404, detail="Publicación no encontrada")
-            # B0-6: detalle no-ACTIVO privado (404 para no filtrar existencia).
+            # Detalle no-ACTIVO privado (404 para no filtrar existencia).
             if p.estado != "ACTIVO" and not _is_owner_or_admin(current_user, p.usuario_id):
                 raise HTTPException(status_code=404, detail="Publicación no encontrada")
             # 004 POIs: referencia al lugar buscado (el mapa del Detalle se
@@ -361,7 +361,7 @@ async def get_publicacion(
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         logger.warning(f"[DB fallback] get_publicacion {safe_pub_id}: {e!r}")
 
-    # Mock fallback solo dev (B0-2). B0-6: no-ACTIVO privado también en mock.
+    # Mock fallback solo dev. No-ACTIVO privado también en mock.
     if not _mock_enabled():
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
     pub = next((p for p in MOCK_PUBS if p["id"] == pub_id), None)
@@ -975,7 +975,7 @@ async def crear_publicacion(
         raise HTTPException(status_code=401, detail="Token sin propietario válido")
     # Gate v13/v13.2/v14.1 (rol real + email + teléfono + promoción).
     user, rol_actualizado = await _gate_escritura(db, user)
-    # Calcular índice inicial (B0-6: default telefono_verificado False si ausente).
+    # Calcular índice inicial (default telefono_verificado False si ausente).
     trust = view.initial_trust(payload, bool(user.get("telefono_verificado", False)))
 
     # Intentar persistir en DB

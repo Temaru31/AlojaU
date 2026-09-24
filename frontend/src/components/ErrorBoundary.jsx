@@ -1,7 +1,7 @@
 import { Component } from 'react'
 
 /**
- * ErrorBoundary global (Tarea 3, v4): captura fallos inesperados de
+ * ErrorBoundary global: captura fallos inesperados de
  * renderizado y muestra pantalla amigable con "Recargar página" en vez
  * de una pantalla en blanco.
  * Uso: <ErrorBoundary><App/></ErrorBoundary>. Ej: un error en Card no tumba todo.

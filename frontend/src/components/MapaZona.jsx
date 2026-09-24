@@ -63,7 +63,7 @@ function Vista({ centro }) {
 }
 
 /**
- * MapaZona — modos condicionales (Tarea 1, v10):
+ * MapaZona — modos condicionales:
  * - Trayectoria (aviso + `lugar` explícito del flujo ?campus_id=): 2 pines
  *   (casa + referencia) + círculo + línea punteada + fitBounds + "Cómo llegar".
  * - Inmueble único (aviso SIN lugar): SOLO el pin de la vivienda, sin pin
@@ -88,7 +88,7 @@ export default function MapaZona({
   const hasDist = dist_m != null && !Number.isNaN(Number(dist_m))
   const tiempo = hasDist ? formatTiempoCaminando(dist_m) : null
   const tieneAviso = coordsValidas(aviso)
-  // Tarea 1 (v10): la trayectoria exige lugar EXPLÍCITO (no el fallback legacy).
+  // La trayectoria exige lugar EXPLÍCITO (no el fallback legacy).
   const modoTrayectoria = tieneAviso && coordsValidas(lugar)
   // 004: la referencia dinámica manda; `campus` queda como fallback legacy.
   const ref = coordsValidas(lugar) ? lugar : (coordsValidas(campus) ? campus : null)
@@ -111,8 +111,8 @@ export default function MapaZona({
     : null
   const modoActual = MODOS_VIAJE.find(m => m.id === modoViaje) || MODOS_VIAJE[0]
 
-  // Tarea 2 (v10): ruta peatonal real OSRM en trayectoria (progresivo: con
-  // timeout y fallback a la estimación por fórmula si OSRM no responde).
+  // Ruta peatonal real OSRM en trayectoria (con timeout y fallback a la
+  // estimación por fórmula si OSRM no responde).
   useEffect(() => {
     if (!modoTrayectoria || !coordsValidas(aviso) || !coordsValidas(lugar)) {
       setRutaReal(null)

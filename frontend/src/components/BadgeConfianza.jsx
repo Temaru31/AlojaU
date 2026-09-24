@@ -1,5 +1,5 @@
 /**
- * BadgeConfianza — píldora minimalista compartida (Tarea 2 v7 / Tarea 1 v8).
+ * BadgeConfianza — píldora minimalista compartida del índice de confianza.
  * Solo punto de color + número sobre fondo oscuro traslúcido; el detalle
  * ("Confianza Alta: 100/100") vive en el tooltip nativo y el aria-label.
  * Uso: <BadgeConfianza indice={95} />. Ej: Card, Comparar.

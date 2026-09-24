@@ -101,7 +101,7 @@ curl -s -X POST "$API/api/publicaciones" -H "Content-Type: application/json" \
 Si `mock-token-arrendador` da `201/422` en prod => `ENV`/`USE_MOCK_FALLBACK` mal
 configurados en Render. Revisar `render.yaml:22-25` y re-deploy.
 
-## 3) T2 - Mitigación de riesgo de sesión
+## 3) Mitigación de riesgo de sesión
 
 Decisión documentada (mitigación, no eliminación del riesgo XSS):
 

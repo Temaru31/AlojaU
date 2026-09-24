@@ -41,7 +41,7 @@ export function validarPublicar(form, lim = LIMITES) {
   if (reg.length < lim.reglas.min) e.reglas_convivencia = `Mínimo ${lim.reglas.min} caracteres`
   else if ((form.reglas_convivencia || '').length > lim.reglas.max) e.reglas_convivencia = `Máximo ${lim.reglas.max} caracteres`
   if (!Array.isArray(form.servicios_ids) || form.servicios_ids.length === 0) e.servicios_ids = 'Selecciona al menos 1 servicio'
-  // Tarea 3 (v10): zona del catálogo o barrio libre (mínimo uno).
+  // Zona del catálogo o barrio libre (mínimo uno).
   if (form.zona_barrio_id == null && !(form.barrio_texto || '').trim()) {
     e.zona = 'Elige tu barrio de la lista o escríbelo'
   }
@@ -433,7 +433,7 @@ export default function Publicar() {
             />
           </div>
 
-          {/* Tarea 2 (v8): coords vinculadas al mapa, sin cajas numéricas visibles. */}
+          {/* Coords vinculadas al mapa, sin cajas numéricas visibles. */}
           <div aria-live="polite">
             {form.latitud !== '' && form.longitud !== '' ? (
               <div className="flex items-center justify-between gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2">
@@ -471,15 +471,14 @@ export default function Publicar() {
             {errors.servicios_ids && <p className="text-xs text-red-600 mt-1">{errors.servicios_ids}</p>}
           </div>
 
-          {/* Tarea 3 (v7): sin "Campus asociado" — las distancias a Tulcán, Torobajo,
-              Centro, Salud… se autocalculan desde la ubicación del mapa. */}
+          {/* Sin "Campus asociado": las distancias se autocalculan desde la ubicación del mapa. */}
           <p className="text-xs text-neutral-500 bg-navy-50 border border-navy-100 rounded-lg px-3 py-2">
             📍 Las distancias a Tulcán, Torobajo, Centro y demás puntos se calculan solas con la ubicación que marques en el mapa.
           </p>
 
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Fotos * <span className="text-neutral-400 font-normal">(sube archivos o pega URLs)</span></label>
-            {/* BUG-F3-03 (fix): respetar vaciado. Antes `urls.length ? urls : f.fotos` ignoraba Limpiar. */}
+            {/* El vaciado del uploader debe vaciar el formulario (respetar Limpiar). */}
             <UploadFotos token={token} initialUrls={form.fotos} onUrls={(urls) => setForm(f => ({ ...f, fotos: urls }))} />
             {errors.fotos && <p className="text-xs text-red-600 mt-1">{errors.fotos}</p>}
             <details className="mt-2">

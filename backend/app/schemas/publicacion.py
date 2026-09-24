@@ -5,7 +5,7 @@ from datetime import datetime
 
 TipoInmueble = Literal["HABITACION_FAMILIAR","HABITACION_INDEPENDIENTE","APARTAESTUDIO","COMPARTIDO"]
 
-# G1/T1: los campos de texto libre son texto plano — sin HTML ejecutable.
+# Los campos de texto libre son texto plano — sin HTML ejecutable.
 # Se rechaza < y > (no solo "script"): cubre <img onerror>, <svg>, etc.
 # sin falsos negativos por variantes/ofuscación.
 def _rechazar_html(v):
@@ -41,12 +41,12 @@ class PublicacionCreate(BaseModel):
     @field_validator("titulo", "descripcion", "reglas_convivencia", "direccion_referencial", "barrio_texto")
     @classmethod
     def sin_html(cls, v):
-        # G1/T1: texto plano, sin HTML ejecutable -> 422.
+        # Texto plano, sin HTML ejecutable -> 422.
         return _rechazar_html(v)
 
     @model_validator(mode="after")
     def lat_lng_both_or_none(self):
-        # B0-5: lat/lng both-or-none -> 422 si solo uno presente.
+        # Lat/lng both-or-none: 422 si solo uno presente.
         if (self.latitud is None) != (self.longitud is None):
             raise ValueError("latitud y longitud deben ir juntas (both-or-none)")
         return self
@@ -80,7 +80,7 @@ class PublicacionUpdate(BaseModel):
     @field_validator("titulo", "descripcion", "direccion_referencial", "reglas_convivencia")
     @classmethod
     def sin_html(cls, v):
-        # G1/T1: mismo criterio que en creación (PATCH edita estos campos).
+        # Mismo criterio que en creación (PATCH edita estos campos).
         return _rechazar_html(v)
 
     @model_validator(mode="after")
