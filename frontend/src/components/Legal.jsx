@@ -55,8 +55,8 @@ ante la Superintendencia de Industria y Comercio (www.sic.gov.co).
 4. EJERCER TUS DERECHOS. Escríbenos desde Mi Perfil indicando tu correo
 registrado. Respondemos en máximo 15 días hábiles (Ley 1581, Art. 14).
 
-5. SEGURIDAD. Contraseñas con hash bcrypt, tokens JWT de 8 horas,
-revocación global de sesiones, y cifrado en tránsito (HTTPS).
+5. SEGURIDAD. Contraseñas con hash bcrypt, tokens JWT de corta duración
+(2 horas), revocación global de sesiones, y cifrado en tránsito (HTTPS).
 
 6. CONSERVACIÓN. Guardamos tus datos mientras tu cuenta exista. Al
 eliminarla, anonimizamos tus avisos y borramos tus datos de contacto.

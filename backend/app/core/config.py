@@ -1,4 +1,4 @@
-"""Config central - lee .env. SECRET_KEY para JWT HS256 8h (Tabla18 NFR + 5.6)."""
+"""Config central - lee .env. SECRET_KEY para JWT HS256 2h (T2) + Tabla18 NFR."""
 import os
 from pydantic_settings import BaseSettings
 from pydantic import field_validator, model_validator
@@ -17,7 +17,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+asyncpg://alojau:alojau123@localhost:5432/alojau"
     SECRET_KEY: str = "cambia_esto_en_produccion_muy_largo_32_chars_min"
     ALGORITHM: str = "HS256"  # HS256 fijo para Sprint1 (Tabla18)
-    ACCESS_TOKEN_EXPIRE_HOURS: int = 8  # 8h expiración (p22)
+    # T2: 2h (antes 8h) — acorta la ventana de exposición de un Bearer token
+    # comprometido en localStorage. Sin refresh/revocación por alcance.
+    ACCESS_TOKEN_EXPIRE_HOURS: int = 2
 
     # Sprint1: permite funcionar sin PG (mock en memoria) si no hay DB
     USE_MOCK_FALLBACK: bool = True
