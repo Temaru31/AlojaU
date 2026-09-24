@@ -25,6 +25,8 @@ export default function Favoritos() {
   const { token: authToken } = useAuth()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
+  // FASE 2: confirmación explícita en 2 pasos (sin window.confirm nativo).
+  const [confirmaLimpiar, setConfirmaLimpiar] = useState(false)
 
   // Consulta en paralelo los datos frescos de cada publicación favorita
   useEffect(() => {
@@ -95,11 +97,14 @@ export default function Favoritos() {
     }
   }, [ids, authToken])
 
-  // Manejador para limpiar todos los favoritos
+  // Manejador para limpiar todos los favoritos (2 pasos: armar → confirmar).
   const handleLimpiar = () => {
-    if (window.confirm('¿Seguro que deseas eliminar todos tus favoritos guardados?')) {
-      clear()
+    if (!confirmaLimpiar) {
+      setConfirmaLimpiar(true)
+      return
     }
+    clear()
+    setConfirmaLimpiar(false)
   }
 
   return (
@@ -129,9 +134,14 @@ export default function Favoritos() {
         {count > 0 && (
           <button
             onClick={handleLimpiar}
-            className="text-xs font-semibold text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-2 rounded-lg border border-red-200 transition shrink-0"
+            onBlur={() => setConfirmaLimpiar(false)}
+            aria-label={confirmaLimpiar ? 'Confirmar limpieza de favoritos' : 'Limpiar favoritos'}
+            className={`text-xs font-semibold px-3 py-2 rounded-lg border transition shrink-0 ${confirmaLimpiar
+              ? 'bg-red-600 border-red-600 text-white hover:bg-red-700'
+              : 'text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200'
+              }`}
           >
-            Limpiar favoritos
+            {confirmaLimpiar ? '¿Confirmar limpieza?' : 'Limpiar favoritos'}
           </button>
         )}
       </div>

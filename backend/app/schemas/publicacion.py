@@ -12,17 +12,20 @@ class PublicacionCreate(BaseModel):
     tipo_inmueble: TipoInmueble
     canon_mensual: Decimal = Field(gt=0, le=10_000_000)
     deposito_requerido: Decimal = Field(ge=0, default=0)
-    # Tarea 3 (v10): zona del catálogo OPCIONAL — si el barrio no existe,
-    # va texto libre en barrio_texto (al menos uno de los dos es obligatorio).
+    # Zona del catálogo opcional: si el barrio no existe, va texto libre en
+    # barrio_texto (al menos uno de los dos es obligatorio).
     zona_barrio_id: Optional[int] = Field(default=None, gt=0)
     barrio_texto: Optional[str] = Field(default=None, min_length=3, max_length=120)
     direccion_referencial: str = Field(min_length=10, max_length=200)
-    reglas_convivencia: str = Field(min_length=10, max_length=1000)
+    # FASE 3 (2026-09-24): unificado con frontend LIMITES.reglas.max (2000;
+    # antes 1000 aquí y 2000 en constants.js: el usuario podía escribir 1500,
+    # el frontend lo aceptaba y la API lo tumbaba con 422 técnico).
+    reglas_convivencia: str = Field(min_length=10, max_length=2000)
     latitud: Optional[float] = Field(ge=-90, le=90, default=None)
     longitud: Optional[float] = Field(ge=-180, le=180, default=None)
     servicios_ids: list[int] = Field(min_length=1)
-    # Tarea 3 (v7): campus opcional — el trigger 004 autovincula TODOS los
-    # lugares con distancias geodésicas calculadas desde lat/lng del aviso.
+    # Campus opcional: el trigger autovincula todos los lugares con sus
+    # distancias geodésicas calculadas desde lat/lng del aviso.
     campus_ids: list[int] = Field(default_factory=list)
     fotos: list[HttpUrl] = Field(min_length=3, max_length=10, description="≥3 fotos HU-005 C2")
     incluye_servicios_base: bool = True
@@ -36,7 +39,7 @@ class PublicacionCreate(BaseModel):
 
     @model_validator(mode="after")
     def zona_o_barrio(self):
-        # Tarea 3 (v10): barrio del catálogo o texto libre (flexi-barrios).
+        # Barrio del catálogo o texto libre (flexi-barrios).
         if self.zona_barrio_id is None and not (self.barrio_texto or '').strip():
             raise ValueError("indica la zona del catálogo o escribe el nombre del barrio")
         return self
@@ -57,7 +60,8 @@ class PublicacionUpdate(BaseModel):
     canon_mensual: Optional[Decimal] = Field(default=None, gt=0, le=10_000_000)
     deposito_requerido: Optional[Decimal] = Field(default=None, ge=0)
     direccion_referencial: Optional[str] = Field(default=None, min_length=10, max_length=200)
-    reglas_convivencia: Optional[str] = Field(default=None, min_length=10, max_length=1000)
+    # FASE 3: misma unificación que en Create (ver arriba).
+    reglas_convivencia: Optional[str] = Field(default=None, min_length=10, max_length=2000)
 
     @model_validator(mode="after")
     def at_least_one(self):

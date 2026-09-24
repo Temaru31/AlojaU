@@ -140,11 +140,13 @@ describe('MisPublicaciones', () => {
     expect(screen.getByRole('link', { name: /Publicar mi primera vivienda/ })).toHaveAttribute('href', '/publicar')
   })
 
-  it('401: mensaje de sesión vencida + Reintentar', async () => {
+  it('401: sesión vencida guía a "Volver a ingresar" en vez de Reintentar', async () => {
     api.get.mockRejectedValue({ response: { status: 401 } })
     renderPage('tok')
     expect(await screen.findByText(/Sesión vencida/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Reintentar' })).toBeInTheDocument()
+    // FASE 2: reintentar sin token no sirve; el CTA lleva a /perfil.
+    expect(screen.getByRole('link', { name: /Volver a ingresar/i })).toHaveAttribute('href', '/perfil')
+    expect(screen.queryByRole('button', { name: 'Reintentar' })).not.toBeInTheDocument()
   })
 
   it('al pulsar Renovar y confirmar, actualiza la tarjeta reactivamente sin recargar', async () => {

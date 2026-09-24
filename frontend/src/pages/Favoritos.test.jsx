@@ -152,8 +152,8 @@ describe('Página de Favoritos (HU Estudiante)', () => {
     expect(stored.some((f) => f.publicacionId === 2)).toBe(true)
   })
 
-  it('cuando el usuario selecciona "Limpiar favoritos", se eliminan todos los favoritos', async () => {
-    window.confirm = vi.fn().mockReturnValue(true)
+  it('limpiar favoritos exige confirmación explícita en 2 pasos (sin window.confirm)', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm')
 
     api.get.mockResolvedValueOnce({
       data: { id: 5, titulo: 'Casa Estudiantil 5', estado: 'ACTIVO' },
@@ -163,16 +163,20 @@ describe('Página de Favoritos (HU Estudiante)', () => {
 
     expect(await screen.findByText('Casa Estudiantil 5')).toBeInTheDocument()
 
-    const btnLimpiar = screen.getByRole('button', { name: /Limpiar favoritos/i })
-    fireEvent.click(btnLimpiar)
+    // Paso 1: arma la confirmación (no borra todavía).
+    fireEvent.click(screen.getByRole('button', { name: /Limpiar favoritos/i }))
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /Confirmar limpieza/i })).toBeInTheDocument()
+    expect(screen.queryByText(/No tienes favoritos guardados/i)).not.toBeInTheDocument()
 
-    expect(window.confirm).toHaveBeenCalled()
-
+    // Paso 2: confirma y borra todo.
+    fireEvent.click(screen.getByRole('button', { name: /Confirmar limpieza/i }))
     await waitFor(() => {
       expect(screen.getByText(/No tienes favoritos guardados/i)).toBeInTheDocument()
     })
 
     const stored = JSON.parse(localStorage.getItem('favoritos') || '[]')
     expect(stored).toHaveLength(0)
+    confirmSpy.mockRestore()
   })
 })

@@ -272,13 +272,19 @@ export default function MisPublicaciones() {
         ))}
       </div>
 
-      {/* Alerta de error */}
+      {/* Alerta de error: la sesión vencida guía a re-ingresar (reintentar no sirve sin token). */}
       {error && (
         <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-3" role="alert">
           <p className="text-xs text-red-700 flex-1">{error}</p>
-          <button type="button" onClick={() => setReloadKey(k => k + 1)} className="text-xs font-semibold text-red-700 hover:text-red-800 underline shrink-0">
-            Reintentar
-          </button>
+          {/Sesión vencida/i.test(error) ? (
+            <Link to="/perfil" className="text-xs font-semibold text-red-700 hover:text-red-800 underline shrink-0">
+              Volver a ingresar
+            </Link>
+          ) : (
+            <button type="button" onClick={() => setReloadKey(k => k + 1)} className="text-xs font-semibold text-red-700 hover:text-red-800 underline shrink-0">
+              Reintentar
+            </button>
+          )}
         </div>
       )}
 

@@ -31,15 +31,19 @@ export default function Comparar() {
   const [pubs, setPubs] = useState([])
   const [loading, setLoading] = useState(false)
 
+  // FASE 4 free-tier: guardia de desmontaje — si el usuario navega antes de
+  // que resuelva el fetch paralelo, la respuesta tardía no pisa estado ajeno.
   useEffect(() => {
     if (comparar.length === 0) { setPubs([]); return }
+    let vivo = true
     setLoading(true)
     const cfg = authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : {}
     Promise.all(comparar.map(id =>
       api.get(`/api/publicaciones/${id}`, cfg).then(r => r.data).catch(() => ({ id, titulo: `ID ${id} no disponible`, error: true }))
     ))
-      .then(setPubs)
-      .finally(() => setLoading(false))
+      .then((res) => { if (vivo) setPubs(res) })
+      .finally(() => { if (vivo) setLoading(false) })
+    return () => { vivo = false }
   }, [comparar, authToken])
 
   const rows = [

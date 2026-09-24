@@ -1,17 +1,10 @@
-// UploadFotos - HU-005 + F3 Subida 3-10 imágenes con preview + drag-drop.
-// Backend: POST /api/publicaciones/upload (multipart, solo ARRENDADOR, 5MB, JPEG/PNG/WebP/GIF).
-//   - Dev sin CLOUDINARY_*: retorna http://.../uploads/{uuid} (efímero en Render).
-//   - Prod con CLOUDINARY_*: retorna https://res.cloudinary.com/.../secure_url (persistente).
-// El componente es agnóstico: solo muestra las URLs que devuelve el backend.
-//
-// Uso: <UploadFotos token={token} onUrls={(urls) => setForm(...)} initialUrls={[]} endpoint="/api/publicaciones/upload" />
-// Ejemplo: onUrls(["https://res.cloudinary.com/demo/.../a.jpg", ...]) -> Publicar las usa en POST /api/publicaciones.
-//
-// Buenas prácticas aplicadas:
-// - Patrón Controlled-ish: el padre es dueño de `fotos` finales vía `onUrls`; aquí solo estado efímero (File + previews).
-// - Sin memory leaks: cada preview crea 1 objectURL y se revoca al eliminar/limpiar/desmontar (ver BUG-F3-01).
-// - Keys estables únicas (crypto.randomUUID), no `name+size` que colisiona con duplicados.
-// - Accesibilidad: dropzone con role=button + teclado Enter/Espacio, errores con role=alert, aria-live.
+/**
+ * Subida de 3-10 imágenes con preview y drag-drop.
+ *
+ * El padre es dueño de las `fotos` finales vía `onUrls`; aquí solo vive estado
+ * efímero (File + previews). Cada preview crea un objectURL que se revoca al
+ * eliminar/limpiar/desmontar. Accesible por teclado (Enter/Espacio en la zona).
+ */
 import { useState, useRef, useEffect } from 'react'
 import { api } from '../services/api'
 import { comprimirImagen } from '../utils/compressImage'
@@ -19,13 +12,12 @@ import { comprimirImagen } from '../utils/compressImage'
 export const UPLOAD_MIN_FILES = 3
 export const UPLOAD_MAX_FILES = 10
 export const UPLOAD_MAX_SIZE = 5 * 1024 * 1024 // 5MB (igual que backend uploads.py MAX_SIZE)
-// Tarea 3 (v4): formatos permitidos en cliente (JPG, PNG, WEBP).
+// Formatos permitidos en cliente (JPG, PNG, WEBP; el backend valida además magia binaria).
 export const UPLOAD_ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp']
 export const UPLOAD_ACCEPT = 'image/jpeg,image/png,image/webp'
 
-// BUG-F3-01 (fix): antes `removeFile` revocaba solo el eliminado y RECREABA objectURLs
-// para los restantes sin revocar los viejos -> leak. Ahora cada archivo tiene su propia
-// entrada {key, file, url} y solo se revoca la eliminada. Además cleanup al desmontar.
+// Cada archivo tiene su propia entrada {key, file, url}: solo se revoca la
+// eliminada (más cleanup al desmontar).
 const newKey = () =>
   (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`)
 
@@ -34,8 +26,7 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
   const [items, setItems] = useState([])
   const [error, setError] = useState('')
   const [uploading, setUploading] = useState(false)
-  // BUG-F3-02 (fix): antes `uploadedUrls` iniciaba con `initialUrls` (placeholders Unsplash)
-  // y mostraba "✓ Subidas N URLs" sin haber subido nada. Ahora inicia vacío: solo URLs reales.
+  // Solo URLs realmente subidas (nunca placeholders iniciales).
   const [uploadedUrls, setUploadedUrls] = useState([])
   const [comprimiendo, setComprimiendo] = useState(false)
   const inputRef = useRef(null)
@@ -69,7 +60,7 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
         return
       }
     }
-    // Tarea 4 (v4): compresión Canvas (máx 1200px, calidad 0.8) antes de previsualizar/subir.
+    // Compresión Canvas (máx 1200px, calidad 0.8) antes de previsualizar/subir.
     setComprimiendo(true)
     let livianas = arr
     try {
@@ -108,8 +99,7 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
     })
   }
 
-  // BUG-F3-03 (fix): Limpiar ahora propaga `onUrls([])` y el padre DEBE respetarlo
-  // (ver Publicar.jsx: antes `urls.length ? urls : f.fotos` ignoraba el vaciado).
+  // Limpiar propaga `onUrls([])` para que el padre vacíe las fotos.
   const handleClear = () => {
     items.forEach((it) => {
       try { URL.revokeObjectURL(it.url) } catch { /* noop */ }
@@ -141,7 +131,7 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
       setUploadedUrls(urls)
       onUrls(urls)
     } catch (err) {
-      // Tarea 3 (v4): prefiere el mensaje amigable del interceptor (español no-técnico).
+      // Prefiere el mensaje amigable del interceptor (español no-técnico).
       const detail = err.mensajeAmigable || err.response?.data?.detail
       setError(
         typeof detail === 'string'
@@ -231,9 +221,16 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
           type="button"
           onClick={handleUpload}
           disabled={!canUpload}
+          aria-disabled={!canUpload}
+          aria-busy={uploading}
           className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white py-2.5 rounded-xl font-medium text-sm"
         >
-          {uploading ? 'Subiendo...' : `Subir ${total} fotos → obtener URLs`}
+          {uploading ? (
+            <span className="inline-flex items-center gap-2">
+              <span aria-hidden="true" className="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+              Subiendo...
+            </span>
+          ) : `Subir ${total} fotos → obtener URLs`}
         </button>
         {items.length > 0 && (
           <button
