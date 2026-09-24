@@ -127,6 +127,19 @@ def test_reglas_mas_de_2000_da_422(limpieza):
     assert r.status_code == 422, r.text
 
 
+def test_reglas_1500_con_html_da_422_ambas_mejoras_coexisten(limpieza):
+    """Consolidación merge ramaDavid: reglas largas Y sin HTML a la vez.
+
+    1500 chars pasan (límite 2000 nuestro) pero con <script> se rechazan
+    (bloqueo HTML de David). Prueba la zona exacta del conflicto resuelto.
+    """
+    h = _usuario_verificado(limpieza, "rgx")
+    payload = dict(PUB_BASE, reglas_convivencia=("Norma válida. " * 100) + "<script>alert(1)</script>")
+    assert 1000 < len(payload["reglas_convivencia"]) <= 2000
+    r = client.post("/api/publicaciones", json=payload, headers=h)
+    assert r.status_code == 422, r.text
+
+
 def test_editar_reglas_1500_pasa(limpieza):
     h = _usuario_verificado(limpieza, "rg3")
     creo = client.post("/api/publicaciones", json=dict(
