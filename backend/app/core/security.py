@@ -112,7 +112,7 @@ async def get_current_user(authorization: str = Header(None), db=None):
     if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
         raise HTTPException(status_code=401, detail="Formato Bearer token inválido")
     token = parts[1].strip()
-    # B0-2 fail-closed: mock solo si mock_enabled (flag True + ENV!=prod).
+    # Fail-closed: mock solo si mock_enabled (flag True + ENV!=prod).
     if _mock_activo() and token in MOCK_TOKENS:
         return MOCK_TOKENS[token]
     # Detalle #10: cablea AuthService agnóstico (Supabase RS256 si está
@@ -198,7 +198,7 @@ async def require_arrendador(authorization: str = Header(None)):
     raise HTTPException(status_code=403, detail="Solo ARRENDADOR")
 
 async def require_admin(authorization: str = Header(None)):
-    # B0-3: guard ADMIN para moderación. 401 sin token, 403 si no ADMIN.
+    # Guard ADMIN para moderación. 401 sin token, 403 si no ADMIN.
     u = await get_current_user(authorization)
     if u.get("rol") != "ADMIN":
         raise HTTPException(status_code=403, detail="Solo ADMIN")

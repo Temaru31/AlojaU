@@ -12,7 +12,7 @@ function NoInformado() {
   return <span className="text-neutral-400 italic text-xs">No informado</span>
 }
 
-// Tarea 1 (v8): ENUM técnico -> texto legible (incluye APARTAMENTO legacy).
+// ENUM técnico -> texto legible (incluye APARTAMENTO legacy).
 export function humanizarTipoComparar(tipo) {
   const map = {
     HABITACION_FAMILIAR: 'Habitación familiar',
@@ -137,7 +137,7 @@ export default function Comparar() {
                       {pubs.map(p => (
                         <th key={p.id} className="text-left px-4 py-3 min-w-[180px] max-w-[260px]">
                           <div className="flex flex-col gap-1.5">
-                            {/* Tarea 1 (v8): miniatura principal + título en la cabecera */}
+                            {/* Miniatura principal + título en la cabecera */}
                             {/* BUG#1: portada = orden=1 vía helper (no fotos[0] crudo). */}
                             {portadaUrl(p) ? (
                               <SmartImage src={portadaUrl(p)} alt={`Foto principal de ${p.titulo || `aviso ${p.id}`}`} className="w-full h-20 object-cover rounded-lg" />

@@ -1,4 +1,4 @@
-"""routers/admin_automation.py — Ajustes del Sistema (005) + evaluar (Tarea 3).
+"""routers/admin_automation.py — Ajustes del Sistema + evaluación de pausa automática.
 
   GET    /api/admin/automation/settings   (ADMIN: lista system_settings, caché TTL 5min)
   PATCH  /api/admin/automation/settings/{clave} (ADMIN: edita valor tipado, invalida caché)
@@ -21,7 +21,7 @@ from app.db.session import get_session
 
 router = APIRouter(prefix="/api/admin/automation", tags=["admin-automation"])
 
-# Tarea 3: caché simple en memoria para lecturas de system_settings.
+# Caché simple en memoria para lecturas de system_settings.
 _SETTINGS_TTL_S = 300
 _settings_cache: dict = {"ts": 0.0, "payload": None}
 

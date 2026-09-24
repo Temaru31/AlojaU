@@ -340,7 +340,9 @@ class RegisterOut(BaseModel):
 class LoginOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    expires_in_hours: int = 8
+    # Fuente única settings (integración ramaDavid): create_token usa el mismo
+    # valor, así el contrato siempre refleja la expiración real (2h).
+    expires_in_hours: int = settings.ACCESS_TOKEN_EXPIRE_HOURS
     rol: str
     mock: bool = False
     # Callbacks Google: True si esta petición creó la cuenta (mostrar
@@ -489,7 +491,7 @@ def _check_login_rate_limit(request: Request):
     hist = _LOGIN_ATTEMPTS.get(ip, [])
     hist = [t for t in hist if now - t < LOGIN_WINDOW_S]
     if len(hist) >= LOGIN_LIMIT:
-        raise HTTPException(status_code=429, detail="Demasiados intentos de login, espera 1 minuto (B0-7)")
+        raise HTTPException(status_code=429, detail="Demasiados intentos de login, espera 1 minuto")
     hist.append(now)
     _LOGIN_ATTEMPTS[ip] = hist
 
@@ -702,7 +704,7 @@ class CuentaRestaurarIn(BaseModel):
 # ---------------------------------------------------------------------------
 # Login (rate-limit memoria + persistente, sesiones registradas)
 # ---------------------------------------------------------------------------
-@router.post("/login", response_model=LoginOut, summary="Login JWT HS256 8h")
+@router.post("/login", response_model=LoginOut, summary="Login JWT HS256 (expira según settings, hoy 2h T2)")
 async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_session)):
     _check_login_rate_limit(request)
     email = _norm_email(data.email)
@@ -749,7 +751,7 @@ async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_
             except Exception:
                 pass
             return {"access_token": token, "token_type": "bearer",
-                    "expires_in_hours": 8, "rol": u_db.rol, "mock": False}
+                    "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": u_db.rol, "mock": False}
         if not _mock_enabled():
             await _db_rate_record(db, f"login:ip:{ip}", False)
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
@@ -758,7 +760,7 @@ async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
         token = _issue_token(u["id"], email, u["rol"], True, bool(u.get("email_verificado", True)))
         return {"access_token": token, "token_type": "bearer",
-                "expires_in_hours": 8, "rol": u["rol"], "mock": True}
+                "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": u["rol"], "mock": True}
     except HTTPException:
         raise
     except Exception as e:
@@ -774,7 +776,7 @@ async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
         token = _issue_token(u["id"], email, u["rol"], True, bool(u.get("email_verificado", True)))
         return {"access_token": token, "token_type": "bearer",
-                "expires_in_hours": 8, "rol": u["rol"], "mock": True}
+                "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": u["rol"], "mock": True}
 
 
 # ---------------------------------------------------------------------------
@@ -1350,7 +1352,7 @@ async def oauth_google_callback(data: GoogleCallbackIn, request: Request,
         except Exception:
             pass
         return {"access_token": token, "token_type": "bearer",
-                "expires_in_hours": 8, "rol": u.rol, "mock": False,
+                "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": u.rol, "mock": False,
                 "es_nuevo": es_nuevo}
     except HTTPException:
         raise
@@ -1387,7 +1389,7 @@ async def oauth_google_callback(data: GoogleCallbackIn, request: Request,
             m["auth_provider"] = "google" if m.get("auth_provider") == "password" else f"{m.get('auth_provider','')}+google"
         token = _issue_token(m["id"], email, m["rol"], False, True)
         return {"access_token": token, "token_type": "bearer",
-                "expires_in_hours": 8, "rol": m["rol"], "mock": True,
+                "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": m["rol"], "mock": True,
                 "es_nuevo": es_nuevo_mock}
 
 
@@ -1577,7 +1579,7 @@ async def restaurar_cuenta(data: CuentaRestaurarIn, request: Request,
         except Exception:
             pass
         return {"access_token": token, "token_type": "bearer",
-                "expires_in_hours": 8, "rol": u.rol, "mock": False}
+                "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": u.rol, "mock": False}
     except HTTPException:
         raise
     except Exception as e:
@@ -1596,4 +1598,4 @@ async def restaurar_cuenta(data: CuentaRestaurarIn, request: Request,
         m.pop("eliminado_en", None)
         token = _issue_token(m["id"], email, m["rol"], False, True)
         return {"access_token": token, "token_type": "bearer",
-                "expires_in_hours": 8, "rol": m["rol"], "mock": True}
+                "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": m["rol"], "mock": True}

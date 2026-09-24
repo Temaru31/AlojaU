@@ -136,7 +136,7 @@ class Publicacion(Base):
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
-    # Tarea 3 (v10): zona opcional — barrio personalizado vive en barrio_texto.
+    # Zona opcional: el barrio personalizado vive en barrio_texto.
     zona_barrio_id: Mapped[int | None] = mapped_column(ForeignKey("zonas_barrios.id", ondelete="RESTRICT"), nullable=True)
     barrio_texto: Mapped[str | None] = mapped_column(String(120), nullable=True)
     titulo: Mapped[str] = mapped_column(String(150), nullable=False)
@@ -201,7 +201,7 @@ class PublicacionCampus(Base):
     )
     publicacion_id: Mapped[int] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), primary_key=True)
     campus_id: Mapped[int] = mapped_column(ForeignKey("campus_universitarios.id", ondelete="CASCADE"), primary_key=True)
-    # B0-5: NULL cuando pub sin coords (no 0). Requiere migración DB si columna era NOT NULL.
+    # NULL cuando la pub no tiene coords (no 0).
     distancia_geodesica_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     publicacion: Mapped["Publicacion"] = relationship(back_populates="campus_links")

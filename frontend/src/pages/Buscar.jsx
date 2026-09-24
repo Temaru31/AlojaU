@@ -18,7 +18,7 @@ function parseCiudadId(searchParams) {
 
 export default function Buscar() {
   const [campus, setCampus] = useState([])
-  // Tarea 4: una sola fuente de ciudades para el selector Y la píldora del Hero.
+  // Una sola fuente de ciudades para el selector Y la píldora del Hero.
   const [ciudades, setCiudades] = useState(CIUDADES_FALLBACK)
   const [searchParams, setSearchParams] = useSearchParams()
   // 004 POIs: sin ?campus_id= no hay filtro de cercanía (estado inicial vacío).
@@ -43,9 +43,9 @@ export default function Buscar() {
   const [pages, setPages] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  // Tarea 1: panel avanzado controlado desde la barra flotante (una sola fila).
+  // Panel avanzado controlado desde la barra flotante (una sola fila).
   const [avanzadosAbiertos, setAvanzadosAbiertos] = useState(false)
-  // Tarea 2 (v4): bottom sheet de filtros solo en móvil (<768px).
+  // Bottom sheet de filtros solo en móvil (<768px).
   const [sheetAbierto, setSheetAbierto] = useState(false)
   const numAvanzados = contarAvanzados(filtros)
 
@@ -138,7 +138,7 @@ export default function Buscar() {
     api.get('/api/campus')
       .then(r => setCampus(r.data))
       .catch(() => setCampus([{ id: 1, institucion: 'Universidad del Cauca', nombre_sede: 'Campus Tulcan' }]))
-    // Tarea 4: catálogo de ciudades una sola vez (selector + píldora comparten).
+    // Catálogo de ciudades una sola vez (selector + píldora comparten).
     api.get('/api/ciudades')
       .then((r) => {
         if (Array.isArray(r.data) && r.data.length > 0) setCiudades(r.data)
@@ -146,7 +146,7 @@ export default function Buscar() {
       .catch(() => { /* fallback Popayán */ })
   }, [])
 
-  // Tarea 4: la píldora lee la ciudad SELECCIONADA en el CiudadSelector
+  // La píldora lee la ciudad SELECCIONADA en el CiudadSelector
   // (misma lista, mismo value). Sin ciudad elegida -> default Popayán.
   const ciudadSel = ciudades.find((c) => String(c.id) === String(ciudadId)) || ciudades[0] || null
   const ciudadNombre = etiquetaCiudad(ciudadSel)
@@ -300,7 +300,7 @@ export default function Buscar() {
         />
       </section>
 
-      {/* Tarea 2 (v4, móvil): cápsula compacta [buscar | filtros] + bottom sheet. */}
+      {/* Móvil: cápsula compacta [buscar | filtros] + bottom sheet. */}
       <div className="md:hidden sticky top-16 z-30">
         <div className="container-main pt-2">
           <div className="flex items-center gap-2 rounded-full bg-white border border-neutral-150 shadow-md pl-1 pr-1 py-1">

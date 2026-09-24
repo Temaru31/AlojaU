@@ -1,5 +1,5 @@
 /**
- * Ruta peatonal real vía OSRM Foot API (Tarea 2, v10 — progresivo).
+ * Ruta peatonal real vía OSRM Foot API (progresivo, con fallback local).
  * Si OSRM responde rápido (<4s) devuelve { distM, mins } por red de calles;
  * ante cualquier fallo (red, timeout, respuesta inválida) retorna null y el
  * llamador conserva la estimación por fórmula (Haversine × 1.28 / 66 m/min).

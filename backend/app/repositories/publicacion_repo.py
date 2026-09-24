@@ -388,7 +388,7 @@ async def fetch_detail_campus_ref(db: AsyncSession, pub_id: int, campus_id: int)
     """Fila publicacion_campus + lugar para GET detalle ?campus_id= (004 POIs).
 
     Retorna (dist_m, campus) o (None, None) si el aviso no tiene coords
-    (edge case: la fila existe con dist NULL por B0-5/trigger). Lanza 404 si
+    (edge case: la fila existe con dist NULL por trigger sin coords). Lanza 404 si
     el lugar no existe o está inactivo. Uso: routers/publicaciones.py.
     """
     from fastapi import HTTPException
@@ -405,7 +405,7 @@ async def fetch_detail_campus_ref(db: AsyncSession, pub_id: int, campus_id: int)
 
 async def validate_fks(db: AsyncSession, zona_id: int | None, campus_ids: List[int], servicios_ids: List[int]):
     """FK estrictas + dedup (404 si zona/campus inactivo/servicio falta).
-    Tarea 3 (v10): zona_id None = barrio libre (barrio_texto), se omite el chequeo.
+    zona_id None = barrio libre (barrio_texto): se omite el chequeo.
     Uso: routers/publicaciones.py::crear_publicacion. Ej: cids, sids = await validate_fks(db, 1, [1, 1], [1])."""
     from fastapi import HTTPException
 

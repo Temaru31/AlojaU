@@ -1,5 +1,5 @@
 /**
- * Compresión de imágenes en cliente vía Canvas (Tarea 4, v4).
+ * Compresión de imágenes en cliente vía Canvas.
  * Reduce fotos pesadas a máx 1200px de ancho, calidad 0.8 (WEBP si el
  * navegador lo soporta, JPEG si no). Ante cualquier fallo (jsdom, formato
  * raro, canvas sin 2d) retorna el archivo ORIGINAL: nunca rompe la subida.

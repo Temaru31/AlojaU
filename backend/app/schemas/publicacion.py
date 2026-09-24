@@ -1,9 +1,17 @@
-from pydantic import BaseModel, Field, ConfigDict, HttpUrl, model_validator
+from pydantic import BaseModel, Field, ConfigDict, HttpUrl, model_validator, field_validator
 from typing import Optional, Literal, List
 from decimal import Decimal
 from datetime import datetime
 
 TipoInmueble = Literal["HABITACION_FAMILIAR","HABITACION_INDEPENDIENTE","APARTAESTUDIO","COMPARTIDO"]
+
+# Los campos de texto libre son texto plano — sin HTML ejecutable.
+# Se rechaza < y > (no solo "script"): cubre <img onerror>, <svg>, etc.
+# sin falsos negativos por variantes/ofuscación.
+def _rechazar_html(v):
+    if v is not None and ("<" in v or ">" in v):
+        raise ValueError("no se permite HTML ni los caracteres < > (texto plano)")
+    return v
 
 class PublicacionCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -30,9 +38,15 @@ class PublicacionCreate(BaseModel):
     fotos: list[HttpUrl] = Field(min_length=3, max_length=10, description="≥3 fotos HU-005 C2")
     incluye_servicios_base: bool = True
 
+    @field_validator("titulo", "descripcion", "reglas_convivencia", "direccion_referencial", "barrio_texto")
+    @classmethod
+    def sin_html(cls, v):
+        # Texto plano, sin HTML ejecutable -> 422.
+        return _rechazar_html(v)
+
     @model_validator(mode="after")
     def lat_lng_both_or_none(self):
-        # B0-5: lat/lng both-or-none -> 422 si solo uno presente.
+        # Lat/lng both-or-none: 422 si solo uno presente.
         if (self.latitud is None) != (self.longitud is None):
             raise ValueError("latitud y longitud deben ir juntas (both-or-none)")
         return self
@@ -62,6 +76,12 @@ class PublicacionUpdate(BaseModel):
     direccion_referencial: Optional[str] = Field(default=None, min_length=10, max_length=200)
     # FASE 3: misma unificación que en Create (ver arriba).
     reglas_convivencia: Optional[str] = Field(default=None, min_length=10, max_length=2000)
+
+    @field_validator("titulo", "descripcion", "direccion_referencial", "reglas_convivencia")
+    @classmethod
+    def sin_html(cls, v):
+        # Mismo criterio que en creación (PATCH edita estos campos).
+        return _rechazar_html(v)
 
     @model_validator(mode="after")
     def at_least_one(self):

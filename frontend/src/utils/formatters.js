@@ -1,5 +1,5 @@
 export const formatCOP = (n) => n?.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })
-// Tarea 2 (v10): precisión peatonal — tortuosidad urbana y velocidad (~4 km/h).
+// Precisión peatonal: tortuosidad urbana y velocidad (~4 km/h).
 export const PEATONAL_FACTOR = 1.28
 export const VELOCIDAD_M_MIN = 66
 export const formatDistancia = (m) => {
@@ -12,7 +12,7 @@ export const getLabelIndice = (i) => i >= 80 ? 'Alto' : i >= 50 ? 'Medio' : 'Bá
 export const formatTiempoCaminando = (m) => {
   if (m == null || isNaN(Number(m))) return null
   const num = Number(m)
-  // Tarea 2 (v10): tortuosidad urbana 1.28 (la manzana real es ~28% más larga
+  // Tortuosidad urbana 1.28 (la manzana real es ~28% más larga
   // que la recta) y 66 m/min (~4 km/h urbano). Fuente única frontend del
   // "Y min a pie" (backend: services/haversine.tiempo_pie_min, mismos valores).
   const peatonal = num * PEATONAL_FACTOR

@@ -230,7 +230,7 @@ export default function Detalle() {
     : (lugarLista
       ? { lat: lugarLista.latitud ?? lugarLista.lat, lng: lugarLista.longitud ?? lugarLista.lng, nombre: nombreLugarLista }
       : null)
-  // Tarea 1 (v10): trayectoria SOLO con lugar explícito (?campus_id= del flujo
+  // Trayectoria SOLO con lugar explícito (?campus_id= del flujo
   // de búsqueda). Sin filtro previo -> modo inmueble único (1 pin, sin
   // distancias hacia un campus no seleccionado).
   const modoTrayectoria = lugar != null
@@ -257,7 +257,7 @@ export default function Detalle() {
   const depositoRaw = pub.deposito_requerido ?? pub.deposito
   const deposito = depositoRaw == null || depositoRaw === '' ? null : Number(depositoRaw)
   const totalPrimerMes = canon != null && deposito != null ? Number(canon) + Number(deposito) : null
-  // BUG-08: fallbacks unificados a "No informado"; num_fotos real (no 3 inventado)
+  // Fallbacks unificados a "No informado"; num_fotos real.
   const zona = pub.zona_nombre || pub.zona || 'No informado'
   const servicios = pub.servicios || []
   const descripcion = (pub.descripcion || '').trim()
