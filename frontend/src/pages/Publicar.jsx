@@ -17,6 +17,46 @@ const SERVICIOS = [
   { id: 5, nombre: 'Lavadora' },
 ]
 
+/**
+ * Valida el formulario de publicar contra LIMITES (fuente única de verdad).
+ * @param {object} form Estado del formulario (mismas claves que Publicar).
+ * @param {object} [lim=LIMITES] Límites inyectables (tests alteran el límite).
+ * @returns {object} Mapa campo->mensaje (vacío = válido).
+ */
+export function validarPublicar(form, lim = LIMITES) {
+  const e = {}
+  const t = (form.titulo || '').trim()
+  if (t.length < lim.titulo.min) e.titulo = `Mínimo ${lim.titulo.min} caracteres`
+  else if ((form.titulo || '').length > lim.titulo.max) e.titulo = `Máximo ${lim.titulo.max} caracteres`
+  const d = (form.descripcion || '').trim()
+  if (d.length < lim.descripcion.min) e.descripcion = `Mínimo ${lim.descripcion.min} caracteres`
+  else if ((form.descripcion || '').length > lim.descripcion.max) e.descripcion = `Máximo ${lim.descripcion.max} caracteres`
+  if (!form.canon_mensual || Number(form.canon_mensual) <= 0) e.canon_mensual = 'Canon > 0'
+  else if (Number(form.canon_mensual) > lim.canonMax) e.canon_mensual = `Máximo ${lim.canonMax / 1_000_000}M`
+  if (form.deposito_requerido === '' || Number(form.deposito_requerido) < 0) e.deposito_requerido = 'Depósito >=0'
+  const dir = (form.direccion_referencial || '').trim()
+  if (dir.length < lim.direccion.min) e.direccion_referencial = `Mínimo ${lim.direccion.min} caracteres`
+  else if ((form.direccion_referencial || '').length > lim.direccion.max) e.direccion_referencial = `Máximo ${lim.direccion.max} caracteres`
+  const reg = (form.reglas_convivencia || '').trim()
+  if (reg.length < lim.reglas.min) e.reglas_convivencia = `Mínimo ${lim.reglas.min} caracteres`
+  else if ((form.reglas_convivencia || '').length > lim.reglas.max) e.reglas_convivencia = `Máximo ${lim.reglas.max} caracteres`
+  if (!Array.isArray(form.servicios_ids) || form.servicios_ids.length === 0) e.servicios_ids = 'Selecciona al menos 1 servicio'
+  // Tarea 3 (v10): zona del catálogo o barrio libre (mínimo uno).
+  if (form.zona_barrio_id == null && !(form.barrio_texto || '').trim()) {
+    e.zona = 'Elige tu barrio de la lista o escríbelo'
+  }
+  const fotosValid = (form.fotos || []).filter((f) => (f || '').trim() !== '')
+  if (fotosValid.length < lim.fotosMin) e.fotos = `Mínimo ${lim.fotosMin} fotos (URLs válidas)`
+  else {
+    for (const url of fotosValid) {
+      try { new URL(url); if (!url.startsWith('http')) throw new Error() } catch { e.fotos = 'URLs deben ser http(s) válidas'; break }
+    }
+  }
+  if (form.latitud !== '' && form.latitud != null && (isNaN(Number(form.latitud)) || Number(form.latitud) < -90 || Number(form.latitud) > 90)) e.latitud = 'Latitud entre -90 y 90'
+  if (form.longitud !== '' && form.longitud != null && (isNaN(Number(form.longitud)) || Number(form.longitud) < -180 || Number(form.longitud) > 180)) e.longitud = 'Longitud entre -180 y 180'
+  return e
+}
+
 export default function Publicar() {
   const { refresh } = useAuth()
   const [token, setToken] = useState(() => localStorage.getItem('alojau_token') || '')
@@ -82,29 +122,9 @@ export default function Publicar() {
   }
 
   const validate = () => {
-    const e = {}
-    if (!form.titulo || form.titulo.trim().length < 10) e.titulo = 'Mínimo 10 caracteres'
-    if (form.titulo && form.titulo.length > 150) e.titulo = 'Máximo 150 caracteres'
-    if (!form.descripcion || form.descripcion.trim().length < 20) e.descripcion = 'Mínimo 20 caracteres'
-    if (!form.canon_mensual || Number(form.canon_mensual) <= 0) e.canon_mensual = 'Canon > 0'
-    if (Number(form.canon_mensual) > 10_000_000) e.canon_mensual = 'Máximo 10M'
-    if (form.deposito_requerido === '' || Number(form.deposito_requerido) < 0) e.deposito_requerido = 'Depósito >=0'
-    if (!form.direccion_referencial || form.direccion_referencial.trim().length < 10) e.direccion_referencial = 'Mínimo 10 caracteres'
-    if (!form.reglas_convivencia || form.reglas_convivencia.trim().length < 10) e.reglas_convivencia = 'Mínimo 10 caracteres'
-    if (form.servicios_ids.length === 0) e.servicios_ids = 'Selecciona al menos 1 servicio'
-    // Tarea 3 (v10): zona del catálogo o barrio libre (mínimo uno).
-    if (form.zona_barrio_id == null && !(form.barrio_texto || '').trim()) {
-      e.zona = 'Elige tu barrio de la lista o escríbelo'
-    }
-    const fotosValid = form.fotos.filter(f => f.trim() !== '')
-    if (fotosValid.length < 3) e.fotos = 'Mínimo 3 fotos (URLs válidas)'
-    else {
-      for (const url of fotosValid) {
-        try { new URL(url); if (!url.startsWith('http')) throw new Error() } catch { e.fotos = 'URLs deben ser http(s) válidas'; break }
-      }
-    }
-    if (form.latitud !== '' && (isNaN(Number(form.latitud)) || Number(form.latitud) < -90 || Number(form.latitud) > 90)) e.latitud = 'Latitud entre -90 y 90'
-    if (form.longitud !== '' && (isNaN(Number(form.longitud)) || Number(form.longitud) < -180 || Number(form.longitud) > 180)) e.longitud = 'Longitud entre -180 y 180'
+    // Detalle #2: fuente única LIMITES (antes hardcodeaba 10/150/20/2000/10M
+    // duplicando constants.js). El JSX ya usa LIMITES para maxLength.
+    const e = validarPublicar(form)
     setErrors(e)
     return Object.keys(e).length === 0
   }
@@ -266,8 +286,8 @@ export default function Publicar() {
           <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
             <p className="text-red-700 text-sm break-words">{submitError}</p>
             {submitPhoneGate && (
-              <Link to="/perfil" className="inline-block mt-2 text-xs font-semibold text-navy-700 underline hover:text-navy-900">
-                Vincular mi número en Mi Perfil →
+              <Link to="/perfil#datos" className="inline-block mt-2 text-xs font-semibold text-navy-700 underline hover:text-navy-900">
+                Vincular mi número en Mi Perfil → Datos y contacto
               </Link>
             )}
           </div>

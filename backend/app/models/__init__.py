@@ -162,7 +162,11 @@ class Publicacion(Base):
     zona: Mapped["ZonaBarrio | None"] = relationship(lazy="joined")
     usuario: Mapped["Usuario"] = relationship(lazy="joined")
     servicios: Mapped[list["ServicioCatalogo"]] = relationship(secondary="publicacion_servicios", lazy="selectin")
-    imagenes: Mapped[list["ImagenPublicacion"]] = relationship(back_populates="publicacion", cascade="all, delete-orphan", lazy="selectin")
+    # BUG#1 portada: orden determinista en TODOS los eager-loads (fetch_page,
+    # detail, mias, pendientes, cambiar-estado, similares, editar). Sin esto
+    # fotos[0] era orden de heap, no la portada (orden=1). Fuente única de
+    # verdad a nivel ORM; la capa vista además ordena defensivamente por orden.
+    imagenes: Mapped[list["ImagenPublicacion"]] = relationship(back_populates="publicacion", cascade="all, delete-orphan", lazy="selectin", order_by="ImagenPublicacion.orden")
     campus_links: Mapped[list["PublicacionCampus"]] = relationship(back_populates="publicacion", cascade="all, delete-orphan", lazy="selectin")
 
 # ---------------------------------------------------------------------------

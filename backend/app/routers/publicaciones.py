@@ -253,6 +253,53 @@ async def mis_publicaciones(
     items = [view.mock_to_out(p, None, True) for p in filtradas[offset:offset + size_norm]]
     return build_paginated(items, total, page, size_norm)
 
+@router.get("/config-publica", summary="Config pública de validación y frescura (sin auth)")
+async def config_publica(db: AsyncSession = Depends(get_session)):
+    """Detalle #3: expone los settings que el frontend hardcodeaba.
+
+    GET /api/publicaciones/config-publica -> {dias_desactualizada,
+    titulo_min/max, descripcion_min/max, direccion_min/max, reglas_min/max,
+    fotos_min/max, canon_max, vistas_visibles_publico}. Públicos (sin auth),
+    1 query a system_settings con fallback a DEFAULTS si no hay PG. El
+    frontend lo lee una vez y cachea (ver constants.js fetchConfigPublica);
+    si falla, usa LIMITES locales (divergencia aceptada y documentada).
+    NOTA: declarada ANTES de /{pub_id} para no caer en el path param.
+    """
+    from app.routers.admin_automation import DEFAULTS as _DEF
+    _KEYS = ["dias_desactualizada", "titulo_min", "titulo_max",
+             "descripcion_min", "descripcion_max", "fotos_min_publicar",
+             "vistas_visibles_publico"]
+    vals = {k: _DEF[k][0] for k in _KEYS if k in _DEF}
+    try:
+        from app.models import SystemSetting
+        rows = (await db.execute(select(SystemSetting).where(
+            SystemSetting.clave.in_(_KEYS)))).scalars().all()
+        for r in rows:
+            vals[r.clave] = r.valor
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        # Sin PG (dev mock): DEFAULTS. Nunca 503 en lectura pública.
+    def _iv(k, d):
+        try:
+            return int(vals.get(k, d))
+        except Exception:
+            return d
+    return {
+        "dias_desactualizada": _iv("dias_desactualizada", 30),
+        "titulo_min": _iv("titulo_min", 10),
+        "titulo_max": _iv("titulo_max", 150),
+        "descripcion_min": _iv("descripcion_min", 20),
+        "descripcion_max": _iv("descripcion_max", 2000),
+        "direccion_min": 10, "direccion_max": 200,
+        "reglas_min": 10, "reglas_max": 2000,
+        "fotos_min": _iv("fotos_min_publicar", 3), "fotos_max": 10,
+        "canon_max": 10_000_000,
+        "vistas_visibles_publico": str(vals.get("vistas_visibles_publico", "false")).lower() == "true",
+    }
+
 @router.get("/{pub_id}", response_model=PublicacionDetailOut, summary="HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp")
 async def get_publicacion(
     pub_id: int = Path(..., ge=1, le=1000000),
@@ -647,7 +694,11 @@ async def similares(
     db: AsyncSession = Depends(get_session),
 ):
     """v15.2 bloque 'similares': misma zona (o barrio libre), ACTIVO, dueño
-    activo, ordenados por confianza desc. 404 si el aviso base no existe."""
+    activo, ordenados por confianza desc. 404 si el aviso base no existe.
+
+    Detalle #9: excluye avisos del propio dueño (usuario_id != base) — el
+    bloque es "alternativas para descubrir", no "mis otros avisos".
+    """
     try:
         from app.models import Publicacion
 
@@ -661,6 +712,7 @@ async def similares(
             Publicacion.id != pub_id,
             Publicacion.estado == "ACTIVO",
             dueno_activo_clause(Publicacion),
+            Publicacion.usuario_id != base.usuario_id,
         ]
         if base.zona_barrio_id is not None:
             conds.append(Publicacion.zona_barrio_id == base.zona_barrio_id)
@@ -701,8 +753,10 @@ async def similares(
     base = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
     if not base:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    # Detalle #9: también en mock se excluye al propio dueño.
     cands = [x for x in MOCK_PUBS
              if x["id"] != pub_id and x.get("estado") == "ACTIVO"
+             and x.get("usuario_id") != base.get("usuario_id")
              and ((base.get("zona_barrio_id") is not None
                    and x.get("zona_barrio_id") == base.get("zona_barrio_id"))
                   or (base.get("zona_barrio_id") is None and base.get("barrio_texto")

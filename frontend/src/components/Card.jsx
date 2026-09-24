@@ -6,6 +6,7 @@ import BadgeConfianza from './BadgeConfianza'
 import { notifyToast } from './Toast'
 import { useFavoritos } from '../contexts/FavoritosContext'
 import { useComparar } from '../contexts/CompararContext'
+import { portadaUrl, fotosOrdenadas } from '../utils/portada'
 
 export default function Card({ pub, lugarNombre = null }) {
   const favHook = useFavoritos()
@@ -19,7 +20,10 @@ export default function Card({ pub, lugarNombre = null }) {
   const dist = pub.distancia_geodesica_m ?? pub.dist_m
   // BUG-08: num_fotos real (??, no valor inventado)
   const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? (typeof pub.fotos === 'number' ? pub.fotos : 0))
-  const cover = Array.isArray(pub.fotos) ? pub.fotos[0] : null
+  // BUG#1: la portada es orden=1 (ver utils/portada). La API ya trae
+  // fotos[0] ordenada, pero se resuelve vía helper para sobrevivir a
+  // refetch/comparar/favoritos aunque el payload traiga imagenes.
+  const cover = portadaUrl(pub)
   const tiempo = formatTiempoCaminando(dist)
   // 004 POIs: badge destacado "A X m · Y min a pie de [Lugar]" cuando hay
   // contexto de cercanía; sin lugar se conserva el texto legado.
@@ -31,7 +35,7 @@ export default function Card({ pub, lugarNombre = null }) {
   const isComp = compHook.isSelected(pub.id)
 
   // Tarea 2 (v4): carousel táctil en la tarjeta (sin abrir el detalle).
-  const fotos = Array.isArray(pub.fotos) ? pub.fotos : []
+  const fotos = fotosOrdenadas(pub)
   const [fotoIdx, setFotoIdx] = useState(0)
   const touchX = useRef(null)
   const huboSwipe = useRef(false)

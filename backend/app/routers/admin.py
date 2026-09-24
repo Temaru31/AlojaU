@@ -338,9 +338,17 @@ async def bulk_reject(
 
 async def _bulk_cambiar_estado(db: AsyncSession, admin: dict, ids: list[int],
                                estado: str, evento: str) -> dict:
+    """Cambio masivo con democión por dueño en la misma transacción.
+
+    Detalle #1: un bulk-reject total dejaba ARRENDADOR con 0 vigentes sin
+    democionar (los endpoints individuales sí lo hacían). Se recoge el set
+    de dueños afectados por los cambios y se evalúa democión con row-lock
+    antes del commit. Retorna además `democionados: [usuario_ids]`.
+    """
     from app.models import Publicacion, PublicacionesAudit
 
     vistos, cambiados, faltantes = [], [], []
+    duenos_afectados: set[int] = set()
     try:
         for pid in dict.fromkeys(ids):
             if not isinstance(pid, int) or pid < 1:
@@ -361,10 +369,29 @@ async def _bulk_cambiar_estado(db: AsyncSession, admin: dict, ids: list[int],
                 detalle=f"Cambio masivo a {estado} por admin",
             ))
             cambiados.append(pid)
+            try:
+                duenos_afectados.add(int(p.usuario_id))
+            except Exception:
+                pass
+        # Misma transacción: flush de estados + democión N->0 por dueño.
+        democionados: list[int] = []
+        if cambiados and duenos_afectados:
+            try:
+                from app.services import role_lifecycle as _rl
+                await db.flush()
+                for dueno_id in sorted(duenos_afectados):
+                    try:
+                        _, demo = await _rl.evaluar_democion(db, dueno_id)
+                        if demo:
+                            democionados.append(dueno_id)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
         await db.commit()
         return {"estado": estado, "solicitados": len(ids), "cambiados": cambiados,
                 "sin_cambios": [i for i in vistos if i not in cambiados],
-                "no_encontrados": faltantes}
+                "no_encontrados": faltantes, "democionados": democionados}
     except Exception as e:
         try:
             await db.rollback()

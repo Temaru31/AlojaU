@@ -55,3 +55,56 @@ export function estaDesactualizada(fechaRenovacion, diasLimite = LIMITES.desactu
   if (Number.isNaN(t)) return false
   return (Date.now() - t) / 86_400_000 > diasLimite
 }
+
+// Detalle #3: config pública del backend (GET /api/publicaciones/config-publica).
+// El endpoint es público y barato (1 query); aquí se lee UNA vez por sesión y
+// se cachea en memoria + localStorage (TTL 5 min). Si falla o no hay red, se
+// usa LIMITES local (divergencia aceptada y documentada).
+const _CFG_KEY = 'alojau_config_publica'
+const _CFG_TTL_MS = 5 * 60_000
+let _cfgMem = null
+let _cfgTs = 0
+
+export function leerConfigCache() {
+  if (_cfgMem && Date.now() - _cfgTs < _CFG_TTL_MS) return _cfgMem
+  try {
+    const raw = localStorage.getItem(_CFG_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (parsed && Date.now() - (parsed.ts || 0) < _CFG_TTL_MS) {
+      _cfgMem = parsed.cfg
+      _cfgTs = parsed.ts
+      return _cfgMem
+    }
+  } catch { /* sin caché: fallback a LIMITES */ }
+  return null
+}
+
+export async function fetchConfigPublica(getter) {
+  const hit = leerConfigCache()
+  if (hit) return hit
+  try {
+    const data = getter
+      ? await getter()
+      : await (await fetch('/api/publicaciones/config-publica')).json()
+    if (data && typeof data === 'object') {
+      _cfgMem = data
+      _cfgTs = Date.now()
+      try { localStorage.setItem(_CFG_KEY, JSON.stringify({ cfg: data, ts: _cfgTs })) } catch { /* noop */ }
+      return data
+    }
+  } catch { /* fallback a LIMITES */ }
+  return null
+}
+
+export function diasDesactualizadaEfectiva() {
+  const cfg = leerConfigCache()
+  const v = Number(cfg?.dias_desactualizada)
+  return Number.isFinite(v) && v >= 1 && v <= 365 ? v : LIMITES.desactualizadaDias
+}
+
+export function limpiarConfigCache() {
+  _cfgMem = null
+  _cfgTs = 0
+  try { localStorage.removeItem(_CFG_KEY) } catch { /* noop */ }
+}

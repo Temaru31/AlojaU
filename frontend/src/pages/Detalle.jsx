@@ -10,7 +10,9 @@ import { useFavoritos } from '../contexts/FavoritosContext'
 import { useComparar } from '../contexts/CompararContext'
 import { useAuth } from '../contexts/AuthContext'
 import EditarPublicacionModal from '../components/EditarPublicacionModal'
-import { haceRelativo, estaDesactualizada } from '../constants'
+import { haceRelativo, estaDesactualizada, fetchConfigPublica, diasDesactualizadaEfectiva } from '../constants'
+import { fotosOrdenadas } from '../utils/portada'
+import { api as _apiDetalle } from '../services/api'
 
 export function humanizarTipo(tipo) {
   const map = {
@@ -63,6 +65,9 @@ export default function Detalle() {
   const { token: authToken, user: authUser } = useAuth()
   const [editando, setEditando] = useState(false)
   const [similares, setSimilares] = useState([])
+  // Detalle #3: umbral de frescura desde config pública (fallback 30 local).
+  // ANTES de los early-returns (hooks siempre en el mismo orden).
+  const [diasDesact, setDiasDesact] = useState(() => diasDesactualizadaEfectiva())
   const vistaEnviada = useRef(null)
   const compHook = useComparar()
 
@@ -147,6 +152,15 @@ export default function Detalle() {
       // SSR/tests sin scroll: no rompe render
     }
   }, [id])
+
+  // Detalle #3: lee la config pública una vez (cache 5 min en constants.js).
+  useEffect(() => {
+    let vivo = true
+    fetchConfigPublica(() => _apiDetalle.get('/api/publicaciones/config-publica').then((r) => r.data))
+      .then((cfg) => { if (vivo && cfg?.dias_desactualizada) setDiasDesact(Number(cfg.dias_desactualizada)) })
+      .catch(() => {})
+    return () => { vivo = false }
+  }, [])
 
   if (loading) {
     return (
@@ -233,7 +247,7 @@ export default function Detalle() {
   const esDueno = !!(authUser?.id != null && pub.usuario_id != null
     && Number(authUser.id) === Number(pub.usuario_id))
   const actualizadoHace = haceRelativo(pub.updated_at || pub.fecha_renovacion)
-  const desactualizada = estaDesactualizada(pub.updated_at || pub.fecha_renovacion)
+  const desactualizada = estaDesactualizada(pub.updated_at || pub.fecha_renovacion, diasDesact)
   const hasTel = !!pub.telefono_whatsapp && isActivo
   const wa = hasTel
     ? `https://wa.me/${pub.telefono_whatsapp}?text=${encodeURIComponent(`Hola, vi ${pub.titulo} (ID ${pub.id}) en AlojaU y me interesa.`)}`
@@ -427,7 +441,8 @@ export default function Detalle() {
             ))}
           </div>
 
-          <GaleriaFotos fotos={pub.fotos} titulo={pub.titulo} />
+          {/* BUG#1: galería en orden de portada (imagenes por orden si existen). */}
+          <GaleriaFotos fotos={fotosOrdenadas(pub)} titulo={pub.titulo} />
 
           {/* P-01: la descripción existía en BD/API pero nunca se renderizaba. */}
           <div className="card p-5">

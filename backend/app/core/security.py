@@ -10,14 +10,27 @@ from datetime import datetime, timezone, timedelta
 import logging
 import uuid
 import jwt  # OLA1: PyJWT (reemplaza python-jose abandonado); HS256 + require exp/sub
-from passlib.context import CryptContext
+import bcrypt as _bcrypt
 from fastapi import HTTPException, Header
 from .config import settings
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 logger = logging.getLogger("alojau.security")
 
-def hash_password(p): return pwd_ctx.hash(p)
-def verify_password(p, h): return pwd_ctx.verify(p, h)
+# Detalle #10: passlib está abandonado (último release 2020) y rompía con
+# bcrypt 4.1+ (ValueError 72 bytes). Se usa bcrypt directo (ya pineado a
+# 4.0.1): mismos hashes $2b$ verificables con los seeds existentes.
+def _pw_bytes(p) -> bytes:
+    return str(p or "").encode("utf-8")[:72]
+
+
+def hash_password(p) -> str:
+    return _bcrypt.hashpw(_pw_bytes(p), _bcrypt.gensalt()).decode("utf-8")
+
+
+def verify_password(p, h) -> bool:
+    try:
+        return _bcrypt.checkpw(_pw_bytes(p), str(h or "").encode("utf-8"))
+    except Exception:
+        return False
 def create_token(data: dict):
     exp = datetime.now(timezone.utc) + timedelta(hours=settings.ACCESS_TOKEN_EXPIRE_HOURS)
     payload = {**data, "exp": exp}
@@ -102,7 +115,16 @@ async def get_current_user(authorization: str = Header(None), db=None):
     # B0-2 fail-closed: mock solo si mock_enabled (flag True + ENV!=prod).
     if _mock_activo() and token in MOCK_TOKENS:
         return MOCK_TOKENS[token]
-    claims = decode_token(token)
+    # Detalle #10: cablea AuthService agnóstico (Supabase RS256 si está
+    # configurado, si no local HS256). Sin Supabase el comportamiento es
+    # idéntico a decode_token (compat total con tokens legacy).
+    try:
+        from app.core.auth_service import decode_token_provider_agnostic as _agn
+        claims = _agn(token)
+    except HTTPException:
+        raise
+    except Exception:
+        claims = decode_token(token)
     # v14.1: revocación central (todos los Depends la heredan).
     await _verificar_sesion_activa(claims, db)
     return claims
@@ -119,6 +141,19 @@ async def get_optional_user(authorization: str | None = Header(None)):
             return None
         raise
 
+# Detalle #5 free-tier: caché de rol 60s para /upload* (1 query extra por
+# request a 5.000 usuarios degradaría Render/Supabase). Solo cachea el caso
+# positivo ARRENDADOR; el negativo siempre re-verifica (fail-closed ante
+# democión reciente). Limpieza en tests vía clear_rol_cache_for_tests().
+import time as _time
+_ROL_CACHE: dict[int, tuple[str, float]] = {}
+_ROL_CACHE_TTL_S = 60.0
+
+
+def clear_rol_cache_for_tests() -> None:
+    _ROL_CACHE.clear()
+
+
 async def require_arrendador(authorization: str = Header(None)):
     u = await get_current_user(authorization)
     if u.get("rol") == "ARRENDADOR":
@@ -130,6 +165,12 @@ async def require_arrendador(authorization: str = Header(None)):
     try:
         uid = u.get("id")
         if isinstance(uid, int):
+            ahora = _time.monotonic()
+            hit = _ROL_CACHE.get(uid)
+            if hit and hit[0] == "ARRENDADOR" and (ahora - hit[1]) < _ROL_CACHE_TTL_S:
+                u = {**u, "rol": "ARRENDADOR"}
+                u.pop("scopes", None)
+                return u
             try:
                 from sqlalchemy import select as _select
                 from app.models import Usuario as _U
@@ -138,6 +179,7 @@ async def require_arrendador(authorization: str = Header(None)):
                     res = await _s.execute(_select(_U).where(_U.id == uid))
                     row = res.scalars().first()
                     if row is not None and row.rol == "ARRENDADOR":
+                        _ROL_CACHE[uid] = ("ARRENDADOR", ahora)
                         u = {**u, "rol": "ARRENDADOR"}
                         u.pop("scopes", None)
                         return u
@@ -146,6 +188,7 @@ async def require_arrendador(authorization: str = Header(None)):
                     from app.routers.auth import MOCK_USERS as _MU
                     for _m in _MU.values():
                         if _m.get("id") == uid and _m.get("rol") == "ARRENDADOR":
+                            _ROL_CACHE[uid] = ("ARRENDADOR", ahora)
                             u = {**u, "rol": "ARRENDADOR"}
                             u.pop("scopes", None)
                             return u

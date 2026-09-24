@@ -15,9 +15,34 @@ def whatsapp_link(titulo: str, pub_id: int, tel: Optional[str]) -> Optional[str]
     return f"https://wa.me/{tel}?text={urlquote(f'Hola, vi {titulo} (ID {pub_id}) en AlojaU y me interesa.')}"
 
 
+def _mock_imagenes(pub: dict) -> list:
+    """Simula filas ImagenPublicacion desde fotos mock (ids/orden deterministas).
+
+    BUG#1: antes devolvía imagenes: [] siempre, así que la portada mock no
+    existía. Id virtual estable: pub_id*1000 + índice (1-based), orden = índice.
+    Así fotos[0] == imagenes[0].url == portada en dev sin PG.
+    """
+    fotos = pub.get("fotos", []) or []
+    try:
+        base = int(pub.get("id", 0)) * 1000
+    except Exception:
+        base = 0
+    return [{"id": base + i, "url": u, "orden": i} for i, u in enumerate(fotos, start=1)]
+
+
+def mock_foto_ids(pub: dict) -> list[int]:
+    """Ids virtuales de fotos mock (para DELETE/orden sin PG)."""
+    return [im["id"] for im in _mock_imagenes(pub)]
+
+
 def mock_to_out(pub: dict, campus_id: Optional[int] = None,
                 mostrar_vistas: bool = True) -> dict:
-    """Convierte dict mock a payload detalle (Haversine + Trust + alias compat)."""
+    """Convierte dict mock a payload detalle (Haversine + Trust + alias compat).
+
+    mostrar_vistas=False en lista/similares públicas (el contador es solo del
+    dueño/admin por setting vistas_visibles_publico=false); True en mias y
+    detalle propio. En dev sin PG el dueño SÍ ve su contador en /mias mock.
+    """
     dist = None
     if campus_id and campus_id in MOCK_CAMPUS and pub.get("latitud") is not None and pub.get("longitud") is not None:
         c = MOCK_CAMPUS[campus_id]
@@ -78,7 +103,7 @@ def mock_to_out(pub: dict, campus_id: Optional[int] = None,
         "created_at": pub.get("fecha_publicacion"),
         "updated_at": pub.get("fecha_renovacion"),
         "vistas": (pub.get("vistas", 0) or 0) if mostrar_vistas else None,
-        "imagenes": [],
+        "imagenes": _mock_imagenes(pub),
         # Oleada 2: coords para MapaZona modo aviso + deep-link (eran internas, ahora visibles).
         "latitud": pub.get("latitud"),
         "longitud": pub.get("longitud"),
@@ -124,9 +149,29 @@ def trust_for_row(p, reportes_activos: int, tel_ver: bool) -> dict:
     )
 
 
+def _ordenadas(imagenes) -> list:
+    """Fotos ORM en orden de portada (orden=1 primero).
+
+    BUG#1: el eager-load ya viene ordenado por la relationship, pero se
+    re-ordena aquí defensivamente: si algún query futuro olvida el order_by,
+    la portada sigue siendo fotos[0]. Soporta objetos ORM y dicts mock.
+    """
+    try:
+        return sorted(list(imagenes or []), key=lambda i: (
+            getattr(i, "orden", None) if not isinstance(i, dict)
+            else i.get("orden", 0)
+        ) or 0)
+    except Exception:
+        return list(imagenes or [])
+
+
 def build_card(p, dist, trust: dict, zona_nombre, tel: Optional[str],
                mostrar_vistas: bool = True) -> dict:
-    """Item GET /api/publicaciones (canónicos + alias compat)."""
+    """Item GET /api/publicaciones (canónicos + alias compat).
+
+    fotos[0] es siempre la portada (orden=1): ver _ordenadas/BUG#1.
+    """
+    imgs = _ordenadas(p.imagenes)
     return {
         "id": p.id, "titulo": p.titulo, "descripcion": p.descripcion,
         "tipo_inmueble": p.tipo_inmueble, "canon_mensual": float(p.canon_mensual), "canon": float(p.canon_mensual),
@@ -137,7 +182,7 @@ def build_card(p, dist, trust: dict, zona_nombre, tel: Optional[str],
         "reglas_convivencia": p.reglas_convivencia, "estado": p.estado,
         "fecha_renovacion": p.fecha_renovacion, "fecha_expiracion": p.fecha_expiracion,
         "servicios": [s.nombre for s in p.servicios], "servicios_ids": [s.id for s in p.servicios],
-        "fotos": [im.url for im in p.imagenes], "num_fotos": len(p.imagenes),
+        "fotos": [im.url for im in imgs], "num_fotos": len(imgs),
         "distancia_geodesica_m": dist, "dist_m": dist,
         "indice_confianza": trust["indice"], "indice": trust["indice"], "desglose": trust["desglose"],
         "nivel_confianza": trust["nivel"], "nivel": trust["nivel"],
@@ -153,12 +198,16 @@ def build_card(p, dist, trust: dict, zona_nombre, tel: Optional[str],
 
 def build_detail(p, reportes_activos: int, u, dist, campus_ref: Optional[dict] = None,
                  mostrar_vistas: bool = True) -> dict:
-    """Detalle GET /api/publicaciones/{id} (canónicos + alias compat)."""
+    """Detalle GET /api/publicaciones/{id} (canónicos + alias compat).
+
+    BUG#1: fotos e imagenes comparten el mismo orden (portada primero).
+    """
     tel_ver = bool(u.telefono_verificado) if u else False
     trust = trust_for_row(p, reportes_activos, tel_ver)
     tel = u.telefono_whatsapp if tel_ver and u else None
     zona_nombre = _zona_display(p) or "No informado"
-    fotos = [im.url for im in p.imagenes]
+    imgs = _ordenadas(p.imagenes)
+    fotos = [im.url for im in imgs]
     return {
         "id": p.id, "titulo": p.titulo, "descripcion": p.descripcion,
         "tipo_inmueble": p.tipo_inmueble, "canon_mensual": float(p.canon_mensual), "canon": float(p.canon_mensual),
@@ -188,7 +237,7 @@ def build_detail(p, reportes_activos: int, u, dist, campus_ref: Optional[dict] =
         "vistas": (getattr(p, "vistas", 0) or 0) if mostrar_vistas else None,
         "imagenes": [
             {"id": im.id, "url": im.url, "orden": im.orden}
-            for im in sorted(p.imagenes, key=lambda i: i.orden)
+            for im in imgs
         ],
     }
 

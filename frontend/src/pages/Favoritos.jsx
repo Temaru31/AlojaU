@@ -10,6 +10,7 @@ import { useFavoritos } from '../contexts/FavoritosContext'
 import { useAuth } from '../contexts/AuthContext'
 import SmartImage from '../components/SmartImage'
 import { formatDistancia } from '../utils/formatters'
+import { portadaUrl } from '../utils/portada'
 
 const TIPO_LABEL = {
   HABITACION_INDEPENDIENTE: 'Habitación independiente',
@@ -58,6 +59,7 @@ export default function Favoritos() {
           distancia_geodesica_m: pub.distancia_geodesica_m ?? pub.dist_m,
           indice_confianza: pub.indice_confianza ?? pub.indice,
           fotos: pub.fotos || [],
+          imagenes: pub.imagenes || [],
           whatsapp_url: pub.whatsapp_url,
           telefono_whatsapp: pub.telefono_whatsapp,
           estado: pub.estado,
@@ -170,7 +172,8 @@ export default function Favoritos() {
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {items.map((pub) => {
-              const cover = pub.fotos && pub.fotos.length > 0 ? pub.fotos[0] : null
+              // BUG#1: portada = orden=1 (helper central; sobrevive a refetch).
+              const cover = portadaUrl(pub)
               const tipo = TIPO_LABEL[pub.tipo_inmueble] || pub.tipo_inmueble || 'Vivienda'
               const zona = pub.zona_nombre || 'Zona no informada'
 

@@ -11,6 +11,7 @@ import SmartImage from '../components/SmartImage'
 import Paginacion from '../components/Paginacion'
 import EditarPublicacionModal from '../components/EditarPublicacionModal'
 import RenovarModal from '../components/RenovarModal'
+import { portadaUrl } from '../utils/portada'
 
 /**
  * Reglas de cálculo de días de vigencia:
@@ -324,7 +325,8 @@ export default function MisPublicaciones() {
             {items.map((p) => {
               const vigencia = calcularVigencia(p.fecha_expiracion)
               const fechaExpTexto = formatFechaExpiracion(p.fecha_expiracion)
-              const cover = Array.isArray(p.fotos) && p.fotos.length > 0 ? p.fotos[0] : null
+              // BUG#1: portada = orden=1 vía helper central.
+              const cover = portadaUrl(p)
               const zonaTexto = p.zona_nombre || p.zona || 'Zona no informada'
               const tipoTexto = TIPO_LABEL[p.tipo_inmueble] || p.tipo_inmueble || 'Vivienda'
               const canonValor = p.canon_mensual ?? p.canon

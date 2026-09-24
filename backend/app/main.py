@@ -14,6 +14,12 @@ import uuid
 from app.core.config import settings
 from app.routers import publicaciones, campus, auth, uploads, reportes, admin, ciudades, admin_automation, zonas
 
+# Detalle #7 DX local: el OTP se loguea con logger.info pero uvicorn deja el
+# root en WARNING y el código era invisible. En dev/test se sube a INFO para
+# verlo; en prod se respeta el nivel del entorno (sin secretos en logs).
+if getattr(settings, "ENV", "dev") != "prod":
+    logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger("alojau")
 
 # OLA5-M7: CSP base restrictiva (la API sirve JSON + estáticos; sin JS propio).
@@ -44,11 +50,13 @@ app = FastAPI(
 )
 
 # CORS restringido (DoD-5): nunca "*" con credentials
+# Detalle #10: sin PUT (ningún endpoint lo usa; todo es PATCH/POST) — reduce
+# superficie preflight sin romper contratos.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 

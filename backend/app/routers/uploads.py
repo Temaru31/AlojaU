@@ -162,6 +162,33 @@ def _es_dueno_o_admin(user: dict | None, owner_id: int | None) -> bool:
         return False
 
 
+def _mock_enabled() -> bool:
+    from app.core.config import settings as _s
+    return bool(getattr(_s, "mock_enabled", False))
+
+
+def _mock_ids_para(pub: dict) -> list[int]:
+    """Ids virtuales estables para fotos mock (pub_id*1000 + índice)."""
+    try:
+        base = int(pub.get("id", 0)) * 1000
+    except Exception:
+        base = 0
+    return [base + i for i, _ in enumerate(pub.get("fotos", []) or [], start=1)]
+
+
+def _mock_buscar_por_foto(foto_id: int):
+    """(pub, idx) mock que contiene el foto_id virtual, o (None, -1)."""
+    try:
+        from app.routers.publicaciones import MOCK_PUBS as _MP
+    except Exception:
+        return None, -1
+    for pub in _MP:
+        ids = _mock_ids_para(pub)
+        if foto_id in ids:
+            return pub, ids.index(foto_id)
+    return None, -1
+
+
 @router.delete("/{foto_id}", summary="Dueño: eliminar una foto del aviso")
 async def eliminar_foto(
     foto_id: int = Path(..., ge=1),
@@ -211,12 +238,29 @@ async def eliminar_foto(
         except Exception:
             pass
         raise
-    except Exception as e:
+    except Exception:
         try:
             await db.rollback()
         except Exception:
             pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    # Mock dev sin PG: el gestor multimedia opera sobre MOCK_PUBS.fotos.
+    # Id virtual = pub_id*1000 + posición (ver _mock_ids_para). Sin PG no hay
+    # borrado físico: solo se reordena la lista (la portada sigue en [0]).
+    if not _mock_enabled():
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    try:
+        from app.routers.publicaciones import MOCK_PUBS as _MP
+    except Exception:
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    pub, idx = _mock_buscar_por_foto(foto_id)
+    if not pub:
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    if not _es_dueno_o_admin(user, pub.get("usuario_id")):
+        raise HTTPException(status_code=403, detail="Solo el dueño puede eliminar fotos")
+    pub["fotos"].pop(idx)
+    return {"id": foto_id, "eliminada": True, "fotos_restantes": len(pub["fotos"]), "mock": True}
 
 
 class OrdenIn(BaseModel):
@@ -284,7 +328,30 @@ async def reordenar_fotos(
             await db.rollback()
         except Exception:
             pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    # Mock dev sin PG: reordena MOCK_PUBS.fotos según orden_ids virtuales.
+    if not _mock_enabled():
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    try:
+        from app.routers.publicaciones import MOCK_PUBS as _MP
+    except Exception:
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    pub = next((x for x in _MP if x.get("id") == data.publicacion_id), None)
+    if not pub:
+        raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    if not _es_dueno_o_admin(user, pub.get("usuario_id")):
+        raise HTTPException(status_code=403, detail="Solo el dueño puede reordenar fotos")
+    esperados = _mock_ids_para(pub)
+    if set(data.orden_ids) != set(esperados):
+        raise HTTPException(
+            status_code=422,
+            detail="orden_ids debe contener exactamente las fotos del aviso",
+        )
+    por_url = {fid: url for fid, url in zip(esperados, list(pub["fotos"]))}
+    pub["fotos"] = [por_url[fid] for fid in data.orden_ids]
+    return {"publicacion_id": data.publicacion_id, "orden": data.orden_ids,
+            "portada_id": data.orden_ids[0], "mock": True}
 
 
 @router.post("/vincular", summary="Dueño: vincular URLs subidas como fotos del aviso")
@@ -342,4 +409,23 @@ async def vincular_fotos(
             await db.rollback()
         except Exception:
             pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    # Mock dev sin PG: anexa URLs a MOCK_PUBS.fotos (orden consecutivo).
+    if not _mock_enabled():
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    try:
+        from app.routers.publicaciones import MOCK_PUBS as _MP
+    except Exception:
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    pub = next((x for x in _MP if x.get("id") == data.publicacion_id), None)
+    if not pub:
+        raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    if not _es_dueno_o_admin(user, pub.get("usuario_id")):
+        raise HTTPException(status_code=403, detail="Solo el dueño puede agregar fotos")
+    if len(pub.get("fotos", [])) + len(urls) > 10:
+        raise HTTPException(status_code=422, detail="Máximo 10 fotos por aviso")
+    pub["fotos"].extend(urls)
+    nuevos = _mock_ids_para(pub)[-len(urls):]
+    return {"publicacion_id": data.publicacion_id, "ids": nuevos,
+            "total": len(pub["fotos"]), "mock": True}

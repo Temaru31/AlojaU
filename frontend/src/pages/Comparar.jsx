@@ -6,6 +6,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
 import SmartImage from '../components/SmartImage'
 import BadgeConfianza from '../components/BadgeConfianza'
+import { portadaUrl } from '../utils/portada'
 
 function NoInformado() {
   return <span className="text-neutral-400 italic text-xs">No informado</span>
@@ -133,8 +134,9 @@ export default function Comparar() {
                         <th key={p.id} className="text-left px-4 py-3 min-w-[180px] max-w-[260px]">
                           <div className="flex flex-col gap-1.5">
                             {/* Tarea 1 (v8): miniatura principal + título en la cabecera */}
-                            {Array.isArray(p.fotos) && p.fotos[0] ? (
-                              <SmartImage src={p.fotos[0]} alt={`Foto principal de ${p.titulo || `aviso ${p.id}`}`} className="w-full h-20 object-cover rounded-lg" />
+                            {/* BUG#1: portada = orden=1 vía helper (no fotos[0] crudo). */}
+                            {portadaUrl(p) ? (
+                              <SmartImage src={portadaUrl(p)} alt={`Foto principal de ${p.titulo || `aviso ${p.id}`}`} className="w-full h-20 object-cover rounded-lg" />
                             ) : (
                               <div className="w-full h-20 rounded-lg bg-neutral-100 flex items-center justify-center" role="img" aria-label="Sin foto">
                                 <span aria-hidden="true" className="text-neutral-300 text-xl">⌂</span>
