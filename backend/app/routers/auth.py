@@ -991,9 +991,17 @@ async def _avatar_guardar(
         raise HTTPException(status_code=400, detail="Archivo vacío")
     content = b"".join(chunks)
     try:
-        from ..services.storage import get_storage_backend
+        from ..services.storage import get_storage_backend, es_persistente
         base = str(request.base_url).rstrip("/") if request is not None else ""
         backend = get_storage_backend(base_url=base or "http://localhost")
+        # AUDITORÍA PRE-PUSH (M3): disco local en prod = EFÍMERO (Render lo
+        # borra). No se rompe (save graceful 503), pero se advierte: para
+        # avatares durables configura CLOUDINARY_*.
+        try:
+            if getattr(backend, "name", "") == "local" and getattr(settings, "ENV", "dev") == "prod":
+                logger.warning("[avatar] prod con disco EFÍMERO (sin CLOUDINARY_*): el avatar se perderá al redeploy")
+        except Exception:
+            pass
         filename = f"avatar-{_uuid.uuid4().hex}{ext}"
         url = backend.save(content, filename, mime)
     except HTTPException:

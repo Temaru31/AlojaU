@@ -111,8 +111,18 @@ def health():
     return {"status": "ok", "service": "AlojaU API", "version": "0.1.0", "sprint": "Sprint1 HU-001,002,003,005,007,008"}
 
 # Static uploads (HU-005) - sirve /uploads/{uuid}.jpg
+# AUDITORÍA PRE-PUSH: makedirs tolerante (contenedor read-only no debe tumbar
+# el arranque; StaticFiles exige dir existente -> se crea bajo try).
 _upload_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
-os.makedirs(_upload_dir, exist_ok=True)
+try:
+    os.makedirs(_upload_dir, exist_ok=True)
+except Exception:
+    logger.warning("[storage] /uploads no escribible al arrancar (FS efímero/solo-lectura)")
+    try:
+        os.makedirs("/tmp/alojau_uploads", exist_ok=True)
+        _upload_dir = "/tmp/alojau_uploads"
+    except Exception:
+        pass
 app.mount("/uploads", StaticFiles(directory=_upload_dir), name="uploads")
 
 # Favicon AlojaU para /docs (F1: reemplaza rayo FastAPI por marca propia)

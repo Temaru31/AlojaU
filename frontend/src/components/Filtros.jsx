@@ -41,11 +41,9 @@ export function contarAvanzados(filtros = {}) {
 
 function SelectorTipo({ filtros, setFiltros, id = 'filtro-tipo' }) {
   // M2: catálogo dinámico (/config-publica) con fallback local.
-  let tipos = TIPOS_FALLBACK
-  try {
-    const hook = useTiposVivienda()
-    if (Array.isArray(hook?.tipos) && hook.tipos.length > 0) tipos = hook.tipos
-  } catch { /* fallback */ }
+  // Hook incondicional (rules-of-hooks): el hook nunca lanza (fallback interno).
+  const { tipos: tiposHook } = useTiposVivienda()
+  const tipos = Array.isArray(tiposHook) && tiposHook.length > 0 ? tiposHook : TIPOS_FALLBACK
   return (
     <div className="w-full sm:w-48">
       <label htmlFor={id} className="block text-xs font-medium text-neutral-500 mb-1.5">
