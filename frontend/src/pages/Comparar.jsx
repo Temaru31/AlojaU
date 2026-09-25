@@ -7,6 +7,7 @@ import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
 import SmartImage from '../components/SmartImage'
 import BadgeConfianza from '../components/BadgeConfianza'
 import { portadaUrl } from '../utils/portada'
+import useTiposVivienda from '../hooks/useTiposVivienda'
 
 function NoInformado() {
   return <span className="text-neutral-400 italic text-xs">No informado</span>
@@ -28,6 +29,8 @@ export default function Comparar() {
   const { comparar, clear, toggle, error } = useComparar()
   // v14.1: con sesión, el dueño ve sus PENDIENTE en vez de "no disponible".
   const { token: authToken } = useAuth()
+  // M2: catálogo dinámico con fallback (misma etiqueta que el resto).
+  const { nombreDe } = useTiposVivienda()
   const [pubs, setPubs] = useState([])
   const [loading, setLoading] = useState(false)
 
@@ -56,7 +59,7 @@ export default function Comparar() {
         return `$${Number(dep).toLocaleString('es-CO')}`
       }
     },
-    { label: 'Tipo', key: 'tipo', render: (p) => humanizarTipoComparar(p.tipo_inmueble) || <NoInformado /> },
+    { label: 'Tipo', key: 'tipo', render: (p) => (nombreDe(p.tipo_inmueble, humanizarTipoComparar(p.tipo_inmueble)) || <NoInformado />) },
     { label: 'Zona', key: 'zona', render: (p) => p.zona_nombre || p.zona || <NoInformado /> },
     {
       label: 'Distancia al campus', key: 'dist', render: (p) => {

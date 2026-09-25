@@ -111,6 +111,21 @@ class Usuario(Base):
     foto_perfil_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     preferencias: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict,
                                                server_default="{}")
+    # M5 Telegram $0: chat_id para DM de OTP (NULL = sin vincular).
+    # Nunca se postea a canales/grupos; solo DM si existe.
+    telegram_chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+# ---------------------------------------------------------------------------
+# Tipos de vivienda dinámicos (mig 013, M2). Catálogo en BD, no CHECK.
+# ---------------------------------------------------------------------------
+class HousingType(Base):
+    __tablename__ = "housing_types"
+    slug: Mapped[str] = mapped_column(String(40), primary_key=True)
+    nombre_visible: Mapped[str] = mapped_column(String(80), nullable=False)
+    descripcion_tooltip: Mapped[str | None] = mapped_column(Text, nullable=True)
+    icono: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    esta_activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
 
 # ---------------------------------------------------------------------------
 # Publicaciones (FIX: + latitud, longitud, indice_confianza + relationships)
@@ -118,7 +133,8 @@ class Usuario(Base):
 class Publicacion(Base):
     __tablename__ = "publicaciones"
     __table_args__ = (
-        CheckConstraint("tipo_inmueble IN ('HABITACION_FAMILIAR','HABITACION_INDEPENDIENTE','APARTAESTUDIO','COMPARTIDO')", name="chk_tipo"),
+        # M2: chk_tipo reemplazada por FK RESTRICT a housing_types (mig 013).
+        # Se evita borrar slugs en uso (ON DELETE RESTRICT).
         # Fase 5 (aditivo): + PAUSADO_POR_REPORTE + REVISION_REQUERIDA. Los 7 previos siguen válidos.
         CheckConstraint("estado IN ('PENDIENTE','ACTIVO','PAUSADO','ARRENDADO','EXPIRADO','RECHAZADO','DESACTIVADO','PAUSADO_POR_REPORTE','REVISION_REQUERIDA')", name="chk_estado"),
         CheckConstraint("canon_mensual > 0", name="chk_canon"),
@@ -141,7 +157,10 @@ class Publicacion(Base):
     barrio_texto: Mapped[str | None] = mapped_column(String(120), nullable=True)
     titulo: Mapped[str] = mapped_column(String(150), nullable=False)
     descripcion: Mapped[str] = mapped_column(Text, nullable=False)
-    tipo_inmueble: Mapped[str] = mapped_column(String(30), nullable=False)
+    # M2 FK RESTRICT a housing_types.slug (mig 013). El CHECK estático se eliminó.
+    tipo_inmueble: Mapped[str] = mapped_column(
+        String(40), ForeignKey("housing_types.slug", ondelete="RESTRICT", onupdate="CASCADE"),
+        nullable=False)
     canon_mensual: Mapped[float] = mapped_column(Numeric(10,2), nullable=False)
     deposito_requerido: Mapped[float] = mapped_column(Numeric(10,2), default=0, nullable=False)
     incluye_servicios_base: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

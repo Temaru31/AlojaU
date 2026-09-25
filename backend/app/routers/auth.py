@@ -14,7 +14,7 @@ import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends, Request, Header
+from fastapi import APIRouter, File, HTTPException, Depends, Request, Header, UploadFile
 from pydantic import BaseModel, EmailStr, Field, model_validator
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
@@ -226,6 +226,8 @@ class PerfilOut(BaseModel):
     bio: Optional[str] = None
     foto_perfil_url: Optional[str] = None
     preferencias: dict = Field(default_factory=dict)
+    # M5 aditivo: true si hay telegram_chat_id vinculado (para DM OTP $0).
+    telegram_vinculado: bool = False
 
 
 class PerfilUpdateIn(BaseModel):
@@ -295,7 +297,7 @@ def _sanitizar_cambios_perfil(data: "PerfilUpdateIn") -> dict:
 
 
 def _perfil_out_db(u) -> "PerfilOut":
-    """PerfilOut desde fila Usuario (incluye campos flexibles v13.2)."""
+    """PerfilOut desde fila Usuario (incluye campos flexibles v13.2 + M5 telegram)."""
     return PerfilOut(
         id=u.id,
         email=u.email,
@@ -308,11 +310,12 @@ def _perfil_out_db(u) -> "PerfilOut":
         bio=getattr(u, "bio", None),
         foto_perfil_url=getattr(u, "foto_perfil_url", None),
         preferencias=getattr(u, "preferencias", None) or {},
+        telegram_vinculado=bool(getattr(u, "telegram_chat_id", None)),
     )
 
 
 def _perfil_out_mock(m: dict, email, user_id, user: dict | None = None) -> "PerfilOut":
-    """PerfilOut desde MOCK_USERS (incluye campos flexibles v13.2)."""
+    """PerfilOut desde MOCK_USERS (incluye campos flexibles v13.2 + M5 telegram)."""
     user = user or {}
     return PerfilOut(
         id=m.get("id", user_id or 1),
@@ -326,6 +329,7 @@ def _perfil_out_mock(m: dict, email, user_id, user: dict | None = None) -> "Perf
         bio=m.get("bio"),
         foto_perfil_url=m.get("foto_perfil_url"),
         preferencias=m.get("preferencias") or {},
+        telegram_vinculado=bool(m.get("telegram_chat_id")),
     )
 
 
@@ -914,6 +918,154 @@ async def solicitar_verificacion(
     return {"mensaje": "Solicitud registrada. Un administrador verificará tu línea.", "estado": "PENDIENTE"}
 
 
+# ---------------------------------------------------------------------------
+# M3: avatar dedicado (solo sesión autenticada, cualquier rol incl. ESTUDIANTE).
+# PROHIBIDO reutilizar /upload/una (ese exige ARRENDADOR y daría 403 a
+# estudiantes). Valida MIME imagen + 5MB, guarda vía storage y actualiza
+# foto_perfil_url en la MISMA transacción.
+# ---------------------------------------------------------------------------
+_AVATAR_MIME = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+_AVATAR_MAX = 5 * 1024 * 1024
+
+
+@router.post("/avatar", summary="M3: subir avatar (cualquier rol autenticado, 5MB, imagen)")
+async def subir_avatar(
+    request: Request,
+    file: UploadFile = File(..., description="Imagen de perfil, max 5MB, JPEG/PNG/WebP/GIF"),
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """M3 endpoint dedicado (no reutiliza /upload/una que exige ARRENDADOR).
+
+    Requiere solo sesión activa (ESTUDIANTE incluido). Valida MIME + 5MB y
+    actualiza `foto_perfil_url` en la misma transacción.
+    """
+    return await _avatar_guardar(request, file, user, db)
+
+
+async def _avatar_guardar(
+    request,
+    file,
+    user: dict,
+    db: AsyncSession,
+) -> dict:
+    import os as _os
+    import uuid as _uuid
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    mime = (getattr(file, "content_type", "") or "").lower()
+    if mime not in _AVATAR_MIME:
+        raise HTTPException(status_code=400, detail="Solo imágenes JPEG/PNG/WebP/GIF (SVG bloqueado)")
+    ext = _os.path.splitext(getattr(file, "filename", "") or "")[1].lower()
+    if ext != _AVATAR_MIME[mime]:
+        raise HTTPException(status_code=400, detail=f"Extensión {ext or '(sin extensión)'} no coincide con {mime}")
+    size = 0
+    chunks: list[bytes] = []
+    first = True
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        if first:
+            # Magic check mínimo (misma política que uploads.py, sin Pillow).
+            if mime == "image/jpeg" and not chunk.startswith(b"\xff\xd8\xff"):
+                raise HTTPException(status_code=400, detail="Contenido no es JPEG válido")
+            if mime == "image/png" and not chunk.startswith(b"\x89PNG\r\n\x1a\n"):
+                raise HTTPException(status_code=400, detail="Contenido no es PNG válido")
+            if mime == "image/gif" and not (chunk.startswith(b"GIF87a") or chunk.startswith(b"GIF89a")):
+                raise HTTPException(status_code=400, detail="Contenido no es GIF válido")
+            if mime == "image/webp" and not (chunk[:4] == b"RIFF" and chunk[8:12] == b"WEBP"):
+                raise HTTPException(status_code=400, detail="Contenido no es WebP válido")
+            first = False
+        size += len(chunk)
+        if size > _AVATAR_MAX:
+            raise HTTPException(status_code=413, detail="La imagen excede 5MB")
+        chunks.append(chunk)
+    if size == 0:
+        raise HTTPException(status_code=400, detail="Archivo vacío")
+    content = b"".join(chunks)
+    try:
+        from ..services.storage import get_storage_backend
+        base = str(request.base_url).rstrip("/") if request is not None else ""
+        backend = get_storage_backend(base_url=base or "http://localhost")
+        filename = f"avatar-{_uuid.uuid4().hex}{ext}"
+        url = backend.save(content, filename, mime)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[avatar storage] falló: {e!r}", exc_info=True)
+        raise HTTPException(status_code=503, detail="No se pudo guardar la imagen")
+    # Misma transacción: actualiza foto_perfil_url en BD.
+    try:
+        from ..models import Usuario
+        u = await db.get(Usuario, uid)
+        if not u:
+            if not _mock_enabled():
+                raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        else:
+            u.foto_perfil_url = url[:500]
+            await db.commit()
+            await db.refresh(u)
+            return {"foto_perfil_url": u.foto_perfil_url, "mensaje": "Foto de perfil actualizada."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[avatar db] falló: {e!r}", exc_info=True)
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    # Mock dev: actualiza MOCK_USERS.
+    for _em, _m in MOCK_USERS.items():
+        if _m.get("id") == uid:
+            _m["foto_perfil_url"] = url[:500]
+            break
+    return {"foto_perfil_url": url[:500], "mensaje": "Foto de perfil actualizada (mock).", "mock": True}
+
+
+@router.delete("/avatar", summary="M3: quitar foto (muestra iniciales)")
+async def quitar_avatar(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Setea foto_perfil_url=null (el frontend muestra iniciales)."""
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    try:
+        from ..models import Usuario
+        u = await db.get(Usuario, uid)
+        if u:
+            u.foto_perfil_url = None
+            await db.commit()
+            return {"foto_perfil_url": None, "mensaje": "Foto eliminada."}
+        if not _mock_enabled():
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[avatar quitar] falló: {e!r}", exc_info=True)
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    for _em, _m in MOCK_USERS.items():
+        if _m.get("id") == uid:
+            _m["foto_perfil_url"] = None
+            break
+    return {"foto_perfil_url": None, "mensaje": "Foto eliminada (mock).", "mock": True}
+
+
 @router.patch("/perfil", response_model=PerfilOut, summary="Actualizar nombre y teléfono (verificación solo-lectura)")
 async def update_perfil(
     data: PerfilUpdateIn,
@@ -1024,11 +1176,41 @@ async def update_perfil(
 _MOCK_OTPS: dict[str, dict] = {}
 
 
+async def _telegram_chat_para_email(db: AsyncSession, email: str) -> str | None:
+    """Retorna el telegram_chat_id vinculado del usuario (o None si no hay).
+
+    Busca en BD y en MOCK_USERS (dev). Nunca retorna el TELEGRAM_CHAT_ID
+    global (ese es un canal/grupo de desarrollo, prohibido para OTP).
+    """
+    email_n = _norm_email(email)
+    try:
+        from ..models import Usuario
+        try:
+            res = await db.execute(select(Usuario).where(Usuario.email == email_n))
+            u = res.scalars().first()
+            if u is not None:
+                chat = getattr(u, "telegram_chat_id", None)
+                if chat:
+                    return str(chat)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    try:
+        m = MOCK_USERS.get(email_n)
+        if m and m.get("telegram_chat_id"):
+            return str(m["telegram_chat_id"])
+    except Exception:
+        pass
+    return None
+
+
 async def _crear_otp(db: AsyncSession, email: str, proposito: str) -> tuple[str, str]:
     """Genera y persiste OTP. Retorna (código plano, canal).
 
-    El código es solo para tests/dev; en prod viaja por Email/Telegram,
-    nunca en la respuesta. El canal sí se expone (M3 transparencia UX).
+    M5 bugfix privacidad: el código SOLO viaja por DM si el usuario posee
+    `telegram_chat_id` vinculado; si no, fallback por correo (canal "email"
+    con semántica correcta). NUNCA se postea a canales/grupos globales.
     """
     email = _norm_email(email)
     codigo = f"{secrets.randbelow(1_000_000):06d}"
@@ -1049,38 +1231,39 @@ async def _crear_otp(db: AsyncSession, email: str, proposito: str) -> tuple[str,
             "hash": hashlib.sha256(codigo.encode()).hexdigest(),
             "expira": time.monotonic() + 600,
         }
-    canal = _enviar_codigo(email, codigo, proposito)
+    chat_id = await _telegram_chat_para_email(db, email)
+    canal = _enviar_codigo(email, codigo, proposito, chat_id=chat_id)
     return codigo, canal
 
 
-def _enviar_codigo(email: str, codigo: str, proposito: str) -> str:
+def _enviar_codigo(email: str, codigo: str, proposito: str, chat_id: str | None = None) -> str:
     """Envía el OTP y retorna el canal usado ("telegram" o "email").
 
-    Telegram si hay bot configurado y el envío funciona; si no, email
-    (log en dev). El frontend muestra el canal explícito (M3 UX).
+    M5 bugfix explícito: Telegram SOLO por DM si hay `chat_id` vinculado
+    del usuario. Sin vinculación -> fallback correo (canal "email").
+    PROHIBIDO usar TELEGRAM_CHAT_ID global (canal/grupo dev) para OTP.
     """
-    if settings.TELEGRAM_BOT_TOKEN.strip():
+    if chat_id and settings.TELEGRAM_BOT_TOKEN.strip():
         try:
             import urllib.request
             import urllib.parse
-            import json
-            chat = settings.TELEGRAM_CHAT_ID.strip()
-            if chat:
-                texto = f"AlojaU ({proposito}): tu código es {codigo}. Expira en 10 minutos."
-                data = urllib.parse.urlencode(
-                    {"chat_id": chat, "text": texto}).encode()
-                req = urllib.request.Request(
-                    f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage",
-                    data=data, headers={"Content-Type": "application/x-www-form-urlencoded"},
-                )
-                with urllib.request.urlopen(req, timeout=8) as _:
-                    pass
-                return "telegram"
+            texto = f"AlojaU ({proposito}): tu código es {codigo}. Expira en 10 minutos."
+            data = urllib.parse.urlencode(
+                {"chat_id": str(chat_id), "text": texto}).encode()
+            req = urllib.request.Request(
+                f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage",
+                data=data, headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            with urllib.request.urlopen(req, timeout=8) as _:
+                pass
+            return "telegram"
         except Exception as e:
-            logger.warning(f"[otp telegram] falló, usando log: {e!r}")
-    # Sin Telegram o sin chat: Email-code simulado (log). En prod con
-    # Supabase se envía vía Supabase Auth email; aquí queda trazabilidad.
-    logger.info(f"[otp {proposito}] código para {email}: {codigo} (10 min)")
+            logger.warning(f"[otp telegram DM] falló, usando email: {e!r}")
+    # Sin DM vinculado o sin bot: Email-code (log en dev, Supabase en prod).
+    # Semántica correcta: canal "email" = llegó (o se logueó) por correo.
+    if chat_id and not settings.TELEGRAM_BOT_TOKEN.strip():
+        logger.info(f"[otp {proposito}] usuario con telegram sin bot configurado, fallback email para {email}")
+    logger.info(f"[otp {proposito}] código para {email}: {codigo} (10 min, canal email)")
     return "email"
 
 
@@ -1101,6 +1284,85 @@ def _check_otp_mem(store: dict[str, list[float]], clave: str, limite: int,
         raise HTTPException(status_code=429, detail=mensaje)
     hist.append(ahora)
     store[clave] = hist
+
+
+# ---------------------------------------------------------------------------
+# M5 vinculación Telegram $0 (HMAC un solo uso, 5min).
+# ---------------------------------------------------------------------------
+_TELEGRAM_VINCULOS: dict[str, dict] = {}  # nonce -> {user_id, exp, usado}
+_TELEGRAM_USADOS: set[str] = set()
+
+
+def _firmar_vinculo(user_id: int, exp: int, nonce: str) -> str:
+    import hashlib as _hl
+    import hmac as _hm
+    payload = f"{user_id}.{exp}.{nonce}"
+    sig = _hm.new(settings.SECRET_KEY.encode(), payload.encode(), _hl.sha256).hexdigest()[:32]
+    return f"{payload}.{sig}"
+
+
+def validar_token_vinculo(token: str) -> int | None:
+    """Valida y consume (un solo uso) un token de vinculación.
+
+    Retorna user_id si es válido y no expirado/usado; lo marca usado.
+    Pensado para el webhook del bot (fuera de este sprint) y tests.
+    """
+    import hashlib as _hl
+    import hmac as _hm
+    try:
+        partes = (token or "").split(".")
+        if len(partes) != 4:
+            return None
+        uid_s, exp_s, nonce, sig = partes
+        uid = int(uid_s)
+        exp = int(exp_s)
+        if time.time() > exp:
+            return None
+        if nonce in _TELEGRAM_USADOS:
+            return None
+        esperado = _hm.new(
+            settings.SECRET_KEY.encode(), f"{uid}.{exp}.{nonce}".encode(), _hl.sha256
+        ).hexdigest()[:32]
+        if not secrets.compare_digest(esperado, sig):
+            return None
+        rec = _TELEGRAM_VINCULOS.get(nonce)
+        if not rec or rec.get("user_id") != uid or rec.get("exp") != exp:
+            return None
+        if rec.get("usado"):
+            return None
+        rec["usado"] = True
+        _TELEGRAM_USADOS.add(nonce)
+        return uid
+    except Exception:
+        return None
+
+
+@router.post("/telegram/vincular-inicio", summary="M5: iniciar vinculación Telegram (bot_url HMAC 5min)")
+async def telegram_vincular_inicio(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Requiere sesión autenticada. Retorna bot_url t.me con token HMAC
+    de un solo uso (5min). El frontend abre ese bot_url directamente.
+    """
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    username = (settings.TELEGRAM_BOT_USERNAME or "").strip().lstrip("@")
+    if not username:
+        raise HTTPException(status_code=503, detail="Telegram no configurado (TELEGRAM_BOT_USERNAME). Vincula por correo.")
+    exp = int(time.time()) + 300
+    nonce = secrets.token_hex(8)
+    token = _firmar_vinculo(uid, exp, nonce)
+    _TELEGRAM_VINCULOS[nonce] = {"user_id": uid, "exp": exp, "usado": False}
+    # Limpieza best-effort de expirados (memoria acotada).
+    try:
+        ahora = time.time()
+        for k in [k for k, v in _TELEGRAM_VINCULOS.items() if v.get("exp", 0) < ahora - 60]:
+            _TELEGRAM_VINCULOS.pop(k, None)
+    except Exception:
+        pass
+    return {"bot_url": f"https://t.me/{username}?start={token}", "expira_segundos": 300}
 
 
 @router.post("/otp/solicitar", status_code=202, summary="Solicitar código OTP 6 dígitos (10 min)")

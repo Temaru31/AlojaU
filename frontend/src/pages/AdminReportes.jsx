@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
+import BreadcrumbsAdmin from '../components/BreadcrumbsAdmin'
 
 const MOTIVO_LABEL = {
   POSIBLE_ESTAFA: 'Posible estafa',
@@ -65,11 +66,7 @@ export default function AdminReportes() {
 
   return (
     <div className="container-main py-6 md:py-8">
-      <nav className="flex items-center gap-2 text-xs text-neutral-400 mb-4">
-        <Link to="/" className="hover:text-navy-600">Buscar</Link>
-        <span>›</span>
-        <span className="text-neutral-600">Reportes pendientes</span>
-      </nav>
+      <BreadcrumbsAdmin actual="Reportes" volverA="/admin/dashboard" volverTexto="Panel" />
       <div className="flex items-center justify-between gap-3 mb-4">
         <h1 className="font-display text-xl md:text-2xl font-bold text-navy-900">
           Reportes pendientes {items.length > 0 && <span className="text-sm font-normal text-neutral-400">({items.length})</span>}

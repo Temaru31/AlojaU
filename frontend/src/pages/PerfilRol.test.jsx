@@ -10,23 +10,39 @@ describe('ROL_LABEL (ciclo de vida visible)', () => {
   })
 })
 
-describe('checklistPerfil (progressive profiling)', () => {
-  it('perfil vacío de Google: solo nombre, 1/6', () => {
+describe('checklistPerfil (M3 pesos 20+20+20+15+15+10=100)', () => {
+  it('perfil vacío de Google: solo email (20%)', () => {
     const check = checklistPerfil({
       nombre_completo: 'Ana', email_verificado: true,
       telefono_whatsapp: null, bio: null, foto_perfil_url: null, preferencias: {},
-    })
+      rol: 'ESTUDIANTE',
+    }, { tieneAviso: false })
     expect(check.items).toHaveLength(6)
     expect(check.items.find(i => i.id === 'telefono').ok).toBe(false)
-    expect(check.pct).toBeLessThan(100)
+    expect(check.pct).toBe(20)
+  })
+
+  it('pesos exactos por ítem', () => {
+    const base = {
+      nombre_completo: 'Ana Ríos', email_verificado: false,
+      telefono_whatsapp: null, bio: '', foto_perfil_url: null, preferencias: {},
+      rol: 'ESTUDIANTE',
+    }
+    expect(checklistPerfil({ ...base, email_verificado: true }, {}).pct).toBe(20)
+    expect(checklistPerfil({ ...base, telefono_whatsapp: '573001234567' }, {}).pct).toBe(20)
+    expect(checklistPerfil({ ...base, foto_perfil_url: 'https://x/y.jpg' }, {}).pct).toBe(20)
+    expect(checklistPerfil({ ...base, bio: 'Hola' }, {}).pct).toBe(15)
+    expect(checklistPerfil({ ...base, preferencias: { 'filtros.mascotas': true } }, {}).pct).toBe(15)
+    expect(checklistPerfil({ ...base }, { tieneAviso: true }).pct).toBe(10)
+    expect(checklistPerfil({ ...base, rol: 'ARRENDADOR' }, {}).pct).toBe(10)
   })
 
   it('perfil completo: 100%', () => {
     const check = checklistPerfil({
       nombre_completo: 'Ana Ríos', email_verificado: true,
       telefono_whatsapp: '573001234567', bio: 'Hola', foto_perfil_url: 'https://x/y.jpg',
-      preferencias: { 'roomie.buscando': true },
-    })
+      preferencias: { 'filtros.mascotas': true }, rol: 'ARRENDADOR',
+    }, { tieneAviso: true })
     expect(check.pct).toBe(100)
   })
 
@@ -36,11 +52,14 @@ describe('checklistPerfil (progressive profiling)', () => {
   })
 })
 
-describe('TAGS_DISPONIBLES (contrato con backend)', () => {
-  it('todas las claves usan namespaces permitidos (filtros/roomie/notis)', () => {
-    const validos = ['filtros.', 'roomie.', 'notis.']
+describe('TAGS_DISPONIBLES (M3 solo filtros.*, Ley 1581)', () => {
+  it('todas las claves usan ÚNICAMENTE filtros.* (sin Estudiante ni demográficos)', () => {
+    expect(TAGS_DISPONIBLES.length).toBeGreaterThan(0)
     for (const t of TAGS_DISPONIBLES) {
-      expect(validos.some(p => t.key.startsWith(p))).toBe(true)
+      expect(t.key.startsWith('filtros.')).toBe(true)
     }
+    const keys = TAGS_DISPONIBLES.map((t) => t.key)
+    expect(keys).not.toContain('estudiante')
+    expect(JSON.stringify(keys).toLowerCase()).not.toMatch(/nacimiento|genero|género/)
   })
 })

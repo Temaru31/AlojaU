@@ -11,6 +11,8 @@ import { emitAuthChange, useAuth } from '../contexts/AuthContext'
 import ContadorCaracteres from '../components/ContadorCaracteres'
 import { LIMITES, estadoRango, RANGO_CLS } from '../constants'
 import { SERVICIOS } from '../utils/servicios'
+import InfoTooltip from '../components/InfoTooltip'
+import useTiposVivienda from '../hooks/useTiposVivienda'
 
 /**
  * Valida el formulario de publicar contra LIMITES (fuente única de verdad).
@@ -50,6 +52,28 @@ export function validarPublicar(form, lim = LIMITES) {
   if (form.latitud !== '' && form.latitud != null && (isNaN(Number(form.latitud)) || Number(form.latitud) < -90 || Number(form.latitud) > 90)) e.latitud = 'Latitud entre -90 y 90'
   if (form.longitud !== '' && form.longitud != null && (isNaN(Number(form.longitud)) || Number(form.longitud) < -180 || Number(form.longitud) > 180)) e.longitud = 'Longitud entre -180 y 180'
   return e
+}
+
+// M2: selector dinámico (/config-publica con fallback local). Mantiene el
+// contrato (value slug) y muestra tooltip por opción vía `title`.
+export function SelectorTipoPublicar({ value, onChange, id = 'tipo-vivienda' }) {
+  const { tipos } = useTiposVivienda()
+  return (
+    <select
+      id={id}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="select-field"
+      required
+      aria-label="Tipo de vivienda"
+    >
+      {tipos.map((t) => (
+        <option key={t.slug} value={t.slug} title={t.descripcion_tooltip || ''}>
+          {t.icono ? `${t.icono} ` : ''}{t.nombre_visible || t.slug}
+        </option>
+      ))}
+    </select>
+  )
 }
 
 export default function Publicar() {
@@ -306,18 +330,13 @@ export default function Publicar() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-navy-800 mb-1.5">Tipo de vivienda *</label>
-            <select
-              value={form.tipo_inmueble}
-              onChange={e => setForm({ ...form, tipo_inmueble: e.target.value })}
-              className="select-field"
-              required
-            >
-              <option value="HABITACION_FAMILIAR">Habitacion familiar</option>
-              <option value="HABITACION_INDEPENDIENTE">Habitacion independiente</option>
-              <option value="APARTAESTUDIO">Apartaestudio</option>
-              <option value="COMPARTIDO">Compartido</option>
-            </select>
+            <label className="block text-sm font-medium text-navy-800 mb-1.5">
+              <span className="inline-flex items-center gap-1.5">
+                Tipo de vivienda *
+                <InfoTooltip texto="Elige el tipo que mejor describe tu aviso. Pasa el cursor por cada opción para ver su descripción." />
+              </span>
+            </label>
+            <SelectorTipoPublicar value={form.tipo_inmueble} onChange={(v) => setForm({ ...form, tipo_inmueble: v })} />
           </div>
 
           <div className="grid grid-cols-2 gap-4">

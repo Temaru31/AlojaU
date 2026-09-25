@@ -1,9 +1,40 @@
 from pydantic import BaseModel, Field, ConfigDict, HttpUrl, model_validator, field_validator
-from typing import Optional, Literal, List
+from typing import Optional, List
 from decimal import Decimal
 from datetime import datetime
 
-TipoInmueble = Literal["HABITACION_FAMILIAR","HABITACION_INDEPENDIENTE","APARTAESTUDIO","COMPARTIDO"]
+# M2 tipos dinámicos: el catálogo vive en housing_types (esta_activo=true).
+# Pydantic valida forma + allowlist sincrónica (FALLBACK 6 slugs); el endpoint
+# valida contra la tabla (async, con caché 5min) para tipos creados por admin.
+# Cero breaking: los 4 históricos siguen válidos.
+try:
+    from app.services.housing_types import FALLBACK_TIPOS as _HT_FB
+    TIPOS_FALLBACK_SLUGS = frozenset(t["slug"] for t in _HT_FB)
+except Exception:
+    TIPOS_FALLBACK_SLUGS = frozenset({
+        "HABITACION_FAMILIAR", "HABITACION_INDEPENDIENTE",
+        "APARTAESTUDIO", "COMPARTIDO",
+        "APARTAMENTO_COMPLETO", "HABITACION_PISO_COMPARTIDO",
+    })
+
+TipoInmueble = str
+
+
+def _validar_tipo_sincrono(v):
+    """Validador Pydantic sync: solo forma SLUG (la pertenencia la valida el
+    endpoint contra housing_types esta_activo=true con caché 5min).
+
+    Así un slug nuevo creado por admin pasa Pydantic y el endpoint lo acepta;
+    un slug inexistente ("INVALIDO") pasa forma pero el endpoint responde 422.
+    """
+    if v is None:
+        return v
+    s = str(v).strip()
+    if not s:
+        raise ValueError("tipo_inmueble requerido")
+    if len(s) > 40 or len(s) < 3 or not s.replace("_", "").isalnum() or s != s.upper():
+        raise ValueError("tipo_inmueble debe ser SLUG_MAYUSCULAS (ej. APARTAESTUDIO)")
+    return s
 
 # Los campos de texto libre son texto plano — sin HTML ejecutable.
 # Se rechaza < y > (no solo "script"): cubre <img onerror>, <svg>, etc.
@@ -43,6 +74,12 @@ class PublicacionCreate(BaseModel):
     def sin_html(cls, v):
         # Texto plano, sin HTML ejecutable -> 422.
         return _rechazar_html(v)
+
+    @field_validator("tipo_inmueble")
+    @classmethod
+    def tipo_forma(cls, v):
+        # M2: forma SLUG (pertenencia contra housing_types la valida el endpoint).
+        return _validar_tipo_sincrono(v)
 
     @model_validator(mode="after")
     def lat_lng_both_or_none(self):
@@ -87,6 +124,12 @@ class PublicacionUpdate(BaseModel):
     def sin_html(cls, v):
         # Mismo criterio que en creación (PATCH edita estos campos).
         return _rechazar_html(v)
+
+    @field_validator("tipo_inmueble")
+    @classmethod
+    def tipo_forma(cls, v):
+        # M2: misma forma SLUG que en creación.
+        return _validar_tipo_sincrono(v)
 
     @field_validator("fotos")
     @classmethod

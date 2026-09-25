@@ -36,6 +36,9 @@ MAX_TOKENS = 10
 MIN_TOKEN_LEN = 2
 
 # Sinónimos -> tipo_inmueble canónico (para que "apartamento" encuentre APARTAESTUDIO).
+# M2 aditivo: se añaden "completo/entero" -> APARTAMENTO_COMPLETO y
+# "piso" -> HABITACION_PISO_COMPARTIDO. Los existentes NO cambian
+# (apartamento sigue a APARTAESTUDIO por retrocompatibilidad).
 TIPO_SINONIMOS = {
     "apartamento": "APARTAESTUDIO",
     "apartamentos": "APARTAESTUDIO",
@@ -58,6 +61,12 @@ TIPO_SINONIMOS = {
     "compartido": "COMPARTIDO",
     "compartida": "COMPARTIDO",
     "compartir": "COMPARTIDO",
+    # M2 nuevos tipos dinámicos (aditivos):
+    "completo": "APARTAMENTO_COMPLETO",
+    "completos": "APARTAMENTO_COMPLETO",
+    "entero": "APARTAMENTO_COMPLETO",
+    "entera": "APARTAMENTO_COMPLETO",
+    "piso": "HABITACION_PISO_COMPARTIDO",
 }
 
 _TOKEN_RE = re.compile(r"[a-z0-9ñü]+", re.IGNORECASE)

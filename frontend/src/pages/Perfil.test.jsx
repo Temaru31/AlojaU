@@ -241,7 +241,8 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
       </BrowserRouter>
     )
     await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
-    expect(screen.getByText(/✓ Correo verificado/)).toBeInTheDocument()
+    // M3 gamificado: el badge + la checklist (con peso 20%) contienen el texto.
+    expect(screen.getAllByText(/✓ Correo verificado/).length).toBeGreaterThanOrEqual(1)
   })
 
   it('M2 revocar-todas exige 2 pasos y luego limpia la sesión', async () => {
@@ -281,13 +282,13 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
       </BrowserRouter>
     )
     await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
-    // Clic en tag: sin PATCH, con aviso de sin guardar.
-    await user.click(screen.getByRole('button', { name: /Busco roomie/ }))
+    // Clic en tag (M3 solo filtros.*): sin PATCH, con aviso de sin guardar.
+    await user.click(screen.getByRole('button', { name: /Tengo mascota/ }))
     expect(patchSpy).not.toHaveBeenCalled()
     expect(screen.getByText(/sin guardar/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Guardar cambios/i }))
     await waitFor(() => expect(patchSpy).toHaveBeenCalledOnce())
-    expect(patchSpy.mock.calls[0][1]).toMatchObject({ preferencias: { 'roomie.buscando': true } })
+    expect(patchSpy.mock.calls[0][1]).toMatchObject({ preferencias: { 'filtros.mascotas': true } })
   })
 
   it('tabs Entrar/Crear cuenta conmutan sin token', async () => {

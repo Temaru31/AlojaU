@@ -72,7 +72,9 @@ describe('MisPublicaciones', () => {
     renderPage('')
     expect(screen.getByText(/Inicia sesión para ver tus publicaciones/)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Mi Perfil / Iniciar Sesión' })).toHaveAttribute('href', '/perfil')
-    expect(api.get).not.toHaveBeenCalled()
+    // M2: el catálogo público (/config-publica) sí puede cargarse sin token;
+    // lo que NUNCA debe pedirse sin token es la bandeja privada /mias.
+    expect(api.get).not.toHaveBeenCalledWith(expect.stringContaining('/mias'), expect.anything())
   })
 
   it('lista avisos paginados con estado legible (nunca enum crudo) y todos los datos visibles', async () => {

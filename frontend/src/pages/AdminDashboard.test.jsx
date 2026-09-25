@@ -70,8 +70,34 @@ describe('AdminDashboard - Ajustes del Sistema', () => {
     expect(screen.getByText('Ajuste del sistema')).toBeInTheDocument()
     expect(screen.queryByText('APPROVED')).not.toBeInTheDocument()
     expect(screen.getByText(/23 Sep 2026, 10:14 PM/)).toBeInTheDocument()
-    expect(screen.getByText(/aviso #7/)).toBeInTheDocument()
+    // M1 enriquecido: mensaje legible + link clickeable (puede haber 2 nodos con "aviso #7").
+    expect(screen.getAllByText(/aviso #7/).length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByRole('link', { name: /aviso #7/ })).toBeInTheDocument()
     expect(screen.getByText(/Página 1 de 1 \(2\)/)).toBeInTheDocument()
+  })
+
+  it('M1 breadcrumbs Inicio › Panel Admin + badge reportes + tooltip métricas', async () => {
+    vi.spyOn(api, 'get').mockImplementation((url) => {
+      if (url === '/api/admin/metricas') {
+        return Promise.resolve({ data: {
+          total_publicaciones: 16, activas: 13, pendientes: 2,
+          reportes_activos: 5, reportes_pendientes: 3, inmuebles_con_reportes: 2,
+          arrendadores_verificados: 1, total_usuarios: 3,
+        } })
+      }
+      if (url === '/api/admin/pendientes') return Promise.resolve({ data: { items: [], total: 0 } })
+      if (url === '/api/admin/auditoria') return Promise.resolve({ data: { items: [], total: 0 } })
+      if (url === '/api/admin/automation/settings') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: {} })
+    })
+    render(<BrowserRouter><AdminDashboard /></BrowserRouter>)
+    // Breadcrumb desktop
+    expect(await screen.findByText('Panel Admin')).toBeInTheDocument()
+    expect(screen.getByText('Inicio')).toBeInTheDocument()
+    // Tarjeta principal pendientes + tooltip diferencia denuncias vs inmuebles
+    expect((await screen.findAllByText('Pendientes de revisión')).length).toBeGreaterThanOrEqual(1)
+    // Badge rojo prominente con reportes_pendientes
+    expect(screen.getByLabelText(/3 reportes pendientes/)).toBeInTheDocument()
   })
 
   it('switch cambia y Guardar llama PATCH', async () => {

@@ -7,8 +7,9 @@ import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 import { formatearSesionFecha } from '../utils/sesion'
-import { etiquetaEvento } from '../utils/historial'
+import { etiquetaEvento, describirAuditoria } from '../utils/historial'
 import InfoTooltip from '../components/InfoTooltip'
+import BreadcrumbsAdmin from '../components/BreadcrumbsAdmin'
 
 const authHead = (token) => ({ headers: { Authorization: `Bearer ${token}` } })
 
@@ -313,20 +314,44 @@ export function HistorialAdmin({ token }) {
       ) : (
         <>
           <ul className="space-y-2">
-            {items.map(a => (
-              <li key={a.id} className="card p-3 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
-                <span className="text-xs font-bold text-navy-800 shrink-0 min-w-32">
-                  {etiquetaEvento(a.evento)}
-                </span>
-                <span className="text-xs text-neutral-500 flex-1 min-w-0 truncate" title={a.detalle || ''}>
-                  {a.detalle || '—'}
-                </span>
-                <span className="text-[11px] text-neutral-400 shrink-0">
-                  {a.publicacion_id != null ? `aviso #${a.publicacion_id} · ` : ''}
-                  {formatearSesionFecha(a.creado_en) || 'fecha desconocida'}
-                </span>
-              </li>
-            ))}
+            {items.map(a => {
+              const legible = describirAuditoria(a)
+              const pid = a.publicacion_id
+              // Publicación eliminada -> texto plano sin link (hard delete CASCADE).
+              const puedeLinkear = pid != null && a.publicacion_existe !== false
+              return (
+                <li key={a.id} className="card p-3 flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
+                  <span className="text-xs font-bold text-navy-800 shrink-0 min-w-32">
+                    {etiquetaEvento(a.evento)}
+                  </span>
+                  <span className="text-xs text-neutral-600 flex-1 min-w-0" title={a.detalle || legible}>
+                    {legible}
+                    {a.usuario_email && (
+                      <span className="block text-[11px] text-neutral-400 truncate" title={a.usuario_email}>
+                        por {a.usuario_email}
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-[11px] text-neutral-400 shrink-0">
+                    {pid != null ? (
+                      puedeLinkear ? (
+                        <Link
+                          to={`/publicacion/${pid}`}
+                          className="text-navy-600 underline decoration-navy-300 underline-offset-2 hover:text-navy-800"
+                          aria-label={`Abrir aviso #${pid}`}
+                        >
+                          aviso #{pid}
+                        </Link>
+                      ) : (
+                        <span title="Aviso eliminado">aviso #{pid} (eliminado)</span>
+                      )
+                    ) : null}
+                    {pid != null ? ' · ' : ''}
+                    {formatearSesionFecha(a.creado_en) || 'fecha desconocida'}
+                  </span>
+                </li>
+              )
+            })}
           </ul>
           <div className="flex items-center justify-center gap-3 pt-1">
             <button type="button" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
@@ -406,13 +431,10 @@ export default function AdminDashboard() {
     }
   }
 
+  const TAB_LABEL = { moderacion: 'Moderación', ajustes: 'Ajustes del Sistema', historial: 'Historial' }
   return (
     <div className="container-main py-6 md:py-8">
-      <nav className="flex items-center gap-2 text-xs text-neutral-400 mb-4">
-        <Link to="/" className="hover:text-navy-600">Buscar</Link>
-        <span>›</span>
-        <span className="text-neutral-600">Panel admin</span>
-      </nav>
+      <BreadcrumbsAdmin actual={TAB_LABEL[tab] || 'Moderación'} volverA="/" volverTexto="Inicio" />
       <h1 className="font-display text-xl md:text-2xl font-bold text-navy-900 mb-1">
         🛡️ Panel Administrador
       </h1>
@@ -457,17 +479,33 @@ export default function AdminDashboard() {
               ayuda="Avisos totales en plataforma (todos los estados, sin cuentas eliminadas)." />
             <Stat label="Usuarios" value={metricas?.total_usuarios} tone="navy"
               ayuda="Cuentas activas registradas (excluye eliminadas)." />
-            <Stat label="Pendientes" value={metricas?.pendientes} tone="amber"
-              ayuda="Avisos en cola de moderación esperando aprobación o rechazo." />
+            <Stat
+              label="Pendientes de revisión"
+              value={metricas?.pendientes}
+              tone="amber"
+              ayuda={`Avisos en cola de moderación esperando aprobación o rechazo. Denuncias totales acumuladas: ${metricas?.reportes_activos ?? '—'} (pendientes o confirmadas) · Inmuebles con reportes pendientes: ${metricas?.inmuebles_con_reportes ?? '—'} (un mismo aviso puede tener varias denuncias).`}
+            />
             <Stat label="Reportes activos" value={metricas?.reportes_activos} tone="red"
-              ayuda="Denuncias pendientes o confirmadas de la comunidad." />
+              ayuda={`Denuncias pendientes o confirmadas de la comunidad. Inmuebles distintos con pendientes: ${metricas?.inmuebles_con_reportes ?? '—'}.`} />
             <Stat label="Verificados" value={metricas?.arrendadores_verificados} tone="emerald"
               ayuda="Arrendadores con teléfono verificado por un administrador." />
           </div>
 
           <div className="flex flex-wrap gap-2 mb-6">
-            <Link to="/admin/reportes" className="btn-ghost text-xs">
-              🚩 Bandeja de reportes{metricas?.reportes_pendientes ? ` (${metricas.reportes_pendientes})` : ''}
+            <Link
+              to="/admin/reportes"
+              className="btn-ghost text-xs inline-flex items-center gap-2"
+              aria-label={metricas?.reportes_pendientes ? `Bandeja de reportes, ${metricas.reportes_pendientes} pendientes` : 'Bandeja de reportes'}
+            >
+              🚩 Bandeja de reportes
+              {(metricas?.reportes_pendientes ?? 0) > 0 && (
+                <span
+                  className="inline-flex items-center justify-center min-w-6 h-6 px-2 rounded-full bg-red-600 text-white text-[11px] font-extrabold shadow"
+                  aria-label={`${metricas.reportes_pendientes} reportes pendientes`}
+                >
+                  {metricas.reportes_pendientes}
+                </span>
+              )}
             </Link>
             <button type="button" onClick={cargar} className="btn-ghost text-xs">Recargar</button>
           </div>

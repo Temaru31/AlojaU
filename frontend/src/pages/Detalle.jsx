@@ -15,6 +15,7 @@ import { fotosOrdenadas } from '../utils/portada'
 import { formatearSesionFecha } from '../utils/sesion'
 import { etiquetaEvento } from '../utils/historial'
 import { api as _apiDetalle } from '../services/api'
+import useTiposVivienda from '../hooks/useTiposVivienda'
 
 export function humanizarTipo(tipo) {
   const map = {
@@ -70,6 +71,8 @@ export default function Detalle() {
   // Detalle #3: umbral de frescura desde config pública (fallback 30 local).
   // ANTES de los early-returns (hooks siempre en el mismo orden).
   const [diasDesact, setDiasDesact] = useState(() => diasDesactualizadaEfectiva())
+  // M2: nombre dinámico del tipo con fallback estático.
+  const { nombreDe: nombreTipo } = useTiposVivienda()
   const vistaEnviada = useRef(null)
   const compHook = useComparar()
 
@@ -277,7 +280,8 @@ export default function Detalle() {
   const zona = pub.zona_nombre || pub.zona || 'No informado'
   const servicios = pub.servicios || []
   const descripcion = (pub.descripcion || '').trim()
-  const tipoHumano = humanizarTipo(pub.tipo_inmueble)
+  // M2: catálogo dinámico primero, estático como fallback (mismo texto).
+  const tipoHumano = nombreTipo(pub.tipo_inmueble, humanizarTipo(pub.tipo_inmueble))
   const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? 0)
   const isFav = favHook.isFav(pub.id)
   const isComp = compHook.isSelected(pub.id)

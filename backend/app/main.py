@@ -12,7 +12,7 @@ import logging
 import os
 import uuid
 from app.core.config import settings
-from app.routers import publicaciones, campus, auth, uploads, reportes, admin, ciudades, admin_automation, zonas
+from app.routers import publicaciones, campus, auth, uploads, reportes, admin, ciudades, admin_automation, zonas, housing_types
 
 # Detalle #7 DX local: el OTP se loguea con logger.info pero uvicorn deja el
 # root en WARNING y el código era invisible. En dev/test se sube a INFO para
@@ -132,7 +132,7 @@ async def custom_docs():
         swagger_favicon_url="/static/favicon.svg",
     )
 
-# Routers Sprint1 + T1 reportes + RBAC admin + multiciudad + automation + zonas
+# Routers Sprint1 + T1 reportes + RBAC admin + multiciudad + automation + zonas + M2 housing
 app.include_router(ciudades.router)
 app.include_router(zonas.router)
 app.include_router(admin_automation.router)
@@ -142,6 +142,8 @@ app.include_router(auth.router)
 app.include_router(uploads.router)
 app.include_router(reportes.router)
 app.include_router(admin.router)
+app.include_router(housing_types.router_public)
+app.include_router(housing_types.router_admin)
 
 # Legacy mock endpoints removidos: ahora en routers/publicaciones.py y routers/campus.py
 # - GET /api/publicaciones?campus_id=&precio_min=&precio_max=&tipo=&servicios=  (HU-001+002)

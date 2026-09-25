@@ -12,6 +12,7 @@ import Paginacion from '../components/Paginacion'
 import EditarPublicacionModal from '../components/EditarPublicacionModal'
 import RenovarModal from '../components/RenovarModal'
 import { portadaUrl } from '../utils/portada'
+import useTiposVivienda from '../hooks/useTiposVivienda'
 
 /**
  * Reglas de cálculo de días de vigencia:
@@ -133,6 +134,8 @@ const PAGE_SIZE = 12
 
 export default function MisPublicaciones() {
   const { token, refresh } = useAuth()
+  // M2: catálogo dinámico con fallback estático.
+  const { nombreDe } = useTiposVivienda()
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [pages, setPages] = useState(1)
@@ -369,7 +372,8 @@ export default function MisPublicaciones() {
               // BUG#1: portada = orden=1 vía helper central.
               const cover = portadaUrl(p)
               const zonaTexto = p.zona_nombre || p.zona || 'Zona no informada'
-              const tipoTexto = TIPO_LABEL[p.tipo_inmueble] || p.tipo_inmueble || 'Vivienda'
+              // M2: dinámico primero, estático como fallback.
+              const tipoTexto = nombreDe(p.tipo_inmueble, TIPO_LABEL[p.tipo_inmueble] || p.tipo_inmueble) || 'Vivienda'
               const canonValor = p.canon_mensual ?? p.canon
 
               return (

@@ -47,6 +47,13 @@ describe('Filtros - HU-002 + Fase 3 avanzados', ()=>{
 
   it('incluye opción HABITACION_INDEPENDIENTE (fix previo faltante)', ()=>{
     render(<Filtros filtros={{}} setFiltros={vi.fn()} defaultOpen />)
-    expect(screen.getByText('Habitacion independiente')).toBeInTheDocument()
+    // M2 dinámico: nombre con acento + icono (fallback local).
+    expect(screen.getByText(/Habitación independiente/)).toBeInTheDocument()
+  })
+
+  it('M2 catálogo dinámico incluye nuevos slugs (sin renombrar históricos)', ()=>{
+    render(<Filtros filtros={{}} setFiltros={vi.fn()} defaultOpen />)
+    expect(screen.getByText(/Apartamento completo/)).toBeInTheDocument()
+    expect(screen.getByText(/piso compartido/i)).toBeInTheDocument()
   })
 })

@@ -5,7 +5,7 @@ import Card from '../components/Card'
 import Casa3D from '../components/Casa3D'
 import CercanoA, { etiquetaLugar } from '../components/CercanoA'
 import CiudadSelector, { CIUDADES_FALLBACK, etiquetaCiudad } from '../components/CiudadSelector'
-import Filtros, { contarAvanzados } from '../components/Filtros'
+import Filtros, { contarAvanzados, PanelPrimario, MasFiltrosModal } from '../components/Filtros'
 import Paginacion from '../components/Paginacion'
 import SearchBar from '../components/SearchBar'
 
@@ -401,8 +401,21 @@ export default function Buscar() {
               </button>
             </div>
             {avanzadosAbiertos && (
-              <div id="panel-avanzados" className="mt-3 border-t border-neutral-100 pt-3">
-                <Filtros filtros={filtros} setFiltros={setFiltros} soloPanel />
+              <div id="panel-avanzados" className="mt-3 border-t border-neutral-100 pt-3 space-y-3">
+                {/* M4: primarios inline (texto ya arriba + precio/tipo/principales aquí) */}
+                <PanelPrimario filtros={filtros} setFiltros={setFiltros} />
+                <div className="flex items-center gap-2">
+                  <MasFiltrosModal filtros={filtros} setFiltros={setFiltros} />
+                  {numAvanzados > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFiltros({ min: '', max: '', tipo: '', servicios: '' })}
+                      className="btn-ghost text-xs"
+                    >
+                      Limpiar filtros
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </div>

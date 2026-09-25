@@ -132,7 +132,9 @@ async def list_publicaciones(
     campus_id: Optional[int] = Query(None, ge=1, le=1000, description="FK campus_universitarios.id - filtra por lugar cercano (POIs por categoría)"),
     precio_min: Optional[int] = Query(None, ge=0, le=10_000_000, description="COP mínimo"),
     precio_max: Optional[int] = Query(None, ge=0, le=10_000_000, description="COP máximo"),
-    tipo: Optional[str] = Query(None, pattern="^(HABITACION_FAMILIAR|HABITACION_INDEPENDIENTE|APARTAESTUDIO|COMPARTIDO)$"),
+    # M2: sin pattern estático (el catálogo vive en housing_types). Se valida
+    # contra la tabla (esta_activo=true) con caché 5min; 422 si no existe.
+    tipo: Optional[str] = Query(None, min_length=3, max_length=40, description="Slug de housing_types (ej. APARTAESTUDIO)"),
     servicios: Optional[str] = Query(None, max_length=50, description="IDs coma separados, ej: 1,3"),
     q: Optional[str] = Query(None, min_length=2, max_length=100, description="Texto libre tokenizado: stop-words ES fuera, OR parcial + relevancia (Fase 2)"),
     ciudad_id: Optional[int] = Query(None, ge=1, le=1000000, description="Fase 4 multiciudad: filtra por Ciudad.id vía zona"),
@@ -154,6 +156,29 @@ async def list_publicaciones(
     # Validación combinada HU-002 C1
     if precio_min is not None and precio_max is not None and precio_min > precio_max:
         raise HTTPException(status_code=400, detail="precio_min no puede superar precio_max")
+
+    # M2 validación dinámica contra housing_types (esta_activo=true, caché 5min).
+    # Sin pattern estático: 422 si el slug no existe o está inactivo.
+    if tipo is not None:
+        try:
+            from app.services import housing_types as _ht
+            activos = await _ht.slugs_activos(db)
+            if tipo not in activos:
+                raise HTTPException(status_code=422, detail=f"tipo '{tipo}' no válido o inactivo")
+        except HTTPException:
+            raise
+        except Exception:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            # Sin PG: fallback estático (mock dev) para no tumbar la búsqueda.
+            try:
+                from app.services.housing_types import slugs_fallback as _fb
+                if tipo not in _fb():
+                    raise HTTPException(status_code=422, detail=f"tipo '{tipo}' no válido o inactivo")
+            except HTTPException:
+                raise
 
     servicios_ids = view.parse_servicios_param(servicios)
 
@@ -314,6 +339,16 @@ async def config_publica(db: AsyncSession = Depends(get_session)):
             return int(vals.get(k, d))
         except Exception:
             return d
+    # M2 aditivo: catálogo de tipos dinámicos (caché 5min, fallback local).
+    try:
+        from app.services import housing_types as _ht
+        tipos = await _ht.get_activos(db)
+    except Exception:
+        try:
+            from app.services.housing_types import MOCK_TIPOS as _MT
+            tipos = [dict(t) for t in _MT if t.get("esta_activo")]
+        except Exception:
+            tipos = []
     return {
         "dias_desactualizada": _iv("dias_desactualizada", 30),
         "titulo_min": _iv("titulo_min", 10),
@@ -325,6 +360,7 @@ async def config_publica(db: AsyncSession = Depends(get_session)):
         "fotos_min": _iv("fotos_min_publicar", 3), "fotos_max": 10,
         "canon_max": 10_000_000,
         "vistas_visibles_publico": str(vals.get("vistas_visibles_publico", "false")).lower() == "true",
+        "tipos_vivienda": tipos,
     }
 
 @router.get("/{pub_id}", response_model=PublicacionDetailOut, summary="HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp")
@@ -442,6 +478,17 @@ async def editar_publicacion(
     # M4 commit único: el set de fotos viaja en el mismo PATCH (ya validado
     # por el schema). Un solo commit para escalares + etiquetas + fotos.
     fotos_nuevas = cambios.pop("fotos", None)
+    # M2: si cambia el tipo, validar contra housing_types (esta_activo=true).
+    if "tipo_inmueble" in cambios:
+        try:
+            from app.services import housing_types as _ht
+            activos = await _ht.slugs_activos(db)
+            if cambios["tipo_inmueble"] not in activos:
+                raise HTTPException(status_code=422, detail=f"tipo_inmueble '{cambios['tipo_inmueble']}' no válido o inactivo")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
     try:
         from app.models import Publicacion, PublicacionServicio, ServicioCatalogo
 
@@ -1200,6 +1247,16 @@ async def crear_publicacion(
         raise HTTPException(status_code=401, detail="Token sin propietario válido")
     # Gate v13/v13.2/v14.1 (rol real + email + teléfono + promoción).
     user, rol_actualizado = await _gate_escritura(db, user)
+    # M2: valida tipo contra housing_types (esta_activo=true, caché 5min).
+    try:
+        from app.services import housing_types as _ht
+        activos = await _ht.slugs_activos(db)
+        if payload.tipo_inmueble not in activos:
+            raise HTTPException(status_code=422, detail=f"tipo_inmueble '{payload.tipo_inmueble}' no válido o inactivo")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
     # Calcular índice inicial (default telefono_verificado False si ausente).
     trust = view.initial_trust(payload, bool(user.get("telefono_verificado", False)))
 

@@ -40,6 +40,10 @@ class MetricasOut(BaseModel):
     pendientes: int = 0
     reportes_activos: int = 0
     reportes_pendientes: int = 0
+    # M1 aditivo: inmuebles distintos con al menos 1 reporte PENDIENTE
+    # (COUNT DISTINCT publicacion_id WHERE estado='PENDIENTE').
+    # `reportes_activos` se mantiene intacto (denuncias totales acumuladas).
+    inmuebles_con_reportes: int = 0
     arrendadores_verificados: int = 0
     total_usuarios: int = 0
 
@@ -68,12 +72,18 @@ async def metricas(
         pendientes = (await db.execute(select(func.count()).select_from(Publicacion).where(Publicacion.estado == "PENDIENTE", dueno_ok))).scalar() or 0
         rep_act = (await db.execute(select(func.count()).select_from(ReportePublicacion).where(ReportePublicacion.estado.in_(["PENDIENTE", "CONFIRMADO"])))).scalar() or 0
         rep_pen = (await db.execute(select(func.count()).select_from(ReportePublicacion).where(ReportePublicacion.estado == "PENDIENTE"))).scalar() or 0
+        # M1: inmuebles distintos con reportes PENDIENTE (usa idx_reportes_pub_estado).
+        inmuebles_rep = (await db.execute(
+            select(func.count(func.distinct(ReportePublicacion.publicacion_id))).where(
+                ReportePublicacion.estado == "PENDIENTE")
+        )).scalar() or 0
         vivos = Usuario.eliminado_en.is_(None)
         verif = (await db.execute(select(func.count()).select_from(Usuario).where(Usuario.rol == "ARRENDADOR", Usuario.telefono_verificado.is_(True), vivos))).scalar() or 0
         users = (await db.execute(select(func.count()).select_from(Usuario).where(vivos))).scalar() or 0
         return MetricasOut(
             total_publicaciones=total, activas=activas, pendientes=pendientes,
             reportes_activos=rep_act, reportes_pendientes=rep_pen,
+            inmuebles_con_reportes=int(inmuebles_rep),
             arrendadores_verificados=verif, total_usuarios=users,
         )
     except HTTPException:
@@ -97,6 +107,8 @@ async def metricas(
         pendientes=sum(1 for p in pubs if p.get("estado") == "PENDIENTE"),
         reportes_activos=sum(int(p.get("reportes_activos", 0) or 0) for p in pubs),
         reportes_pendientes=0,
+        # Mock dev sin tabla reportes: 0 inmuebles con pendientes (contrato aditivo).
+        inmuebles_con_reportes=0,
         arrendadores_verificados=sum(1 for u in MOCK_USERS.values() if u.get("rol") == "ARRENDADOR" and u.get("telefono_verificado")),
         total_usuarios=len(MOCK_USERS),
     )
@@ -401,6 +413,38 @@ async def _bulk_cambiar_estado(db: AsyncSession, admin: dict, ids: list[int],
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
+def _mensaje_auditoria_legible(evento: str | None, publicacion_id: int | None, detalle: str | None) -> str:
+    """M1 human-readable: convierte el enum crudo + detalle en frase amigable.
+
+    Ej. RENEWED #14 -> "Renovó expiración del aviso #14". Nunca expone JSON crudo.
+    Aditivo: si el evento es desconocido, devuelve el detalle limpio o el evento.
+    """
+    ev = (evento or "").upper()
+    pid_txt = f" #{int(publicacion_id)}" if publicacion_id is not None else ""
+    mapa = {
+        "CREATED": f"Creó el aviso{pid_txt}",
+        "APPROVED": f"Aprobó el aviso{pid_txt}",
+        "REJECTED": f"Rechazó el aviso{pid_txt}",
+        "PAUSED": f"Pausó el aviso{pid_txt}",
+        "RESUMED": f"Reanudó el aviso{pid_txt}",
+        "RENTED": f"Marcó como arrendado el aviso{pid_txt}",
+        "EXPIRED": f"Expiró el aviso{pid_txt}",
+        "RENEWED": f"Renovó expiración del aviso{pid_txt}",
+        "BLOCKED": f"Bloqueó el aviso{pid_txt}",
+        "SETTINGS": "Actualizó ajustes del sistema",
+        "CUENTA_DELETE": "Eliminó su cuenta",
+    }
+    base = mapa.get(ev)
+    if base:
+        return base
+    # Fallback: detalle legible (corta JSON crudo a 140 chars sin llaves).
+    det = (detalle or "").strip()
+    if det:
+        limpio = det.replace("{", "").replace("}", "").replace('"', "").strip()
+        return f"{ev.title() if ev else 'Evento'}{pid_txt}: {limpio[:140]}" if limpio else (base or ev or "Evento")
+    return base or ev or "Evento"
+
+
 @router.get("/auditoria", summary="Admin: ver log de auditoría (motivos IA/reglas)")
 async def ver_auditoria(
     publicacion_id: int | None = Query(None, ge=1),
@@ -413,6 +457,11 @@ async def ver_auditoria(
     """v15.2 trazabilidad: por qué se aprobó/rechazó (humano o auto).
 
     Filtros opcionales por aviso y evento. Solo lectura.
+
+    M1 enriquecido (aditivo, sin romper contrato): cada item incluye
+    `usuario_email` (batch 1 query WHERE id IN por página), `publicacion_existe`
+    (True si el aviso existe, False si fue eliminado, None si no aplica) y
+    `mensaje_legible` (texto humano, ej. "Renovó expiración del aviso #14").
     """
     from app.models import PublicacionesAudit
     from app.core.pagination import paginate_params
@@ -430,11 +479,36 @@ async def ver_auditoria(
             select(PublicacionesAudit).where(*conds)
             .order_by(PublicacionesAudit.id.desc()).limit(size_norm).offset(offset)
         )).scalars().all()
-        return {"items": [
-            {"id": r.id, "publicacion_id": r.publicacion_id, "usuario_id": r.usuario_id,
-             "evento": r.evento, "detalle": r.detalle,
-             "creado_en": r.creado_en.isoformat() if r.creado_en else None}
-            for r in rows], "total": total, "page": page, "size": size_norm}
+        # M1 batch por página: 1 query usuarios + 1 query publicaciones existentes.
+        email_por_id: dict[int, str | None] = {}
+        existe_por_pub: dict[int, bool] = {}
+        try:
+            from app.models import Publicacion, Usuario
+            uids = sorted({int(r.usuario_id) for r in rows if r.usuario_id is not None})
+            if uids:
+                ures = await db.execute(
+                    select(Usuario.id, Usuario.email).where(Usuario.id.in_(uids)))
+                email_por_id = {int(i): e for i, e in ures.all()}
+            pids = sorted({int(r.publicacion_id) for r in rows if r.publicacion_id is not None})
+            if pids:
+                pres = await db.execute(
+                    select(Publicacion.id).where(Publicacion.id.in_(pids)))
+                vivos = {int(i) for (i,) in pres.all()}
+                existe_por_pub = {pid: (pid in vivos) for pid in pids}
+        except Exception:
+            pass
+        items = []
+        for r in rows:
+            pid = r.publicacion_id
+            items.append({
+                "id": r.id, "publicacion_id": pid, "usuario_id": r.usuario_id,
+                "evento": r.evento, "detalle": r.detalle,
+                "creado_en": r.creado_en.isoformat() if r.creado_en else None,
+                "usuario_email": email_por_id.get(int(r.usuario_id)) if r.usuario_id is not None else None,
+                "publicacion_existe": (existe_por_pub.get(int(pid)) if pid is not None else None),
+                "mensaje_legible": _mensaje_auditoria_legible(r.evento, pid, r.detalle),
+            })
+        return {"items": items, "total": total, "page": page, "size": size_norm}
     except HTTPException:
         raise
     except Exception as e:

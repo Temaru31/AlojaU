@@ -55,9 +55,14 @@ class Settings(BaseSettings):
     FRONTEND_PROD_URL: str = CANONICAL_PROD_ORIGIN
 
     # v13: OTP alternativo gratuito (Telegram Bot webhook opcional).
-    # Vacío = solo Email-code (log en dev). Con token se intenta Telegram.
+    # Vacío = solo Email-code (log en dev). Con token se intenta Telegram
+    # SOLO por DM al telegram_chat_id vinculado del usuario (M5 privacidad:
+    # NUNCA a canales/grupos globales).
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_CHAT_ID: str = ""
+    # M5 vinculación $0: username público del bot (sin @) para bot_url t.me.
+    # Ej. TELEGRAM_BOT_USERNAME=AlojaU_bot -> https://t.me/AlojaU_bot?start=TOKEN
+    TELEGRAM_BOT_USERNAME: str = ""
 
     # v13: versión de política de datos vigente (Ley 1581/2012).
     POLITICA_VERSION: str = POLITICA_VERSION_VIGENTE

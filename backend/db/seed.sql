@@ -3,7 +3,17 @@
 -- Fotos Unsplash estables con coherencia semántica (?auto=format&fit=crop&w=800&q=80):
 --   Habitación -> dormitorio/escritorio · Apartaestudio -> ambiente integrado/cocina ·
 --   Compartido -> sala/áreas comunes.
-TRUNCATE publicaciones_audit, reportes_publicacion, imagenes_publicacion, publicacion_campus, publicacion_servicios, publicaciones, servicios_catalogo, campus_universitarios, zonas_barrios, ciudades, usuarios, sesiones, password_resets, otp_codes, rate_limit_attempts, vistas_dedup, system_settings RESTART IDENTITY CASCADE;
+TRUNCATE publicaciones_audit, reportes_publicacion, imagenes_publicacion, publicacion_campus, publicacion_servicios, publicaciones, housing_types, servicios_catalogo, campus_universitarios, zonas_barrios, ciudades, usuarios, sesiones, password_resets, otp_codes, rate_limit_attempts, vistas_dedup, system_settings RESTART IDENTITY CASCADE;
+
+-- M2 tipos dinámicos (mig 013): catálogo base, nunca renombrar/eliminar slugs.
+INSERT INTO housing_types (slug, nombre_visible, descripcion_tooltip, icono, esta_activo) VALUES
+('HABITACION_FAMILIAR', 'Habitación familiar', 'Habitación en casa de familia, ambiente compartido', '🏠', TRUE),
+('HABITACION_INDEPENDIENTE', 'Habitación independiente', 'Habitación privada con acceso independiente', '🚪', TRUE),
+('APARTAESTUDIO', 'Apartaestudio', 'Ambiente integrado con cocina y baño privados', '🏢', TRUE),
+('COMPARTIDO', 'Compartido', 'Cupo en vivienda compartida con otros estudiantes', '🤝', TRUE),
+('APARTAMENTO_COMPLETO', 'Apartamento completo', 'Apartamento entero para ti o tu grupo', '🏘️', TRUE),
+('HABITACION_PISO_COMPARTIDO', 'Habitación en piso compartido', 'Habitación privada en piso con zonas comunes', '🏡', TRUE)
+ON CONFLICT (slug) DO NOTHING;
 
 -- v15.2: settings canónicos (espejo de migración 005). Sin esto, filas de
 -- otros entornos/tests contaminan la tabla entre reseeds.

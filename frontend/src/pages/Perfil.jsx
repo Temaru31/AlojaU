@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
-import { emitAuthChange, inicialesDe, limpiarSesionLocal } from '../contexts/AuthContext'
+import { emitAuthChange, limpiarSesionLocal } from '../contexts/AuthContext'
 import { formatearSesionFecha, etiquetaDispositivo } from '../utils/sesion'
 import GoogleButton from '../components/GoogleButton'
 import RegistroForm from '../components/RegistroForm'
 import OtpForm from '../components/OtpForm'
+import AvatarPerfil from '../components/AvatarPerfil'
+import TelegramVincular from '../components/TelegramVincular'
 import { signInWithGoogle } from '../services/supabaseClient'
 
 const TABS = [
@@ -42,25 +44,34 @@ export const ROL_LABEL = {
   AUDITOR_LEGAL: 'Auditor',
 }
 
-// v13.2 etiquetas opt-in (claves permitidas por el backend: filtros.* roomie.* notis.*).
-// Nada sensible (Ley 1581): solo hábitos de convivencia aportados voluntariamente.
+// M3 "Tus Preferencias": SOLO namespace filtros.* (Ley 1581: nada sensible,
+// sin "Estudiante" ni demográficos como Fecha Nacimiento/Género).
+// El backend sigue aceptando roomie.*/notis.* por retrocompatibilidad,
+// pero la UI solo ofrece filtros.*.
 export const TAGS_DISPONIBLES = [
-  { key: 'roomie.buscando', label: '🔍 Busco roomie', hint: 'Te avisaremos de perfiles compatibles' },
   { key: 'filtros.mascotas', label: '🐾 Tengo mascota', hint: 'Prioriza avisos que aceptan mascotas' },
   { key: 'filtros.tranquilo', label: '🌙 Ambiente tranquilo', hint: 'Prioriza zonas y reglas tranquilas' },
-  { key: 'notis.novedades', label: '🔔 Novedades', hint: 'Avisos nuevos según tus filtros' },
+  { key: 'filtros.no_fumador', label: '🚬 No fumador', hint: 'Prioriza ambientes libres de humo' },
 ]
 
-export function checklistPerfil(perfil) {
+// M3 barra gamificada con pesos explícitos (suma 100% exacto).
+// - Correo verificado 20% · Teléfono 20% · Foto 20%
+// - Presentación 15% · ≥1 preferencia 15% · Primer aviso (o ARRENDADOR) 10%
+export const PESOS_PERFIL = {
+  email: 20, telefono: 20, foto: 20, bio: 15, tags: 15, aviso: 10,
+}
+
+export function checklistPerfil(perfil, extra = {}) {
+  const tieneAviso = !!extra.tieneAviso || perfil?.rol === 'ARRENDADOR' || perfil?.rol === 'ADMIN'
   const items = [
-    { id: 'nombre', label: 'Nombre completo', ok: (perfil?.nombre_completo || '').trim().length >= 3 },
-    { id: 'email', label: 'Correo confirmado', ok: !!perfil?.email_verificado },
-    { id: 'telefono', label: 'Teléfono vinculado', ok: !!perfil?.telefono_whatsapp },
-    { id: 'bio', label: 'Presentación', ok: (perfil?.bio || '').trim().length > 0 },
-    { id: 'foto', label: 'Foto de perfil', ok: !!perfil?.foto_perfil_url },
-    { id: 'tags', label: 'Al menos 1 etiqueta', ok: Object.values(perfil?.preferencias || {}).some(Boolean) },
+    { id: 'email', label: 'Correo verificado', peso: PESOS_PERFIL.email, ok: !!perfil?.email_verificado },
+    { id: 'telefono', label: 'Teléfono vinculado', peso: PESOS_PERFIL.telefono, ok: !!perfil?.telefono_whatsapp },
+    { id: 'foto', label: 'Foto de perfil subida', peso: PESOS_PERFIL.foto, ok: !!perfil?.foto_perfil_url },
+    { id: 'bio', label: 'Presentación escrita', peso: PESOS_PERFIL.bio, ok: (perfil?.bio || '').trim().length > 0 },
+    { id: 'tags', label: 'Al menos 1 preferencia', peso: PESOS_PERFIL.tags, ok: Object.values(perfil?.preferencias || {}).some(Boolean) },
+    { id: 'aviso', label: 'Primer aviso publicado', peso: PESOS_PERFIL.aviso, ok: tieneAviso },
   ]
-  const pct = Math.round((items.filter(i => i.ok).length / items.length) * 100)
+  const pct = items.reduce((acc, i) => acc + (i.ok ? i.peso : 0), 0)
   return { items, pct }
 }
 
@@ -82,12 +93,11 @@ export default function Perfil() {
   const [successMsg, setSuccessMsg] = useState('')
   const [tab, setTab] = useState(() => tabDesdeHash())
 
-  // Formulario de edición
+  // Formulario de edición (M3: la foto va por POST /avatar, no en este form).
   const [telefono, setTelefono] = useState('')
   const [nombre, setNombre] = useState('')
-  // v13.2 marketplace flexible: bio, foto y etiquetas.
+  // v13.2 marketplace flexible: bio y etiquetas (la foto vive en AvatarPerfil).
   const [bio, setBio] = useState('')
-  const [fotoUrl, setFotoUrl] = useState('')
   const [tags, setTags] = useState({})
 
   // Formulario de login si no hay token
@@ -210,7 +220,6 @@ export default function Perfil() {
       setTelefono(telefonoALocal(res.data.telefono_whatsapp))
       setNombre(res.data.nombre_completo || '')
       setBio(res.data.bio || '')
-      setFotoUrl(res.data.foto_perfil_url || '')
       setTags(res.data.preferencias || {})
       setTagsDirty(false)
     } catch {
@@ -318,7 +327,7 @@ export default function Perfil() {
         // Vacío -> el backend lo guarda NULL (desvincula). Con dígitos -> E.164.
         telefono_whatsapp: telefono.trim() === '' ? '' : telefonoAE164(telefono),
         bio: bio.trim(),
-        foto_perfil_url: fotoUrl.trim() === '' ? null : fotoUrl.trim(),
+        // M3: la foto va por POST/DELETE /api/auth/avatar (no en este form).
         preferencias: tags,
       }
       const res = await api.patch('/api/auth/perfil', body,
@@ -327,7 +336,6 @@ export default function Perfil() {
       setPerfil(res.data)
       setTelefono(telefonoALocal(res.data.telefono_whatsapp))
       setBio(res.data.bio || '')
-      setFotoUrl(res.data.foto_perfil_url || '')
       setTags(res.data.preferencias || {})
       setTagsDirty(false)
       setSuccessMsg('Datos de contacto actualizados con éxito.')
@@ -559,19 +567,11 @@ export default function Perfil() {
             {/* Tarjeta identidad: quién eres + rol + progreso */}
             <section aria-label="Tu cuenta" className="card p-6 space-y-4">
             <div className="flex items-center gap-4">
-              {perfil?.foto_perfil_url ? (
-                <img
-                  src={perfil.foto_perfil_url}
-                  alt={`Foto de ${perfil?.nombre_completo || 'usuario'}`}
-                  className="w-14 h-14 rounded-full object-cover border border-neutral-200 shrink-0"
-                  referrerPolicy="no-referrer"
-                  onError={(e) => { e.currentTarget.style.display = 'none' }}
-                />
-              ) : (
-                <span aria-hidden="true" className="w-14 h-14 rounded-full bg-navy-800 text-white text-lg font-bold flex items-center justify-center shrink-0">
-                  {inicialesDe(perfil)}
-                </span>
-              )}
+              <AvatarPerfil
+                perfil={perfil}
+                token={token}
+                onCambio={(url) => setPerfil((p) => (p ? { ...p, foto_perfil_url: url } : p))}
+              />
               <div className="min-w-0 flex-1">
                 <h2 className="text-base font-semibold text-navy-900 truncate" title={perfil?.nombre_completo || ''}>{perfil?.nombre_completo || 'Usuario AlojaU'}</h2>
                 {/* El correo vive solo en el campo "Correo" del formulario (sin duplicar). */}
@@ -584,9 +584,9 @@ export default function Perfil() {
               </span>
             </div>
 
-            {/* v13.2 checklist progresiva + explicación del ciclo de rol */}
+            {/* M3 checklist gamificada 20+20+20+15+15+10=100 */}
             {(() => {
-              const check = checklistPerfil(perfil)
+              const check = checklistPerfil(perfil, { tieneAviso: (misStats?.total ?? 0) > 0 })
               return (
                 <div className="rounded-lg border border-navy-100 bg-navy-50/50 p-4 space-y-2" aria-label="Completa tu perfil">
                   <div className="flex items-center justify-between gap-2">
@@ -599,7 +599,7 @@ export default function Perfil() {
                   <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs">
                     {check.items.map(i => (
                       <li key={i.id} className={i.ok ? 'text-emerald-700' : 'text-neutral-400'}>
-                        {i.ok ? '✓' : '•'} {i.label}
+                        {i.ok ? '✓' : '•'} {i.label} <span className="opacity-70">({i.peso}%)</span>
                       </li>
                     ))}
                   </ul>
@@ -686,7 +686,7 @@ export default function Perfil() {
               </div>
             </section>
 
-            {/* Tarjeta presentación: bio + foto + etiquetas */}
+            {/* Tarjeta presentación: bio (la foto vive en el avatar superior, sin URL expuesta) */}
             <section aria-label="Presentación" className="card p-6 space-y-4">
               <h3 className="text-sm font-bold text-navy-900">✨ Presentación</h3>
               <p className="text-[11px] text-neutral-400 -mt-2">Opcional. Cuéntales a otros quién eres y qué buscas.</p>
@@ -701,27 +701,16 @@ export default function Perfil() {
                   className="input-field resize-none"
                 />
               </div>
-              <div>
-                <label htmlFor="perfil-foto" className="block text-sm font-semibold text-navy-800 mb-1.5">Foto de perfil <span className="text-neutral-400 font-normal">(URL https, opcional)</span></label>
-                <input
-                  id="perfil-foto"
-                  type="url"
-                  value={fotoUrl}
-                  onChange={e => setFotoUrl(e.target.value)}
-                  placeholder="https://… (Google la llena sola al entrar)"
-                  className="input-field"
-                />
-              </div>
             </section>
 
-            {/* M2 etiquetas transaccionales: viven en el form y se guardan con todo. */}
+            {/* M3 "Tus Preferencias": SOLO filtros.* (sin Estudiante ni demográficos Ley 1581). */}
             <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-4 space-y-3">
               <h3 className="text-xs sm:text-sm font-semibold text-navy-900">
-                Tus etiquetas
+                Tus Preferencias
                 {tagsDirty && <span className="ml-2 font-semibold text-amber-700">· sin guardar</span>}
               </h3>
               <p className="text-xs text-neutral-500">
-                Opcionales y revocables: sirven para priorizar avisos afines (ej. que acepten mascotas) y avisarte de roomies. Nada sensible.
+                Opcionales y revocables: solo hábitos de convivencia (filtros.*). Nada sensible ni demográfico.
               </p>
               <div className="flex flex-wrap gap-2">
                 {TAGS_DISPONIBLES.map(t => {
@@ -842,6 +831,8 @@ export default function Perfil() {
             </p>
             </>
             )}
+            {/* M5 Telegram $0: vinculación DM (sin OTP a grupos) */}
+            <TelegramVincular token={token} vinculado={!!perfil?.telegram_vinculado} />
             {/* v13: sesiones activas + revocación global */}
             <div className="border-t border-neutral-150 pt-4 space-y-3">
               <h3 className="text-sm font-semibold text-navy-900">Sesiones activas</h3>
