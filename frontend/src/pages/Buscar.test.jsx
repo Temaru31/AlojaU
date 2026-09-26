@@ -6,7 +6,12 @@ import { api } from '../services/api'
 
 vi.mock('../services/api', () => ({ api: { get: vi.fn() }, isCancelError: (e) => e?.code === 'ERR_CANCELED' }))
 vi.mock('../components/Card', () => ({ default: ({ pub }) => <div>{pub.titulo}</div> }))
-vi.mock('../components/Filtros', () => ({ default: () => null, contarAvanzados: () => 0 }))
+vi.mock('../components/Filtros', async (importOriginal) => {
+  const actual = await importOriginal()
+  // Solo se anula el panel completo (no se usa en el sheet móvil);
+  // los helpers puros se conservan reales para los bloques del sheet.
+  return { ...actual, default: () => null, contarAvanzados: () => 0 }
+})
 vi.mock('../components/Paginacion', () => ({ default: () => null }))
 
 const CAMPUS = [{ id: 1, institucion: 'Universidad del Cauca', nombre_sede: 'Campus Tulcán' }]
@@ -103,20 +108,41 @@ describe('Buscar Fase 4 Hero + multiciudad', () => {
     expect(screen.getByRole('dialog', { name: /Filtros de búsqueda/ })).toBeInTheDocument()
     // Desktop + sheet montan doble control: basta que el sheet aporte el suyo.
     expect(screen.getAllByLabelText('Cercano a…').length).toBeGreaterThanOrEqual(1)
-    // F4: atajos de presupuesto (COP) y tipo escriben el mismo estado `filtros`.
+    // Atajos de presupuesto (COP) y chips de tipo escriben `filtros`.
     fireEvent.click(screen.getByRole('button', { name: '< $400 mil' }))
     expect(screen.getByRole('button', { name: '< $400 mil' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByPlaceholderText('Mín COP')).toHaveValue(0)
     // Toggle-off: pulsar el activo limpia el rango.
     fireEvent.click(screen.getByRole('button', { name: '< $400 mil' }))
     expect(screen.getByRole('button', { name: '< $400 mil' })).toHaveAttribute('aria-pressed', 'false')
-    fireEvent.click(screen.getByRole('button', { name: 'Compartida' }))
-    expect(screen.getByRole('button', { name: 'Compartida' })).toHaveAttribute('aria-pressed', 'true')
+    // Tipo único dinámico (sin sección duplicada ni <select> nativo).
+    expect(screen.queryByText('Tipo de habitación')).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Compartido/ }))
+    expect(screen.getByRole('button', { name: /Compartido/ })).toHaveAttribute('aria-pressed', 'true')
     // Mock con total 0: CTA honesto + salida Limpiar.
     expect(screen.getByRole('button', { name: 'Cerrar y ajustar' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Limpiar todos los filtros' }))
     expect(screen.getByRole('button', { name: '< $400 mil' })).toHaveAttribute('aria-pressed', 'false')
     fireEvent.click(screen.getByRole('button', { name: 'Cerrar y ajustar' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /Filtros de búsqueda/ })).not.toBeInTheDocument())
+  })
+
+  it('BloqueServicios colapsa solo con más de 6 ítems (escala futura)', async () => {
+    const { BloqueServicios } = await import('./Buscar')
+    const setFiltros = vi.fn()
+    const ocho = Array.from({ length: 8 }, (_, i) => ({ id: 10 + i, label: `Extra ${i}` }))
+    const { rerender, unmount } = render(<MemoryRouter><BloqueServicios items={ocho} filtros={{}} setFiltros={setFiltros} /></MemoryRouter>)
+    // Colapsado: checkboxes ocultos hasta expandir.
+    expect(screen.queryByLabelText('Extra 0')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Servicios y comodidades/ }))
+    expect(screen.getByLabelText('Extra 0')).toBeInTheDocument()
+    unmount()
+    cleanup()
+    // Con 5 va abierto y el check escribe servicios + badge.
+    render(<MemoryRouter><BloqueServicios filtros={{}} setFiltros={setFiltros} /></MemoryRouter>)
+    fireEvent.click(screen.getByLabelText('WiFi Fibra'))
+    expect(setFiltros).toHaveBeenCalledWith(expect.objectContaining({ servicios: '1' }))
   })
 
   it('CTA muestra conteo en vivo cuando hay resultados', async () => {

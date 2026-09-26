@@ -9,7 +9,8 @@ import useMediaQuery from '../hooks/useMediaQuery'
 const Casa3D = lazy(() => import('../components/Casa3D'))
 import CercanoA, { etiquetaLugar } from '../components/CercanoA'
 import CiudadSelector, { CIUDADES_FALLBACK, etiquetaCiudad } from '../components/CiudadSelector'
-import Filtros, { contarAvanzados, PanelPrimario, MasFiltrosModal } from '../components/Filtros'
+import { contarAvanzados, parseServicios, toggleServicio, PanelPrimario, MasFiltrosModal, SERVICIOS_OPCIONES } from '../components/Filtros'
+import useTiposVivienda, { TIPOS_FALLBACK } from '../hooks/useTiposVivienda'
 import useFocusTrap from '../hooks/useFocusTrap'
 import Paginacion from '../components/Paginacion'
 import SearchBar from '../components/SearchBar'
@@ -19,6 +20,87 @@ function parseCiudadId(searchParams) {
   if (raw == null || raw === '') return null
   const n = Number(raw)
   return Number.isInteger(n) && n >= 1 ? n : null
+}
+
+// Bloque 2 del sheet: chips de tipo desde el catálogo dinámico (misma
+// fuente que desktop: `filtros.tipo`). Crece solo con scroll horizontal.
+export function BloqueTipos({ filtros, setFiltros }) {
+  const { tipos } = useTiposVivienda()
+  const lista = Array.isArray(tipos) && tipos.length > 0 ? tipos : TIPOS_FALLBACK
+  return (
+    <div className="flex gap-2 overflow-x-auto no-scrollbar fade-x pb-1" role="group" aria-label="Tipo de inmueble">
+      {[{ slug: '', nombre_visible: 'Todos' }, ...lista].map((t) => {
+        const activo = (filtros.tipo || '') === t.slug
+        return (
+          <button
+            key={t.slug || 'todos'}
+            type="button"
+            onClick={() => setFiltros({ ...filtros, tipo: t.slug })}
+            aria-pressed={activo}
+            title={t.descripcion_tooltip || t.nombre_visible}
+            className={`shrink-0 min-h-[44px] px-3.5 py-2 rounded-full border text-xs font-bold transition active:scale-[0.97] ${activo
+              ? 'border-navy-800 ring-2 ring-navy-800/25 bg-navy-800 text-white'
+              : 'border-neutral-200 bg-white text-neutral-600 active:bg-neutral-50'
+              }`}
+          >
+            {t.icono ? `${t.icono} ` : ''}{t.nombre_visible}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// Bloque 4 del sheet: grid de servicios colapsable. Con el catálogo actual
+// (5) va abierto; si supera 6 ítems arranca colapsado para no saturar.
+export const UMBRAL_COLAPSO_SERVICIOS = 6
+
+export function BloqueServicios({ items = SERVICIOS_OPCIONES, filtros, setFiltros }) {
+  const [abierto, setAbierto] = useState(items.length <= UMBRAL_COLAPSO_SERVICIOS)
+  const elegidos = parseServicios(filtros.servicios)
+  return (
+    <section aria-labelledby="f-serv-m" className="space-y-2">
+      <button
+        type="button"
+        onClick={() => setAbierto((v) => !v)}
+        aria-expanded={abierto}
+        aria-controls="f-serv-grid-m"
+        className="flex w-full items-center justify-between gap-2 min-h-[44px]"
+      >
+        <span className="text-xs font-bold text-navy-800" id="f-serv-m">
+          4 · Servicios y comodidades
+          {elegidos.length > 0 && (
+            <span className="ml-2 inline-flex items-center rounded-full bg-navy-800 px-2 py-0.5 text-[11px] font-bold text-white">
+              {elegidos.length}
+            </span>
+          )}
+        </span>
+        <span aria-hidden="true" className={`text-neutral-400 text-xs transition-transform ${abierto ? 'rotate-180' : ''}`}>▼</span>
+      </button>
+      {abierto && (
+        <div id="f-serv-grid-m" className="grid grid-cols-2 gap-2">
+          {items.map((opt) => (
+            <label
+              key={opt.id}
+              className={`flex items-center gap-2 min-h-[44px] px-3 rounded-xl border text-xs font-semibold cursor-pointer transition active:scale-[0.98] ${elegidos.includes(String(opt.id))
+                ? 'border-navy-800 ring-2 ring-navy-800/25 bg-navy-50 text-navy-900'
+                : 'border-neutral-200 bg-white text-neutral-600 active:bg-neutral-50'
+                }`}
+            >
+              <input
+                type="checkbox"
+                className="w-4 h-4 rounded border-neutral-300 text-navy-800 accent-navy-800"
+                checked={elegidos.includes(String(opt.id))}
+                onChange={(e) => setFiltros({ ...filtros, servicios: toggleServicio(filtros.servicios, opt.id, e.target.checked) })}
+                aria-label={opt.label}
+              />
+              {opt.label}
+            </label>
+          ))}
+        </div>
+      )}
+    </section>
+  )
 }
 
 // Gate del hero 3D: fuera de desktop no se monta nada (cero bytes de three).
@@ -365,12 +447,30 @@ export default function Buscar() {
               </button>
             </div>
             <div className="overflow-y-auto px-4 py-4 space-y-5">
-              {/* F4 presupuesto universitario (COP): atajos que escriben
-                  precio_min/max (misma fuente `filtros`). Pulsar el activo
-                  lo limpia (toggle-off). */}
-              <div>
-                <p className="text-xs font-semibold text-navy-800 mb-2" id="presupuesto-m">Presupuesto universitario (COP)</p>
-                <div className="flex gap-2" role="group" aria-labelledby="presupuesto-m">
+              {/* 1 · Ubicación / sector. */}
+              <section aria-labelledby="f-ubica-m" className="space-y-3">
+                <p className="text-xs font-bold text-navy-800" id="f-ubica-m">1 · Ubicación</p>
+                <div>
+                  <label className="block text-xs font-medium text-neutral-500 mb-1.5" htmlFor="cercano-a-m">Cercano a…</label>
+                  <CercanoA lugares={campus} value={campusId} onChange={setCampusId} inputId="cercano-a-m" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-neutral-500 mb-1.5" htmlFor="ciudad-m">Ciudad</label>
+                  <CiudadSelector value={ciudadId} onChange={setCiudadId} inputId="ciudad-m" ciudades={ciudades} />
+                </div>
+              </section>
+              {/* 2 · Tipo de inmueble: ÚNICA fuente (catálogo dinámico).
+                  Sin <select> nativo: en Android el popup lo pinta el OS en
+                  modo oscuro y rompe el sistema de diseño. */}
+              <section aria-labelledby="f-tipo-m" className="space-y-2">
+                <p className="text-xs font-bold text-navy-800" id="f-tipo-m">2 · Tipo de inmueble</p>
+                <BloqueTipos filtros={filtros} setFiltros={setFiltros} />
+              </section>
+              {/* 3 · Presupuesto: atajos + min/max en un solo bloque (el
+                  atajo escribe los inputs; pulsar el activo lo limpia). */}
+              <section aria-labelledby="f-pres-m" className="space-y-2">
+                <p className="text-xs font-bold text-navy-800" id="f-pres-m">3 · Presupuesto (COP)</p>
+                <div className="flex gap-2" role="group" aria-labelledby="f-pres-m">
                   {[
                     { etiqueta: '< $400 mil', min: '0', max: '400000' },
                     { etiqueta: '$400 – $700 mil', min: '400000', max: '700000' },
@@ -395,44 +495,39 @@ export default function Buscar() {
                     )
                   })}
                 </div>
-              </div>
-              {/* F4 tipo de habitación: atajos al `tipo` del catálogo dinámico. */}
-              <div>
-                <p className="text-xs font-semibold text-navy-800 mb-2" id="tipo-rapido-m">Tipo de habitación</p>
-                <div className="flex gap-2 overflow-x-auto no-scrollbar fade-x pb-1" role="group" aria-labelledby="tipo-rapido-m">
-                  {[
-                    { etiqueta: 'Todas', valor: '' },
-                    { etiqueta: 'Privada', valor: 'HABITACION_INDEPENDIENTE' },
-                    { etiqueta: 'Compartida', valor: 'COMPARTIDO' },
-                    { etiqueta: 'Apartaestudio', valor: 'APARTAESTUDIO' },
-                  ].map((t) => {
-                    const activo = (filtros.tipo || '') === t.valor
-                    return (
-                      <button
-                        key={t.etiqueta}
-                        type="button"
-                        onClick={() => setFiltros({ ...filtros, tipo: t.valor })}
-                        aria-pressed={activo}
-                        className={`shrink-0 min-h-[44px] px-3.5 py-2 rounded-full border text-xs font-bold transition active:scale-[0.97] ${activo
-                          ? 'border-navy-800 ring-2 ring-navy-800/25 bg-navy-800 text-white'
-                          : 'border-neutral-200 bg-white text-neutral-600 active:bg-neutral-50'
-                          }`}
-                      >
-                        {t.etiqueta}
-                      </button>
-                    )
-                  })}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label htmlFor="f-min-m" className="sr-only">Precio mínimo en COP</label>
+                    <input
+                      id="f-min-m"
+                      type="number"
+                      placeholder="Mín COP"
+                      value={filtros.min || ''}
+                      onChange={(e) => setFiltros({ ...filtros, min: e.target.value })}
+                      min="0"
+                      className="input-field"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="f-max-m" className="sr-only">Precio máximo en COP</label>
+                    <input
+                      id="f-max-m"
+                      type="number"
+                      placeholder="Máx COP"
+                      value={filtros.max || ''}
+                      onChange={(e) => setFiltros({ ...filtros, max: e.target.value })}
+                      min="0"
+                      className="input-field"
+                    />
+                  </div>
                 </div>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-neutral-500 mb-1.5" htmlFor="cercano-a-m">Cercano a…</label>
-                <CercanoA lugares={campus} value={campusId} onChange={setCampusId} inputId="cercano-a-m" />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-neutral-500 mb-1.5" htmlFor="ciudad-m">Ciudad</label>
-                <CiudadSelector value={ciudadId} onChange={setCiudadId} inputId="ciudad-m" ciudades={ciudades} />
-              </div>
-              <Filtros filtros={filtros} setFiltros={setFiltros} soloPanel />
+              </section>
+              {/* 4 · Servicios: colapsable a partir de 6 (escala sin saturar). */}
+              <BloqueServicios
+                items={SERVICIOS_OPCIONES}
+                filtros={filtros}
+                setFiltros={setFiltros}
+              />
             </div>
             {/* F4 barra de acción flotante con conteo en vivo (con salida
                 explícita para limpiar y copy honesto en cero). */}
