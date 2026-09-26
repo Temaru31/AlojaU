@@ -83,13 +83,23 @@ async def crear_reporte(
     db: AsyncSession = Depends(get_session),
     authorization: Optional[str] = Header(None),
 ):
-    """Crea reporte PENDIENTE (anónimo si no hay token). 404 si la publicación no existe."""
-    user = get_optional_user(authorization)
+    """Crea reporte PENDIENTE (anónimo si no hay token).
+
+    Anti-oráculo: inexistente y no-ACTIVO responden el MISMO 404 genérico,
+    para no revelar avisos privados/pendientes por diferencia de respuesta.
+    Solo avisos ACTIVO y de dueño activo son reportables.
+    """
+    user = await get_optional_user(authorization)
     try:
         from app.models import Publicacion, ReportePublicacion
 
         pub = await db.get(Publicacion, payload.publicacion_id)
-        if not pub:
+        if not pub or pub.estado != "ACTIVO":
+            raise HTTPException(status_code=404, detail="Publicación no encontrada")
+        # Dueño en soft-delete: mismo 404 (el aviso es invisible).
+        from app.models import Usuario
+        dueno = await db.get(Usuario, pub.usuario_id)
+        if dueno is not None and getattr(dueno, "eliminado_en", None) is not None:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
         _check_report_rate_limit(request)
         nuevo = ReportePublicacion(
@@ -125,11 +135,21 @@ async def listar_reportes(
     """Lista reportes (filtro opcional por estado), más recientes primero."""
     from app.models import ReportePublicacion
 
-    stmt = select(ReportePublicacion).order_by(ReportePublicacion.id.desc())
-    if estado:
-        stmt = stmt.where(ReportePublicacion.estado == estado)
-    rows = (await db.execute(stmt)).scalars().all()
-    return [_to_out(r) for r in rows]
+    try:
+        stmt = select(ReportePublicacion).order_by(ReportePublicacion.id.desc())
+        if estado:
+            stmt = stmt.where(ReportePublicacion.estado == estado)
+        rows = (await db.execute(stmt)).scalars().all()
+        return [_to_out(r) for r in rows]
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[reportes listar] DB falló: {e!r}", exc_info=True)
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router.patch("/{reporte_id}", response_model=ReporteOut, summary="HU-010B Revisar reporte (solo ADMIN)")
@@ -142,15 +162,29 @@ async def revisar_reporte(
     """confirmar -> CONFIRMADO (revisado, procede) | descartar -> DESCARTADO. Solo desde PENDIENTE."""
     from app.models import ReportePublicacion
 
-    rep = await db.get(ReportePublicacion, reporte_id)
-    if not rep:
-        raise HTTPException(status_code=404, detail="Reporte no encontrado")
-    if rep.estado != "PENDIENTE":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Reporte ya revisado (estado {rep.estado})",
-        )
-    rep.estado = "CONFIRMADO" if payload.accion == "confirmar" else "DESCARTADO"
-    await db.commit()
-    await db.refresh(rep)
-    return _to_out(rep)
+    try:
+        rep = await db.get(ReportePublicacion, reporte_id)
+        if not rep:
+            raise HTTPException(status_code=404, detail="Reporte no encontrado")
+        if rep.estado != "PENDIENTE":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Reporte ya revisado (estado {rep.estado})",
+            )
+        rep.estado = "CONFIRMADO" if payload.accion == "confirmar" else "DESCARTADO"
+        await db.commit()
+        await db.refresh(rep)
+        return _to_out(rep)
+    except HTTPException:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[reportes revisar] DB falló: {e!r}", exc_info=True)
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")

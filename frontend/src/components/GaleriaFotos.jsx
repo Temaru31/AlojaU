@@ -1,5 +1,7 @@
 // GaleriaFotos - responsive +N + visor
 // Mobile: 1 foto + +N (ej. +3 si hay 4), Desktop: 4 fotos grid + +N (ej. +6 si hay 10)
+// BUG#1: `fotos[0]` es la portada (orden=1). El backend la trae ordenada y
+// Detalle la pasa vía fotosOrdenadas(); no reordenar aquí.
 import { useState } from 'react'
 import VisorFotos from './VisorFotos'
 import SmartImage from './SmartImage'

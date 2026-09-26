@@ -1,0 +1,33 @@
+# Dependabot — AlojaU (Tarea 3, AUDITORIA.md §8)
+# Actualizaciones semanales (lunes 06:00 UTC, alineado al cron de CodeQL),
+# tope 5 PRs abiertos por ecosistema. Solo avisa/propone; el merge sigue
+# manual con revisión (DoD + checks de CI en verde).
+version: 2
+
+updates:
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5

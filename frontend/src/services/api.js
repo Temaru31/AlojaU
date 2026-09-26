@@ -5,7 +5,9 @@ import axios from 'axios'
 
 export const API_TIMEOUT_MS = 55000
 export const API_MAX_RETRIES = 2
-export const API_SLOW_THRESHOLD_MS = 4000
+// M7: el toast "Despertando el servidor" espera 3.5s; si la API responde
+// antes, el temporizador se destruye sin mostrar nada (ver trackEnd).
+export const API_SLOW_THRESHOLD_MS = 3500
 const RETRYABLE_STATUS = new Set([502, 503, 504])
 const LOCAL_API_FALLBACK = 'http://localhost:8000'
 
@@ -20,12 +22,64 @@ export function getApiBase(env = import.meta.env) {
   return url || LOCAL_API_FALLBACK
 }
 
+// Bloque 2: reintentos seguros. Solo lecturas (GET/HEAD/OPTIONS) se
+// reintentan siempre; las escrituras (POST/PATCH/PUT/DELETE) NUNCA, salvo
+// que lleven `Idempotency-Key` (el backend devuelve el replay guardado).
+// Sin `config` (errores sintéticos de tests) se conserva la semántica
+// legacy (reintentable): en producción axios siempre adjunta config.
+const METODOS_LECTURA = new Set(['get', 'head', 'options'])
+
+export function tieneClaveIdempotencia(err) {
+  const h = err?.config?.headers
+  if (!h) return false
+  try {
+    if (typeof h.get === 'function') return !!h.get('Idempotency-Key')
+  } catch { /* cae a objeto plano */ }
+  return !!(h['Idempotency-Key'] || h['idempotency-key'])
+}
+
+export function conIdempotencia(config = {}) {
+  // Clave única por intento lógico de formulario: los reintentos del
+  // interceptor reenvían el MISMO config (misma clave); un clic nuevo
+  // genera otra (nuevo objeto). Sin crypto (SSR/tests viejos): fallback.
+  let clave = ''
+  try {
+    clave = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  } catch {
+    clave = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  }
+  return { ...config, headers: { ...(config.headers || {}), 'Idempotency-Key': clave } }
+}
+
 export function isRetryableError(err) {
   if (isCancelError(err)) return false // OLA4: un abort nunca se reintenta
+  if (tieneClaveIdempotencia(err)) {
+    const status = err?.response?.status
+    if (status != null) return RETRYABLE_STATUS.has(status)
+    return true
+  }
+  const metodo = String(err?.config?.method || '').toLowerCase()
+  if (metodo && !METODOS_LECTURA.has(metodo)) return false
   const status = err?.response?.status
   if (status != null) return RETRYABLE_STATUS.has(status)
   // Sin respuesta: timeout, red caída, cold start Render.
   return true
+}
+
+// Mensajes sencillos en español para usuarios no técnicos.
+// No reemplaza `detail` del backend: el interceptor lo adjunta como
+// `err.mensajeAmigable` sin romper lecturas existentes de err.response.
+export function mensajeAmigable(err) {
+  const status = err?.response?.status
+  if (status === 401) return 'Tu sesión ha expirado. Por favor, ingresa nuevamente.'
+  if (status === 413) return 'La imagen que intentas subir es muy pesada. El tamaño máximo permitido es 5 MB.'
+  if (status != null && status >= 500) return 'Tuvimos un problema técnico momentáneo. Ya estamos trabajando en ello.'
+  if (status == null) return 'Parece que perdiste la conexión a internet. Revisa tu señal e intenta de nuevo.'
+  const detail = err?.response?.data?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  return 'No se pudo completar la acción. Intenta de nuevo.'
 }
 
 // OLA4: peticiones abortadas vía AbortController (axios las rechaza con ERR_CANCELED).
@@ -109,11 +163,13 @@ api.interceptors.response.use(
     const cfg = err.config
     if (!cfg) {
       trackEnd()
+      err.mensajeAmigable = mensajeAmigable(err)
       throw err
     }
     const canRetry = (cfg.__retryCount ?? 0) < API_MAX_RETRIES && isRetryableError(err)
     if (!canRetry) {
       trackEnd()
+      err.mensajeAmigable = mensajeAmigable(err)
       throw err
     }
     const attempt = cfg.__retryCount ?? 0

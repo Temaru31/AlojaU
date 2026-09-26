@@ -39,9 +39,19 @@ def calcular_indice(
     w_reportes = getattr(settings, "TRUST_WEIGHT_REPORTES", 10)
 
     # ---- Factor1: Completitud 40 (desglose fino Tabla16) ----
+    # M2 allowlist dinámica: catálogo en BD (housing_types). Aquí allowlist
+    # estática ampliada (los 6 del seed) para cálculo sync sin I/O; la
+    # validación de escritura usa la tabla (esta_activo=true) + caché 5min.
+    try:
+        from app.services.housing_types import FALLBACK_TIPOS as _HT
+        _TIPOS_VALIDOS = {t["slug"] for t in _HT}
+    except Exception:
+        _TIPOS_VALIDOS = {"HABITACION_FAMILIAR", "HABITACION_INDEPENDIENTE",
+                          "APARTAESTUDIO", "COMPARTIDO",
+                          "APARTAMENTO_COMPLETO", "HABITACION_PISO_COMPARTIDO"}
     c_canon = 10 if canon_mensual is not None and canon_mensual > 0 else 0
     c_deposito = 5 if deposito_requerido is not None else 0  # 0 explícito cuenta
-    c_tipo = 5 if tipo_inmueble in ("HABITACION_FAMILIAR","HABITACION_INDEPENDIENTE","APARTAESTUDIO","COMPARTIDO") else 0
+    c_tipo = 5 if tipo_inmueble in _TIPOS_VALIDOS else 0
     c_reglas = 5 if reglas_convivencia and len(reglas_convivencia.strip()) >= 10 else 0
     c_direccion = 5 if direccion_referencial and len(direccion_referencial.strip()) >= 10 else 0
     c_servicios = 10 if servicios_ids and len(servicios_ids) >= 1 else 0

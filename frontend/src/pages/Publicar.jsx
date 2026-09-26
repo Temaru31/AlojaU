@@ -1,31 +1,87 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api } from '../services/api'
+import { api, conIdempotencia } from '../services/api'
+import GoogleButton from '../components/GoogleButton'
+import { signInWithGoogle, guardarRedirectPostLogin } from '../services/supabaseClient'
 import UploadFotos from '../components/UploadFotos'
 import MapPicker from '../components/MapPicker'
+import ZonaSelect from '../components/ZonaSelect'
 import { notifyToast } from '../components/Toast'
-import { emitAuthChange } from '../contexts/AuthContext'
+import { emitAuthChange, useAuth } from '../contexts/AuthContext'
+import ContadorCaracteres from '../components/ContadorCaracteres'
+import { LIMITES, estadoRango, RANGO_CLS } from '../constants'
+import { SERVICIOS } from '../utils/servicios'
+import InfoTooltip from '../components/InfoTooltip'
+import useTiposVivienda from '../hooks/useTiposVivienda'
 
-const SERVICIOS = [
-  { id: 1, nombre: 'WiFi Fibra' },
-  { id: 2, nombre: 'Baño Privado' },
-  { id: 3, nombre: 'Cocina Compartida' },
-  { id: 4, nombre: 'Amoblado' },
-  { id: 5, nombre: 'Lavadora' },
-]
-const ZONAS = [
-  { id: 1, nombre: 'Centro' },
-  { id: 2, nombre: 'Pandiguando' },
-  { id: 3, nombre: 'Tulcán' },
-]
+/**
+ * Valida el formulario de publicar contra LIMITES (fuente única de verdad).
+ * @param {object} form Estado del formulario (mismas claves que Publicar).
+ * @param {object} [lim=LIMITES] Límites inyectables (tests alteran el límite).
+ * @returns {object} Mapa campo->mensaje (vacío = válido).
+ */
+export function validarPublicar(form, lim = LIMITES) {
+  const e = {}
+  const t = (form.titulo || '').trim()
+  if (t.length < lim.titulo.min) e.titulo = `Mínimo ${lim.titulo.min} caracteres`
+  else if ((form.titulo || '').length > lim.titulo.max) e.titulo = `Máximo ${lim.titulo.max} caracteres`
+  const d = (form.descripcion || '').trim()
+  if (d.length < lim.descripcion.min) e.descripcion = `Mínimo ${lim.descripcion.min} caracteres`
+  else if ((form.descripcion || '').length > lim.descripcion.max) e.descripcion = `Máximo ${lim.descripcion.max} caracteres`
+  if (!form.canon_mensual || Number(form.canon_mensual) <= 0) e.canon_mensual = 'Canon > 0'
+  else if (Number(form.canon_mensual) > lim.canonMax) e.canon_mensual = `Máximo ${lim.canonMax / 1_000_000}M`
+  if (form.deposito_requerido === '' || Number(form.deposito_requerido) < 0) e.deposito_requerido = 'Depósito >=0'
+  const dir = (form.direccion_referencial || '').trim()
+  if (dir.length < lim.direccion.min) e.direccion_referencial = `Mínimo ${lim.direccion.min} caracteres`
+  else if ((form.direccion_referencial || '').length > lim.direccion.max) e.direccion_referencial = `Máximo ${lim.direccion.max} caracteres`
+  const reg = (form.reglas_convivencia || '').trim()
+  if (reg.length < lim.reglas.min) e.reglas_convivencia = `Mínimo ${lim.reglas.min} caracteres`
+  else if ((form.reglas_convivencia || '').length > lim.reglas.max) e.reglas_convivencia = `Máximo ${lim.reglas.max} caracteres`
+  if (!Array.isArray(form.servicios_ids) || form.servicios_ids.length === 0) e.servicios_ids = 'Selecciona al menos 1 servicio'
+  // Zona del catálogo o barrio libre (mínimo uno).
+  if (form.zona_barrio_id == null && !(form.barrio_texto || '').trim()) {
+    e.zona = 'Elige tu barrio de la lista o escríbelo'
+  }
+  const fotosValid = (form.fotos || []).filter((f) => (f || '').trim() !== '')
+  if (fotosValid.length < lim.fotosMin) e.fotos = `Mínimo ${lim.fotosMin} fotos (URLs válidas)`
+  else {
+    for (const url of fotosValid) {
+      try { new URL(url); if (!url.startsWith('http')) throw new Error() } catch { e.fotos = 'URLs deben ser http(s) válidas'; break }
+    }
+  }
+  if (form.latitud !== '' && form.latitud != null && (isNaN(Number(form.latitud)) || Number(form.latitud) < -90 || Number(form.latitud) > 90)) e.latitud = 'Latitud entre -90 y 90'
+  if (form.longitud !== '' && form.longitud != null && (isNaN(Number(form.longitud)) || Number(form.longitud) < -180 || Number(form.longitud) > 180)) e.longitud = 'Longitud entre -180 y 180'
+  return e
+}
+
+// M2: selector dinámico (/config-publica con fallback local). Mantiene el
+// contrato (value slug) y muestra tooltip por opción vía `title`.
+export function SelectorTipoPublicar({ value, onChange, id = 'tipo-vivienda' }) {
+  const { tipos } = useTiposVivienda()
+  return (
+    <select
+      id={id}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="select-field"
+      required
+      aria-label="Tipo de vivienda"
+    >
+      {tipos.map((t) => (
+        <option key={t.slug} value={t.slug} title={t.descripcion_tooltip || ''}>
+          {t.icono ? `${t.icono} ` : ''}{t.nombre_visible || t.slug}
+        </option>
+      ))}
+    </select>
+  )
+}
 
 export default function Publicar() {
-  const [campus, setCampus] = useState([])
+  const { refresh, logout } = useAuth()
   const [token, setToken] = useState(() => localStorage.getItem('alojau_token') || '')
-  const [loginEmail, setLoginEmail] = useState('')
-  const [loginPass, setLoginPass] = useState('')
-  const [loginError, setLoginError] = useState('')
-  const [loginLoading, setLoginLoading] = useState(false)
+  // M5: sin sesión se muestra auth unificado (Google + Mi Perfil), no form legacy.
+  const [googleLoading, setGoogleLoading] = useState(false)
+  const [googleError, setGoogleError] = useState('')
 
   const [form, setForm] = useState({
     titulo: '',
@@ -34,24 +90,20 @@ export default function Publicar() {
     canon_mensual: '',
     deposito_requerido: '0',
     zona_barrio_id: 3,
+    barrio_texto: null,
     direccion_referencial: '',
     reglas_convivencia: '',
     latitud: '',
     longitud: '',
     servicios_ids: [1],
-    campus_ids: [1],
-    fotos: ['https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=600&h=400&fit=crop', 'https://images.unsplash.com/photo-1484154218962-a197022b5858?w=600&h=400&fit=crop', 'https://images.unsplash.com/photo-1493809842364-78817add58d1?w=600&h=400&fit=crop'],
+    campus_ids: [],
+    fotos: ['https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?auto=format&fit=crop&w=800&q=80', 'https://images.unsplash.com/photo-1484154218962-a197022b5858?auto=format&fit=crop&w=800&q=80', 'https://images.unsplash.com/photo-1493809842364-78817add58d1?auto=format&fit=crop&w=800&q=80'],
   })
   const [errors, setErrors] = useState({})
   const [submitError, setSubmitError] = useState('')
+  const [submitPhoneGate, setSubmitPhoneGate] = useState(false)
   const [submitOk, setSubmitOk] = useState(null)
   const [submitting, setSubmitting] = useState(false)
-
-  useEffect(() => {
-    api.get('/api/campus')
-      .then(r => setCampus(r.data))
-      .catch(() => setCampus([{ id: 1, institucion: 'Universidad del Cauca', nombre_sede: 'Campus Tulcán' }]))
-  }, [])
 
   // UX-AUDIT P0: igual que Perfil — el navbar puede cerrar sesión; re-sincroniza
   // el token local para no mostrar el formulario con un token muerto (401).
@@ -67,54 +119,36 @@ export default function Publicar() {
     }
   }, [])
 
-  const handleLogin = async (e) => {
-    e.preventDefault()
-    setLoginError(''); setLoginLoading(true)
+  // M5: Google con retorno a /publicar tras el callback.
+  const handleGoogle = async () => {
+    setGoogleError('')
+    setGoogleLoading(true)
+    guardarRedirectPostLogin('/publicar')
     try {
-      const r = await api.post('/api/auth/login', { email: loginEmail, password: loginPass })
-      const t = r.data.access_token
-      localStorage.setItem('alojau_token', t)
-      setToken(t)
-      emitAuthChange()
-    } catch (err) {
-      setLoginError(err.response?.data?.detail || 'Credenciales inválidas')
-    } finally { setLoginLoading(false) }
+      await signInWithGoogle()
+    } catch (e) {
+      setGoogleError(e?.message || 'Google OAuth no está configurado todavía.')
+      setGoogleLoading(false)
+    }
   }
 
+  // M1: cierre total (revoca en BD + limpia sesión + redirige a /).
   const handleLogout = () => {
-    localStorage.removeItem('alojau_token')
     setToken('')
-    emitAuthChange()
+    logout?.()
   }
 
   const validate = () => {
-    const e = {}
-    if (!form.titulo || form.titulo.trim().length < 10) e.titulo = 'Mínimo 10 caracteres'
-    if (form.titulo && form.titulo.length > 150) e.titulo = 'Máximo 150 caracteres'
-    if (!form.descripcion || form.descripcion.trim().length < 20) e.descripcion = 'Mínimo 20 caracteres'
-    if (!form.canon_mensual || Number(form.canon_mensual) <= 0) e.canon_mensual = 'Canon > 0'
-    if (Number(form.canon_mensual) > 10_000_000) e.canon_mensual = 'Máximo 10M'
-    if (form.deposito_requerido === '' || Number(form.deposito_requerido) < 0) e.deposito_requerido = 'Depósito >=0'
-    if (!form.direccion_referencial || form.direccion_referencial.trim().length < 10) e.direccion_referencial = 'Mínimo 10 caracteres'
-    if (!form.reglas_convivencia || form.reglas_convivencia.trim().length < 10) e.reglas_convivencia = 'Mínimo 10 caracteres'
-    if (form.servicios_ids.length === 0) e.servicios_ids = 'Selecciona al menos 1 servicio'
-    if (form.campus_ids.length === 0) e.campus_ids = 'Selecciona al menos 1 campus'
-    const fotosValid = form.fotos.filter(f => f.trim() !== '')
-    if (fotosValid.length < 3) e.fotos = 'Mínimo 3 fotos (URLs válidas)'
-    else {
-      for (const url of fotosValid) {
-        try { new URL(url); if (!url.startsWith('http')) throw new Error() } catch { e.fotos = 'URLs deben ser http(s) válidas'; break }
-      }
-    }
-    if (form.latitud !== '' && (isNaN(Number(form.latitud)) || Number(form.latitud) < -90 || Number(form.latitud) > 90)) e.latitud = 'Latitud entre -90 y 90'
-    if (form.longitud !== '' && (isNaN(Number(form.longitud)) || Number(form.longitud) < -180 || Number(form.longitud) > 180)) e.longitud = 'Longitud entre -180 y 180'
+    // Detalle #2: fuente única LIMITES (antes hardcodeaba 10/150/20/2000/10M
+    // duplicando constants.js). El JSX ya usa LIMITES para maxLength.
+    const e = validarPublicar(form)
     setErrors(e)
     return Object.keys(e).length === 0
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    setSubmitError(''); setSubmitOk(null)
+    setSubmitError(''); setSubmitOk(null); setSubmitPhoneGate(false)
     if (!validate()) return
     if (!token) {
       setSubmitError('Debes iniciar sesión como ARRENDADOR')
@@ -128,28 +162,39 @@ export default function Publicar() {
       tipo_inmueble: form.tipo_inmueble,
       canon_mensual: Number(form.canon_mensual),
       deposito_requerido: Number(form.deposito_requerido),
-      zona_barrio_id: Number(form.zona_barrio_id),
+      zona_barrio_id: form.zona_barrio_id != null ? Number(form.zona_barrio_id) : null,
+      barrio_texto: (form.barrio_texto || '').trim() || null,
       direccion_referencial: form.direccion_referencial.trim(),
       reglas_convivencia: form.reglas_convivencia.trim(),
       latitud: form.latitud === '' ? null : Number(form.latitud),
       longitud: form.longitud === '' ? null : Number(form.longitud),
       servicios_ids: form.servicios_ids,
-      campus_ids: form.campus_ids,
+      campus_ids: [],
       fotos: fotosValid,
     }
     try {
-      const r = await api.post('/api/publicaciones', payload, { headers: { Authorization: `Bearer ${token}` } })
+      // Bloque 2: clave única por clic; si el POST cae en timeout y axios
+      // reintenta, el backend devuelve el replay (sin duplicar el aviso).
+      const r = await api.post('/api/publicaciones', payload, conIdempotencia({ headers: { Authorization: `Bearer ${token}` } }))
       setSubmitOk(r.data)
+      // v13.2 reactividad de rol: si hubo promoción, re-sincroniza el perfil.
+      if (r.data?.rol_actualizado) {
+        try { await refresh?.() } catch { /* noop */ }
+        emitAuthChange()
+      }
     } catch (err) {
       const detail = err.response?.data?.detail
       if (Array.isArray(detail)) {
         setSubmitError(detail.map(d => `${d.loc?.join('.')}: ${d.msg}`).join(' | '))
       } else if (typeof detail === 'string') {
         setSubmitError(detail)
+        setSubmitPhoneGate(err.response?.status === 400)
       } else if (err.response?.status === 401) {
         setSubmitError('No autorizado. Verifica tu token ARRENDADOR.')
       } else if (err.response?.status === 403) {
-        setSubmitError('Solo ARRENDADOR puede publicar (403)')
+        const d = typeof detail === 'string' ? detail : ''
+        // v13: email sin confirmar o scope insuficiente.
+        setSubmitError(d || 'Solo ARRENDADOR puede publicar (403). Si tu cuenta es de estudiante, se promueve sola al publicar; confirma tu correo en Mi Perfil si se solicita.')
       } else {
         setSubmitError(err.message || 'Error al publicar')
       }
@@ -180,35 +225,19 @@ export default function Publicar() {
               Publicar vivienda
             </h1>
             <p className="text-sm text-neutral-500 mb-6">
-              Debes iniciar sesión como <b>ARRENDADOR</b> para publicar. Estado inicial siempre <span className="font-medium text-gold-600">PENDIENTE</span> hasta ser revisada.
+              Debes iniciar sesión para publicar. Estado inicial siempre <span className="font-medium text-gold-600">PENDIENTE</span> hasta ser revisada (tu cuenta se activa como arrendador al publicar).
             </p>
 
-            <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-navy-800 mb-1.5">Email</label>
-                <input
-                  type="email"
-                  value={loginEmail}
-                  onChange={e => setLoginEmail(e.target.value)}
-                  className="input-field"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-navy-800 mb-1.5">Contraseña</label>
-                <input
-                  type="password"
-                  value={loginPass}
-                  onChange={e => setLoginPass(e.target.value)}
-                  className="input-field"
-                  required
-                />
-              </div>
-              {loginError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-2">{loginError}</p>}
-              <button type="submit" disabled={loginLoading} className="btn-accent w-full justify-center">
-                {loginLoading ? 'Ingresando...' : 'Iniciar sesión como ARRENDADOR'}
-              </button>
-            </form>
+            <GoogleButton loading={googleLoading} onClick={handleGoogle} />
+            {googleError && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md p-2 mt-3" role="alert">{googleError}</p>}
+            <div className="flex items-center gap-3 my-4" aria-hidden="true">
+              <span className="flex-1 h-px bg-neutral-200" />
+              <span className="text-[11px] text-neutral-400">o</span>
+              <span className="flex-1 h-px bg-neutral-200" />
+            </div>
+            <Link to="/perfil" className="btn-secondary w-full justify-center">
+              Entrar con correo en Mi Perfil
+            </Link>
           </div>
         </div>
       </div>
@@ -234,7 +263,7 @@ export default function Publicar() {
             <button type="button" onClick={handleLogout} className="text-xs sm:text-sm text-neutral-500 hover:text-red-600">Cerrar sesión</button>
           </div>
           <p className="text-sm text-neutral-500 mt-1">
-            Completa los datos. La publicacion pasara a estado PENDIENTE hasta ser revisada.
+            Publicar es gratis y toma menos de 2 minutos. Tu anuncio estará visible tan pronto confirmes la ubicación en el mapa.
           </p>
         </div>
 
@@ -246,6 +275,9 @@ export default function Publicar() {
               </svg>
               <p className="font-semibold text-emerald-800">¡Publicación creada! Estado: {submitOk.estado}</p>
             </div>
+            {submitOk.rol_actualizado && (
+              <p className="text-sm text-emerald-700 mt-1">🎉 Tu cuenta ahora es <b>Arrendador</b>: tu panel se actualizó solo.</p>
+            )}
             <p className="text-sm text-emerald-700 mt-1">{submitOk.mensaje || ''}</p>
             {submitOk.indice_confianza != null && (
               <p className="text-xs text-emerald-600 mt-2">Índice confianza: <b>{submitOk.indice_confianza}</b> — {submitOk.advertencia}</p>
@@ -253,46 +285,60 @@ export default function Publicar() {
             <p className="text-xs text-emerald-500 mt-2">ID {submitOk.id} — No aparece en catálogo hasta ser aprobada.</p>
           </div>
         )}
-        {submitError && <p className="bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 mb-4 text-sm break-words">{submitError}</p>}
+        {submitError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+            <p className="text-red-700 text-sm break-words">{submitError}</p>
+            {submitPhoneGate && (
+              <Link to="/perfil#datos" className="inline-block mt-2 text-xs font-semibold text-navy-700 underline hover:text-navy-900">
+                Vincular mi número en Mi Perfil → Datos y contacto
+              </Link>
+            )}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="card p-6 md:p-8 space-y-5" noValidate>
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Titulo de la publicacion * <span className="text-neutral-400 font-normal">(10-150)</span></label>
-            <input
-              value={form.titulo}
-              onChange={e => setForm({ ...form, titulo: e.target.value })}
-              placeholder="Ej: Habitacion amoblada cerca al Tulcan"
-              className={`input-field ${errors.titulo ? '!border-red-300 !shadow-none' : ''}`}
-              required
-            />
+            <div className="relative">
+              <input
+                value={form.titulo}
+                onChange={e => setForm({ ...form, titulo: e.target.value })}
+                placeholder="Ej: Habitacion amoblada cerca al Tulcan"
+                maxLength={LIMITES.titulo.max}
+                aria-describedby="titulo-contador"
+                className={`input-field ${errors.titulo ? '!border-red-300 !shadow-none' : RANGO_CLS[estadoRango(form.titulo.trim().length, LIMITES.titulo.min, LIMITES.titulo.max)]}`}
+                required
+              />
+              <ContadorCaracteres id="titulo-contador" len={form.titulo.trim().length} min={LIMITES.titulo.min} max={LIMITES.titulo.max} />
+            </div>
             {errors.titulo && <p className="text-xs text-red-600 mt-1">{errors.titulo}</p>}
           </div>
 
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Descripcion * <span className="text-neutral-400 font-normal">(20-2000)</span></label>
-            <textarea
-              value={form.descripcion}
-              onChange={e => setForm({ ...form, descripcion: e.target.value })}
-              rows={3}
-              placeholder="Amoblada, baño privado, WiFi 200MB, cerca universidad..."
-              className={`input-field resize-none ${errors.descripcion ? '!border-red-300 !shadow-none' : ''}`}
-            />
+            <div className="relative">
+              <textarea
+                value={form.descripcion}
+                onChange={e => setForm({ ...form, descripcion: e.target.value })}
+                rows={3}
+                placeholder="Amoblada, baño privado, WiFi 200MB, cerca universidad..."
+                maxLength={LIMITES.descripcion.max}
+                aria-describedby="descripcion-contador"
+                className={`input-field resize-none ${errors.descripcion ? '!border-red-300 !shadow-none' : RANGO_CLS[estadoRango(form.descripcion.trim().length, LIMITES.descripcion.min, LIMITES.descripcion.max)]}`}
+              />
+              <ContadorCaracteres id="descripcion-contador" len={form.descripcion.trim().length} min={LIMITES.descripcion.min} max={LIMITES.descripcion.max} />
+            </div>
             {errors.descripcion && <p className="text-xs text-red-600 mt-1">{errors.descripcion}</p>}
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-navy-800 mb-1.5">Tipo de vivienda *</label>
-            <select
-              value={form.tipo_inmueble}
-              onChange={e => setForm({ ...form, tipo_inmueble: e.target.value })}
-              className="select-field"
-              required
-            >
-              <option value="HABITACION_FAMILIAR">Habitacion familiar</option>
-              <option value="HABITACION_INDEPENDIENTE">Habitacion independiente</option>
-              <option value="APARTAESTUDIO">Apartaestudio</option>
-              <option value="COMPARTIDO">Compartido</option>
-            </select>
+            <label className="block text-sm font-medium text-navy-800 mb-1.5">
+              <span className="inline-flex items-center gap-1.5">
+                Tipo de vivienda *
+                <InfoTooltip texto="Elige el tipo que mejor describe tu aviso. Pasa el cursor por cada opción para ver su descripción." />
+              </span>
+            </label>
+            <SelectorTipoPublicar value={form.tipo_inmueble} onChange={(v) => setForm({ ...form, tipo_inmueble: v })} />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -307,6 +353,11 @@ export default function Publicar() {
                 required
               />
               {errors.canon_mensual && <p className="text-xs text-red-600 mt-1">{errors.canon_mensual}</p>}
+              {!errors.canon_mensual && form.canon_mensual !== '' && Number(form.canon_mensual) > 0 && Number(form.canon_mensual) < 100000 && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5 mt-1.5" role="status">
+                  ¿El precio es correcto? Recuerda ingresar el monto total mensual.
+                </p>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-navy-800 mb-1.5">Deposito (0 si no aplica)</label>
@@ -322,43 +373,52 @@ export default function Publicar() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-navy-800 mb-1.5">Zona / barrio *</label>
-            <select
-              value={form.zona_barrio_id}
-              onChange={e => setForm({ ...form, zona_barrio_id: Number(e.target.value) })}
-              className="select-field"
-            >
-              {ZONAS.map(z => <option key={z.id} value={z.id}>{z.nombre}</option>)}
-            </select>
+            <label className="block text-sm font-medium text-navy-800 mb-1.5" htmlFor="zona-barrio">Zona / barrio *</label>
+            <ZonaSelect
+              value={{ zona_barrio_id: form.zona_barrio_id, barrio_texto: form.barrio_texto }}
+              onChange={(z) => setForm({ ...form, zona_barrio_id: z.zona_barrio_id, barrio_texto: z.barrio_texto })}
+              inputId="zona-barrio"
+              error={errors.zona}
+            />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Direccion referencial *</label>
-            <input
-              value={form.direccion_referencial}
-              onChange={e => setForm({ ...form, direccion_referencial: e.target.value })}
-              placeholder="No compartas tu direccion exacta"
-              className={`input-field ${errors.direccion_referencial ? '!border-red-300 !shadow-none' : ''}`}
-              required
-            />
+            <div className="relative">
+              <input
+                value={form.direccion_referencial}
+                onChange={e => setForm({ ...form, direccion_referencial: e.target.value })}
+                placeholder="No compartas tu direccion exacta"
+                maxLength={LIMITES.direccion.max}
+                aria-describedby="direccion-contador"
+                className={`input-field ${errors.direccion_referencial ? '!border-red-300 !shadow-none' : RANGO_CLS[estadoRango(form.direccion_referencial.trim().length, LIMITES.direccion.min, LIMITES.direccion.max)]}`}
+                required
+              />
+              <ContadorCaracteres id="direccion-contador" len={form.direccion_referencial.trim().length} min={LIMITES.direccion.min} max={LIMITES.direccion.max} />
+            </div>
             {errors.direccion_referencial && <p className="text-xs text-red-600 mt-1">{errors.direccion_referencial}</p>}
           </div>
 
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Reglas de convivencia *</label>
-            <textarea
-              value={form.reglas_convivencia}
-              onChange={e => setForm({ ...form, reglas_convivencia: e.target.value })}
-              placeholder="Describe las reglas de convivencia..."
-              rows={3}
-              className={`input-field resize-none ${errors.reglas_convivencia ? '!border-red-300 !shadow-none' : ''}`}
-            />
+            <div className="relative">
+              <textarea
+                value={form.reglas_convivencia}
+                onChange={e => setForm({ ...form, reglas_convivencia: e.target.value })}
+                placeholder="Describe las reglas de convivencia..."
+                rows={3}
+                maxLength={LIMITES.reglas.max}
+                aria-describedby="reglas-contador"
+                className={`input-field resize-none ${errors.reglas_convivencia ? '!border-red-300 !shadow-none' : RANGO_CLS[estadoRango(form.reglas_convivencia.trim().length, LIMITES.reglas.min, LIMITES.reglas.max)]}`}
+              />
+              <ContadorCaracteres id="reglas-contador" len={form.reglas_convivencia.trim().length} min={LIMITES.reglas.min} max={LIMITES.reglas.max} />
+            </div>
             {errors.reglas_convivencia && <p className="text-xs text-red-600 mt-1">{errors.reglas_convivencia}</p>}
           </div>
 
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Ubicación en mapa <span className="text-neutral-400 font-normal">(opcional, guarda coords directo)</span></label>
-            <p className="text-[11px] text-neutral-400 mb-2">La ubicación del pin prevalece sobre el texto: lo que midas en el mapa es lo que verán los estudiantes.</p>
+            <p className="text-[11px] text-neutral-400 mb-2">Ubicación de referencia en mapa detectada. Si el nombre del sector no coincide exactamente, selecciona o escribe el nombre correcto de tu barrio abajo.</p>
             <MapPicker
               lat={form.latitud}
               lng={form.longitud}
@@ -371,31 +431,29 @@ export default function Publicar() {
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-navy-800 mb-1.5">Latitud <span className="text-neutral-400 font-normal">(opcional)</span></label>
-              <input
-                type="number"
-                step="any"
-                value={form.latitud}
-                onChange={e => setForm({ ...form, latitud: e.target.value })}
-                placeholder="2.443"
-                className={`input-field ${errors.latitud ? '!border-red-300 !shadow-none' : ''}`}
-              />
-              {errors.latitud && <p className="text-xs text-red-600 mt-1">{errors.latitud}</p>}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-navy-800 mb-1.5">Longitud <span className="text-neutral-400 font-normal">(opcional)</span></label>
-              <input
-                type="number"
-                step="any"
-                value={form.longitud}
-                onChange={e => setForm({ ...form, longitud: e.target.value })}
-                placeholder="-76.606"
-                className={`input-field ${errors.longitud ? '!border-red-300 !shadow-none' : ''}`}
-              />
-              {errors.longitud && <p className="text-xs text-red-600 mt-1">{errors.longitud}</p>}
-            </div>
+          {/* Coords vinculadas al mapa, sin cajas numéricas visibles. */}
+          <div aria-live="polite">
+            {form.latitud !== '' && form.longitud !== '' ? (
+              <div className="flex items-center justify-between gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2">
+                <p className="text-xs text-emerald-800">
+                  📍 Ubicación confirmada: <b>{form.latitud}, {form.longitud}</b>
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, latitud: '', longitud: '' }))}
+                  className="text-xs font-medium text-emerald-700 hover:text-red-600 hover:underline shrink-0"
+                >
+                  Quitar
+                </button>
+              </div>
+            ) : (
+              <p className="text-xs text-neutral-400">
+                Sin ubicación marcada: usa el mapa de arriba para fijar el punto (opcional).
+              </p>
+            )}
+            {(errors.latitud || errors.longitud) && (
+              <p className="text-xs text-red-600 mt-1">{errors.latitud || errors.longitud}</p>
+            )}
           </div>
 
           <div>
@@ -411,23 +469,14 @@ export default function Publicar() {
             {errors.servicios_ids && <p className="text-xs text-red-600 mt-1">{errors.servicios_ids}</p>}
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-navy-800 mb-1.5">Campus asociado *</label>
-            <div className="flex flex-wrap gap-2 mt-1">
-              {campus.map(c => (
-                <label key={c.id} className={`text-xs sm:text-sm px-3 py-1.5 rounded-full border cursor-pointer select-none transition ${form.campus_ids.includes(c.id) ? 'bg-navy-800 text-white border-navy-800' : 'bg-white border-neutral-200 text-neutral-600 hover:border-navy-300'}`}>
-                  <input type="checkbox" className="sr-only" checked={form.campus_ids.includes(c.id)} onChange={() => toggleArray('campus_ids', c.id)} />
-                  {c.institucion ? `${c.institucion} - ${c.nombre_sede}` : c.nombre_sede}
-                </label>
-              ))}
-              {campus.length === 0 && <span className="text-xs text-neutral-400">Cargando campus...</span>}
-            </div>
-            {errors.campus_ids && <p className="text-xs text-red-600 mt-1">{errors.campus_ids}</p>}
-          </div>
+          {/* Sin "Campus asociado": las distancias se autocalculan desde la ubicación del mapa. */}
+          <p className="text-xs text-neutral-500 bg-navy-50 border border-navy-100 rounded-lg px-3 py-2">
+            📍 Las distancias a Tulcán, Torobajo, Centro y demás puntos se calculan solas con la ubicación que marques en el mapa.
+          </p>
 
           <div>
             <label className="block text-sm font-medium text-navy-800 mb-1.5">Fotos * <span className="text-neutral-400 font-normal">(sube archivos o pega URLs)</span></label>
-            {/* BUG-F3-03 (fix): respetar vaciado. Antes `urls.length ? urls : f.fotos` ignoraba Limpiar. */}
+            {/* El vaciado del uploader debe vaciar el formulario (respetar Limpiar). */}
             <UploadFotos token={token} initialUrls={form.fotos} onUrls={(urls) => setForm(f => ({ ...f, fotos: urls }))} />
             {errors.fotos && <p className="text-xs text-red-600 mt-1">{errors.fotos}</p>}
             <details className="mt-2">
@@ -444,8 +493,10 @@ export default function Publicar() {
           </div>
 
           <div className="pt-2">
-            <button type="submit" disabled={submitting} className="btn-accent w-full justify-center">
-              {submitting ? 'Enviando...' : 'Enviar a revision'}
+            <button type="submit" disabled={submitting} aria-disabled={submitting} className="btn-accent w-full justify-center disabled:opacity-60 disabled:cursor-wait">
+              {submitting
+                ? (<span className="inline-flex items-center gap-2"><span aria-hidden="true" className="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />Guardando publicación...</span>)
+                : 'Enviar a revision'}
             </button>
             <p className="text-xs text-neutral-400 text-center mt-3">
               Requiere cuenta de arrendador. Estado inicial: PENDIENTE.

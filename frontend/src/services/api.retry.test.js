@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { isRetryableError, retryDelayMs, API_MAX_RETRIES, API_TIMEOUT_MS, isCancelError } from './api'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { isRetryableError, retryDelayMs, API_MAX_RETRIES, API_TIMEOUT_MS, isCancelError, API_SLOW_THRESHOLD_MS, __resetApiTrackerForTests, api, conIdempotencia, tieneClaveIdempotencia } from './api'
 
 describe('api retry cold-start', () => {
   it('timeout amplio para Render (30-50s)', () => {
@@ -27,6 +27,69 @@ describe('api retry cold-start', () => {
     expect(retryDelayMs(0)).toBe(2000)
     expect(retryDelayMs(1)).toBe(4000)
     expect(retryDelayMs(5)).toBeLessThanOrEqual(5000)
+  })
+
+  it('M7: toast de cold-start con debounce 3.5s', () => {
+    expect(API_SLOW_THRESHOLD_MS).toBe(3500)
+  })
+
+  it('M7: respuesta rápida no dispara slow-start; lenta sí y al terminar emite slow-end', async () => {
+    vi.useFakeTimers()
+    const eventos = []
+    const onStart = () => eventos.push('start')
+    const onEnd = () => eventos.push('end')
+    window.addEventListener('alojau:api-slow-start', onStart)
+    window.addEventListener('alojau:api-slow-end', onEnd)
+    try {
+      __resetApiTrackerForTests()
+      // Rápida: resuelve antes del umbral -> sin eventos.
+      const rapida = api.get('/x', { adapter: () => Promise.resolve({ data: 1 }) })
+      await vi.advanceTimersByTimeAsync(1000)
+      await rapida
+      expect(eventos).toEqual([])
+      // Lenta: supera 3.5s -> start; al resolver -> end.
+      __resetApiTrackerForTests()
+      let resolver
+      const lenta = api.get('/x', { adapter: () => new Promise((res) => { resolver = res }) })
+      await vi.advanceTimersByTimeAsync(3500)
+      expect(eventos).toEqual(['start'])
+      resolver({ data: 1, status: 200, statusText: 'OK', headers: {}, config: {} })
+      await lenta
+      expect(eventos).toEqual(['start', 'end'])
+    } finally {
+      window.removeEventListener('alojau:api-slow-start', onStart)
+      window.removeEventListener('alojau:api-slow-end', onEnd)
+      __resetApiTrackerForTests()
+      vi.useRealTimers()
+    }
+  })
+
+  it('Bloque 2: escrituras sin clave jamás se reintentan (aunque sean 503)', () => {
+    expect(isRetryableError({ config: { method: 'post' }, response: { status: 503 } })).toBe(false)
+    expect(isRetryableError({ config: { method: 'PATCH' }, response: { status: 503 } })).toBe(false)
+    expect(isRetryableError({ config: { method: 'delete' } })).toBe(false)
+    expect(isRetryableError({ config: { method: 'GET' }, response: { status: 503 } })).toBe(true)
+    expect(isRetryableError({ config: { method: 'head' }, response: { status: 504 } })).toBe(true)
+  })
+
+  it('Bloque 2: con Idempotency-Key la escritura sí reintenta (replay seguro)', () => {
+    const cfg = { method: 'post', headers: { 'Idempotency-Key': 'abc12345' } }
+    expect(tieneClaveIdempotencia({ config: cfg })).toBe(true)
+    expect(isRetryableError({ config: cfg, response: { status: 503 } })).toBe(true)
+    expect(isRetryableError({ config: cfg, response: { status: 400 } })).toBe(false)
+    // AxiosHeaders con .get también vale.
+    const axiosCfg = { method: 'post', headers: { get: (k) => (k === 'Idempotency-Key' ? 'x' : undefined) } }
+    expect(tieneClaveIdempotencia({ config: axiosCfg })).toBe(true)
+    expect(tieneClaveIdempotencia({ config: { method: 'post', headers: {} } })).toBe(false)
+    expect(tieneClaveIdempotencia({})).toBe(false)
+  })
+
+  it('Bloque 2: conIdempotencia inyecta clave única y conserva headers', () => {
+    const a = conIdempotencia({ headers: { Authorization: 'Bearer t' } })
+    const b = conIdempotencia({ headers: { Authorization: 'Bearer t' } })
+    expect(a.headers['Idempotency-Key']).toMatch(/^[A-Za-z0-9-]{8,}$/)
+    expect(a.headers.Authorization).toBe('Bearer t')
+    expect(a.headers['Idempotency-Key']).not.toBe(b.headers['Idempotency-Key'])
   })
 
   it('OLA4: abort (ERR_CANCELED) nunca se reintenta', () => {

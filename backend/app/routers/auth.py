@@ -1,10 +1,25 @@
-import time
+"""Auth enterprise v13: registro Ley 1581, login con rate-limit persistente,
+verificación email + OTP, recovery un solo uso, Google OAuth + linking,
+sesiones revocables y promoción ESTUDIANTE->ARRENDADOR.
+
+Compatibilidad: conserva todos los endpoints y contratos previos
+(/register, /login, /perfil, /perfil/password, solicitud-verificacion).
+Los tokens legacy sin scopes/jti siguen válidos (enriquecidos por rol).
+"""
+import hashlib
 import logging
+import re
+import secrets
+import time
+from datetime import datetime, timezone, timedelta
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Depends, Request
-from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select
+
+from fastapi import APIRouter, File, HTTPException, Depends, Request, Header, UploadFile
+from pydantic import BaseModel, EmailStr, Field, model_validator
+from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from ..core.security import hash_password, verify_password, create_token, get_current_user
 from ..core.config import settings
 from ..db.session import get_session
@@ -22,6 +37,7 @@ MOCK_USERS = {
         "nombre_completo": "Arrendador Demo",
         "telefono_whatsapp": "573001234567",
         "telefono_verificado": False,
+        "email_verificado": True,
     },
     "admin@alojau.com": {
         "password": hash_password("AlojaU123"),
@@ -30,21 +46,172 @@ MOCK_USERS = {
         "nombre_completo": "Administrador AlojaU",
         "telefono_whatsapp": "573009998877",
         "telefono_verificado": True,
+        "email_verificado": True,
+    },
+    "estudiante@alojau.com": {
+        "password": hash_password("AlojaU123"),
+        "rol": "ESTUDIANTE",
+        "id": 3,
+        "nombre_completo": "Estudiante Demo",
+        "telefono_whatsapp": "573001112233",
+        "telefono_verificado": False,
+        "email_verificado": False,
     },
 }
+
 
 def _mock_enabled() -> bool:
     return bool(getattr(settings, "mock_enabled", False))
 
+
+def _norm_email(email: str) -> str:
+    return str(email or "").strip().lower()
+
+
+# ---------------------------------------------------------------------------
+# v13.2 marketplace: normalización y validación de perfil flexible.
+# ---------------------------------------------------------------------------
+def normalizar_telefono(raw: str | None) -> str | None:
+    """E.164 en dígitos sin '+' (canónico AlojaU, compatible wa.me y CHECK).
+
+    - ''/None -> None (sin vincular; publicar lo exigirá con 400).
+    - 10 dígitos -> prefijo 57 (Colombia); con 57 al inicio se conserva.
+    - Retorna None si no quedan 7-15 dígitos (el caller responde 422).
+    Desvío documentado de E.164 estricto ('+'): el '+' rompería los enlaces
+    https://wa.me/ existentes y cambiaría todas las respuestas API.
+    """
+    if raw is None:
+        return None
+    d = re.sub(r"\D", "", str(raw))
+    if not d:
+        return None
+    if len(d) == 10:
+        d = "57" + d
+    if not (7 <= len(d) <= 15):
+        return None
+    return d
+
+
+PREFIJOS_PREFERENCIAS = ("filtros.", "roomie.", "notis.")
+MAX_PREFERENCIAS_BYTES = 4096
+MAX_PREFERENCIAS_CLAVES = 30
+MAX_PREFERENCIAS_PROFUNDIDAD = 3
+
+
+def _profundidad(obj, nivel=1) -> int:
+    if isinstance(obj, dict) and obj:
+        return max(_profundidad(v, nivel + 1) for v in obj.values())
+    if isinstance(obj, list) and obj:
+        return max(_profundidad(v, nivel + 1) for v in obj)
+    return nivel
+
+
+def validar_preferencias(prefs) -> dict:
+    """Sanea preferencias JSONB: namespaces, tamaño ~4KB, tipos planos.
+
+    Lanza HTTPException 422 si viola el contrato. Nunca decide AuthZ.
+    """
+    import json as _json
+    if prefs is None:
+        return {}
+    if not isinstance(prefs, dict):
+        raise HTTPException(status_code=422, detail="preferencias debe ser un objeto JSON")
+    if len(prefs) > MAX_PREFERENCIAS_CLAVES:
+        raise HTTPException(status_code=422, detail="Demasiadas preferencias (máx 30)")
+    for k, v in prefs.items():
+        if not isinstance(k, str) or not k.startswith(PREFIJOS_PREFERENCIAS):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Preferencia no permitida: '{k}' (usa filtros.* roomie.* notis.*)",
+            )
+        if not isinstance(v, (bool, int, float, str, type(None))):
+            raise HTTPException(status_code=422, detail=f"Valor no permitido en '{k}'")
+        if isinstance(v, str) and len(v) > 200:
+            raise HTTPException(status_code=422, detail=f"Valor muy largo en '{k}' (máx 200)")
+    if _profundidad(prefs) > MAX_PREFERENCIAS_PROFUNDIDAD:
+        raise HTTPException(status_code=422, detail="Preferencias demasiado anidadas")
+    try:
+        if len(_json.dumps(prefs, ensure_ascii=False).encode("utf-8")) > MAX_PREFERENCIAS_BYTES:
+            raise HTTPException(status_code=422, detail="Preferencias exceden 4 KB")
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="Preferencias no serializables")
+    return dict(prefs)
+
+
+def validar_foto_url(url: str | None) -> str | None:
+    """Avatar: None/'' -> None; exige https:// estricto (anti-XSS en <img src>)."""
+    if not url:
+        return None
+    u = str(url).strip()[:500]
+    if not u.lower().startswith("https://"):
+        raise HTTPException(status_code=422, detail="La foto debe ser una URL https://")
+    return u
+
+
+def _ip_valida(txt: str) -> str | None:
+    """Valida IPv4/IPv6 (sin puertos). Retorna None si no es IP pública válida."""
+    import ipaddress
+    try:
+        cand = (txt or "").strip().split("%")[0]
+        ip = ipaddress.ip_address(cand)
+        if ip.is_loopback or ip.is_unspecified:
+            return None
+        return cand[:45]
+    except Exception:
+        return None
+
+
+def _client_ip(request: Request | None) -> str:
+    """IP pública real del cliente detrás de proxy (Render) para Ley 1581.
+
+    v13.1: orden de precedencia (primera válida gana):
+      1) X-Forwarded-For: primera IP de la lista (la pone Render).
+      2) X-Real-IP. 3) request.client.host. 4) "unknown".
+    A diferencia de la versión anterior, los headers se leen aunque
+    request.client sea None, y cada candidata se valida como IP.
+    """
+    try:
+        headers = getattr(request, "headers", None) if request else None
+        if headers is not None:
+            fwd = headers.get("x-forwarded-for")
+            if fwd:
+                for parte in str(fwd).split(","):
+                    ip = _ip_valida(parte)
+                    if ip:
+                        return ip
+            real = headers.get("x-real-ip")
+            if real:
+                ip = _ip_valida(real)
+                if ip:
+                    return ip
+        if request and request.client and request.client.host:
+            ip = _ip_valida(request.client.host)
+            if ip:
+                return ip
+            return str(request.client.host)[:45]
+    except Exception:
+        pass
+    return "unknown"
+
+
+# ---------------------------------------------------------------------------
+# Esquemas
+# ---------------------------------------------------------------------------
 class RegisterIn(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6, max_length=72)
+    password: str = Field(min_length=8, max_length=72)
     nombre_completo: str = Field(min_length=3, max_length=150)
-    telefono_whatsapp: str = Field(min_length=7, max_length=20)
+    # v13.2 progressive profiling: teléfono opcional al registrarse
+    # (se exige al publicar). None/'' = sin vincular.
+    telefono_whatsapp: Optional[str] = Field(default=None, max_length=20)
+    # Ley 1581/2012: consentimiento explícito obligatorio.
+    acepto_tratamiento_datos: bool = Field(default=False)
+
 
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
+
 
 class PerfilOut(BaseModel):
     id: int
@@ -53,14 +220,117 @@ class PerfilOut(BaseModel):
     telefono_whatsapp: Optional[str] = None
     telefono_verificado: bool = False
     rol: str
+    email_verificado: bool = False
+    auth_provider: str = "password"
+    # v13.2 marketplace flexible:
+    bio: Optional[str] = None
+    foto_perfil_url: Optional[str] = None
+    preferencias: dict = Field(default_factory=dict)
+    # M5 aditivo: true si hay telegram_chat_id vinculado (para DM OTP $0).
+    telegram_vinculado: bool = False
 
 
 class PerfilUpdateIn(BaseModel):
     # OLA2-M4: telefono_verificado es SOLO-LECTURA (lo calcula/muestra el backend).
-    # Se removió del esquema para que ningún usuario pueda auto-otorgarse +20 de
-    # confianza ni desbloquear su WhatsApp (antes: PATCH {telefono_verificado:true}).
     nombre_completo: Optional[str] = Field(default=None, min_length=3, max_length=150)
-    telefono_whatsapp: Optional[str] = Field(default=None, min_length=7, max_length=20)
+    # v13.2: None/'' limpia el teléfono (NULL). Con dígitos se normaliza E.164.
+    telefono_whatsapp: Optional[str] = Field(default=None, max_length=20)
+    bio: Optional[str] = Field(default=None, max_length=500)
+    foto_perfil_url: Optional[str] = Field(default=None, max_length=500)
+    # v13.2: merge-parcial (solo las claves enviadas se actualizan).
+    preferencias: Optional[dict] = None
+
+
+def _verificar_jwt_google(data: "GoogleCallbackIn") -> None:
+    """Valida el JWT de Supabase contra JWKS (fail-closed 401 si no pasa).
+
+    Args:
+        data: Payload del callback (requiere `supabase_jwt`).
+
+    Raises:
+        HTTPException: 401 si el token es inválido o su email no coincide.
+    """
+    from ..core.auth_service import SupabaseAuthService
+    try:
+        claims = SupabaseAuthService().decode_token(data.supabase_jwt)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail="Token Supabase inválido")
+    claim_email = _norm_email(claims.get("email", ""))
+    if claim_email and claim_email != _norm_email(data.email):
+        raise HTTPException(status_code=401, detail="El token Supabase no coincide con el email")
+
+
+def _sanitizar_cambios_perfil(data: "PerfilUpdateIn") -> dict:
+    """Normaliza/valida un PATCH de perfil una sola vez (DB y mock la usan).
+
+    Returns:
+        Dict solo con claves enviadas (`model_fields_set`): `nombre`,
+        `telefono` (dígitos E.164 o None para desvincular), `bio`,
+        `foto` (https o None), `preferencias` (merge validado).
+
+    Raises:
+        HTTPException: 422 si teléfono/foto/preferencias son inválidos.
+    """
+    cambios: dict = {}
+    if data.nombre_completo is not None:
+        cambios["nombre"] = data.nombre_completo.strip()
+    if "telefono_whatsapp" in data.model_fields_set:
+        if not data.telefono_whatsapp:
+            cambios["telefono"] = None
+        else:
+            tel = normalizar_telefono(data.telefono_whatsapp)
+            if tel is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Teléfono inválido: usa 10 dígitos (ej. 3001234567)",
+                )
+            cambios["telefono"] = tel
+    if data.bio is not None:
+        cambios["bio"] = (data.bio.strip()[:500] or None)
+    if "foto_perfil_url" in data.model_fields_set:
+        cambios["foto"] = validar_foto_url(data.foto_perfil_url)
+    if data.preferencias is not None:
+        cambios["preferencias"] = validar_preferencias(data.preferencias)
+    return cambios
+
+
+def _perfil_out_db(u) -> "PerfilOut":
+    """PerfilOut desde fila Usuario (incluye campos flexibles v13.2 + M5 telegram)."""
+    return PerfilOut(
+        id=u.id,
+        email=u.email,
+        nombre_completo=u.nombre_completo,
+        telefono_whatsapp=u.telefono_whatsapp,
+        telefono_verificado=bool(u.telefono_verificado),
+        rol=u.rol,
+        email_verificado=bool(getattr(u, "email_verificado", False)),
+        auth_provider=getattr(u, "auth_provider", "password") or "password",
+        bio=getattr(u, "bio", None),
+        foto_perfil_url=getattr(u, "foto_perfil_url", None),
+        preferencias=getattr(u, "preferencias", None) or {},
+        telegram_vinculado=bool(getattr(u, "telegram_chat_id", None)),
+    )
+
+
+def _perfil_out_mock(m: dict, email, user_id, user: dict | None = None) -> "PerfilOut":
+    """PerfilOut desde MOCK_USERS (incluye campos flexibles v13.2 + M5 telegram)."""
+    user = user or {}
+    return PerfilOut(
+        id=m.get("id", user_id or 1),
+        email=email,
+        nombre_completo=m.get("nombre_completo", "Arrendador Demo"),
+        telefono_whatsapp=m.get("telefono_whatsapp"),
+        telefono_verificado=bool(m.get("telefono_verificado", False)),
+        rol=m.get("rol", "ARRENDADOR"),
+        email_verificado=bool(m.get("email_verificado", True)),
+        auth_provider=m.get("auth_provider", "password"),
+        bio=m.get("bio"),
+        foto_perfil_url=m.get("foto_perfil_url"),
+        preferencias=m.get("preferencias") or {},
+        telegram_vinculado=bool(m.get("telegram_chat_id")),
+    )
 
 
 class RegisterOut(BaseModel):
@@ -68,50 +338,131 @@ class RegisterOut(BaseModel):
     email: EmailStr
     rol: str
     mock: bool = False
+    email_verificado: bool = False
 
 
 class LoginOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    expires_in_hours: int = 8
+    # Fuente única settings (integración ramaDavid): create_token usa el mismo
+    # valor, así el contrato siempre refleja la expiración real (2h).
+    expires_in_hours: int = settings.ACCESS_TOKEN_EXPIRE_HOURS
     rol: str
     mock: bool = False
+    # Callbacks Google: True si esta petición creó la cuenta (mostrar
+    # "¡Cuenta creada!" en vez de "Bienvenido de nuevo"). Solo informativo.
+    es_nuevo: bool = False
 
-# B0-7 rate-limit simple en memoria: 5 intentos/min por IP en /login -> 429.
+
+class PasswordChangeIn(BaseModel):
+    actual: str = Field(min_length=1, max_length=72)
+    nueva: str = Field(min_length=8, max_length=72)
+
+
+class OtpSolicitarIn(BaseModel):
+    email: EmailStr
+    proposito: str = Field(default="email_verify", pattern="^(email_verify|login|recovery)$")
+
+
+class OtpVerificarIn(BaseModel):
+    email: EmailStr
+    codigo: str = Field(min_length=6, max_length=6, pattern="^[0-9]{6}$")
+    proposito: str = Field(default="email_verify", pattern="^(email_verify|login|recovery)$")
+
+
+class RecoverySolicitarIn(BaseModel):
+    email: EmailStr
+
+
+class RecoveryConfirmarIn(BaseModel):
+    email: EmailStr
+    token: str = Field(min_length=20, max_length=128)
+    nueva_password: str = Field(min_length=8, max_length=72)
+
+
+class GoogleCallbackIn(BaseModel):
+    """Callback de Supabase OAuth: el frontend envía el perfil verificado.
+
+    Flujo real: el usuario vuelve de Google a {frontend}/auth/callback con
+    el JWT de Supabase; el frontend lo valida y envía aquí email + supabase_id
+    + nombre para linking/creación. Si SUPABASE está configurado, el backend
+    puede validar el supabase_jwt contra JWKS (fail-closed 401 si no pasa).
+    """
+    email: EmailStr
+    nombre_completo: str = Field(min_length=1, max_length=150)
+    supabase_id: Optional[str] = Field(default=None, max_length=64)
+    supabase_jwt: Optional[str] = None
+    # v13.2: Google no entrega teléfono; None = sin vincular (no placeholder).
+    telefono_whatsapp: Optional[str] = Field(default=None, max_length=20)
+    # v13.2: avatar de Google (picture). Se valida https:// en el endpoint.
+    foto_perfil_url: Optional[str] = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _nombre_nunca_vacio(self):
+        """v13.1: fallback seguro si Google devuelve nombre <2 caracteres
+        (ej. 'a@domain.com'). Nunca 422: sanitiza en vez de rechazar."""
+        nombre = (self.nombre_completo or "").strip()
+        if len(nombre) < 2:
+            local = str(self.email).split("@")[0].strip() or "google"
+            nombre = f"Usuario {local}"[:150].strip()
+        self.nombre_completo = nombre
+        return self
+
+
+class SesionOut(BaseModel):
+    jti: str
+    ip: Optional[str] = None
+    creado_en: Optional[str] = None
+    actual: bool = False
+    # M2 UX: user-agent crudo del dispositivo (el frontend lo parsea a
+    # etiqueta amigable tipo "Chrome en Windows"). Aditivo: puede venir None.
+    user_agent: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit: memoria (rápido) + persistencia PG (sobrevive reinicios Render).
+# Bloqueo temporal 15 min tras 5 fallidos por IP/usuario (v13).
+# ---------------------------------------------------------------------------
 _LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 LOGIN_LIMIT = 5
 LOGIN_WINDOW_S = 60.0
+LOGIN_BLOCK_S = 15 * 60.0
 
-def _check_login_rate_limit(request: Request):
-    ip = request.client.host if request.client and request.client.host else "unknown"
+_PW_ATTEMPTS: dict[str, list[float]] = {}
+PW_LIMIT = 5
+PW_WINDOW_S = 60.0
+
+
+def _check_password_rate_limit(uid: str) -> None:
     now = time.monotonic()
-    hist = _LOGIN_ATTEMPTS.get(ip, [])
-    hist = [t for t in hist if now - t < LOGIN_WINDOW_S]
-    if len(hist) >= LOGIN_LIMIT:
-        raise HTTPException(status_code=429, detail="Demasiados intentos de login, espera 1 minuto (B0-7)")
+    hist = [t for t in _PW_ATTEMPTS.get(uid, []) if now - t < PW_WINDOW_S]
+    if len(hist) >= PW_LIMIT:
+        raise HTTPException(status_code=429, detail="Demasiados intentos, espera 1 minuto")
     hist.append(now)
-    _LOGIN_ATTEMPTS[ip] = hist
+    _PW_ATTEMPTS[uid] = hist
 
-@router.post("/register", response_model=RegisterOut, summary="Registro arrendador")
-async def register(data: RegisterIn, db: AsyncSession = Depends(get_session)):
-    # B0-1: intenta DB real; fallback mock solo dev.
+
+async def _db_rate_check(db: AsyncSession, clave: str, limite: int = 5,
+                         ventana_s: int = 900) -> None:
+    """v13: cuenta fallidos recientes en PG. v14.1 fail-closed con logging.
+
+    Error DB: dev/mock -> warning + permite (resiliencia local sin PG);
+    prod -> 503 ruidoso (nunca desactivar anti-fuerza-bruta en silencio).
+    """
     try:
-        from ..models import Usuario
-        existing = await db.execute(select(Usuario).where(Usuario.email == data.email))
-        if existing.scalars().first():
-            raise HTTPException(status_code=400, detail="Email ya registrado")
-        nuevo = Usuario(
-            nombre_completo=data.nombre_completo,
-            email=data.email,
-            password_hash=hash_password(data.password),
-            telefono_whatsapp=data.telefono_whatsapp,
-            rol="ARRENDADOR",
-            telefono_verificado=False,
+        from ..models import RateLimitAttempt
+        corte = datetime.now(timezone.utc) - timedelta(seconds=ventana_s)
+        stmt = select(func.count()).select_from(RateLimitAttempt).where(
+            RateLimitAttempt.clave == clave,
+            RateLimitAttempt.exito.is_(False),
+            RateLimitAttempt.creado_en >= corte,
         )
-        db.add(nuevo)
-        await db.commit()
-        await db.refresh(nuevo)
-        return {"id": nuevo.id, "email": nuevo.email, "rol": nuevo.rol, "mock": False}
+        n = (await db.execute(stmt)).scalar() or 0
+        if n >= limite:
+            raise HTTPException(
+                status_code=429,
+                detail="Demasiados intentos. Cuenta bloqueada temporalmente 15 minutos.",
+            )
     except HTTPException:
         raise
     except Exception as e:
@@ -119,38 +470,312 @@ async def register(data: RegisterIn, db: AsyncSession = Depends(get_session)):
             await db.rollback()
         except Exception:
             pass
+        logger.error("[rate-limit] verificación persistente falló (fail-closed): %r", e)
+        if _mock_enabled():
+            logger.warning("[rate-limit] sin PG en dev: solo rige el límite en memoria")
+            return
+        raise HTTPException(status_code=503, detail="Servicio de protección no disponible")
+
+
+async def _db_rate_record(db: AsyncSession, clave: str, exito: bool) -> None:
+    # Best-effort a propósito: un fallo al registrar NUNCA debe tumbar un
+    # login legítimo (el check fail-closed ya protege el conteo).
+    try:
+        from ..models import RateLimitAttempt
+        db.add(RateLimitAttempt(clave=clave[:180], exito=bool(exito)))
+        await db.commit()
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.warning("[rate-limit] no se pudo registrar intento: %r", e)
+
+
+def _check_login_rate_limit(request: Request):
+    ip = request.client.host if request.client and request.client.host else "unknown"
+    now = time.monotonic()
+    hist = _LOGIN_ATTEMPTS.get(ip, [])
+    hist = [t for t in hist if now - t < LOGIN_WINDOW_S]
+    if len(hist) >= LOGIN_LIMIT:
+        raise HTTPException(status_code=429, detail="Demasiados intentos de login, espera 1 minuto")
+    hist.append(now)
+    _LOGIN_ATTEMPTS[ip] = hist
+
+
+def _password_fuerte_v13(pw: str) -> Optional[str]:
+    """Fortaleza v13 para recovery/registro: 8+ con mayús, número y especial."""
+    if len(pw) < 8:
+        return "Mínimo 8 caracteres"
+    if not re.search(r"[A-Z]", pw):
+        return "Debe incluir al menos una mayúscula"
+    if not re.search(r"[0-9]", pw):
+        return "Debe incluir al menos un número"
+    if not re.search(r"[^A-Za-z0-9]", pw):
+        return "Debe incluir al menos un carácter especial"
+    return None
+
+
+def _issue_token(usuario_id: int, email: str, rol: str,
+                 telefono_verificado: bool = False,
+                 email_verificado: bool = False) -> str:
+    from app.core.permissions import scopes_for_role
+    return create_token({
+        "sub": email,
+        "rol": rol,
+        "id": usuario_id,
+        "telefono_verificado": bool(telefono_verificado),
+        "email_verificado": bool(email_verificado),
+        "scopes": sorted(scopes_for_role(rol)),
+    })
+
+
+async def _registrar_sesion(db: AsyncSession, usuario_id: int, jti: str,
+                            request: Request | None) -> None:
+    """Guarda la sesión para revocación global. Sin tabla -> noop."""
+    try:
+        from ..models import Sesion
+        ua = None
+        try:
+            ua = (request.headers.get("user-agent", "") if request else "")[:255] or None
+        except Exception:
+            ua = None
+        db.add(Sesion(
+            usuario_id=usuario_id, jti=jti,
+            ip=_client_ip(request), user_agent=ua,
+        ))
+        await db.commit()
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Registro (Ley 1581 obligatoria, rol base ESTUDIANTE)
+# ---------------------------------------------------------------------------
+@router.post("/register", response_model=RegisterOut, summary="Registro (Ley 1581, rol ESTUDIANTE)")
+async def register(data: RegisterIn, request: Request, db: AsyncSession = Depends(get_session)):
+    email = _norm_email(data.email)
+    if not data.acepto_tratamiento_datos:
+        raise HTTPException(
+            status_code=422,
+            detail="Debes aceptar los Términos y la Política de Tratamiento de Datos (Ley 1581 de 2012)",
+        )
+    debil = _password_fuerte_v13(data.password)
+    if debil and not (len(data.password) >= 8 and re.search(r"[A-Za-z]", data.password)
+                      and re.search(r"[0-9]", data.password)):
+        # Compat: se exige al menos letras+números; el mensaje guía hacia v13.
+        raise HTTPException(status_code=422, detail=f"Contraseña débil: {debil}")
+    ip = _client_ip(request)
+    # v13.2: teléfono opcional (progressive profiling). Si viene, normaliza;
+    # si es inválido, 422 con guía (nunca se guarda basura).
+    tel = None
+    if data.telefono_whatsapp:
+        tel = normalizar_telefono(data.telefono_whatsapp)
+        if tel is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Teléfono inválido: usa 10 dígitos (ej. 3001234567) o código país + número",
+            )
+    try:
+        from ..models import Usuario
+        existing = await db.execute(select(Usuario).where(Usuario.email == email))
+        ex = existing.scalars().first()
+        if ex is not None:
+            # v13.1: email en período de gracia -> 409 (restaurar, no duplicar);
+            # gracia vencida -> purga física y se permite re-registrar.
+            restan = _gracia_restante(ex)
+            if restan is not None and restan >= 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(f"Este correo está en proceso de eliminación "
+                            f"(quedan {restan} días). Restáuralo en "
+                            f"/api/auth/cuenta/restaurar."),
+                )
+            if restan is not None:
+                try:
+                    await _purge_user(db, ex)
+                except Exception:
+                    pass
+            else:
+                raise HTTPException(status_code=400, detail="Email ya registrado")
+        nuevo = Usuario(
+            nombre_completo=data.nombre_completo.strip(),
+            email=email,
+            password_hash=hash_password(data.password),
+            telefono_whatsapp=tel,
+            rol="ESTUDIANTE",
+            telefono_verificado=False,
+            email_verificado=False,
+            auth_provider="password",
+            acepto_tratamiento_datos=True,
+            fecha_consentimiento=datetime.now(timezone.utc),
+            ip_consentimiento=ip,
+            version_politica=settings.POLITICA_VERSION,
+        )
+        db.add(nuevo)
+        await db.commit()
+        await db.refresh(nuevo)
+        # OTP de verificación (no bloquea el registro si el envío falla).
+        try:
+            await _crear_otp(db, email, "email_verify")
+        except Exception:
+            pass
+        return {"id": nuevo.id, "email": nuevo.email, "rol": nuevo.rol,
+                "mock": False, "email_verificado": False}
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        # Race-condition linking: UNIQUE violada por registro concurrente ->
+        # re-lee en vez de duplicar (identity linking seguro).
+        if isinstance(e, IntegrityError):
+            try:
+                existing = await db.execute(select(Usuario).where(Usuario.email == email))
+                u = existing.scalars().first()
+                if u:
+                    return {"id": u.id, "email": u.email, "rol": u.rol,
+                            "mock": False, "email_verificado": bool(u.email_verificado)}
+            except Exception:
+                pass
         logger.error(f"[auth register] DB falló: {e!r}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        if data.email in MOCK_USERS:
+        if email in MOCK_USERS or data.email in MOCK_USERS:
             raise HTTPException(status_code=400, detail="Email ya registrado (mock)")
-        return {"id": 99, "email": data.email, "rol": "ARRENDADOR", "mock": True}
+        MOCK_USERS[email] = {
+            "password": hash_password(data.password),
+            "rol": "ESTUDIANTE",
+            "id": 90 + len(MOCK_USERS),
+            "nombre_completo": data.nombre_completo,
+            "telefono_whatsapp": tel,
+            "telefono_verificado": False,
+            "email_verificado": False,
+        }
+        return {"id": MOCK_USERS[email]["id"], "email": email, "rol": "ESTUDIANTE",
+                "mock": True, "email_verificado": False}
 
-@router.post("/login", response_model=LoginOut, summary="Login JWT HS256 8h")
+
+# ---------------------------------------------------------------------------
+# v13.1: soft-delete de cuentas (gracia 30 días + purga física + restore).
+# ---------------------------------------------------------------------------
+CUENTA_GRACE_DAYS = 30
+
+
+def _gracia_restante(u) -> int | None:
+    """Días restantes de gracia, None si la cuenta está activa."""
+    elim = getattr(u, "eliminado_en", None)
+    if elim is None:
+        return None
+    if getattr(elim, "tzinfo", None) is None:
+        elim = elim.replace(tzinfo=timezone.utc)
+    fin = elim + timedelta(days=CUENTA_GRACE_DAYS)
+    restan = (fin - datetime.now(timezone.utc)).days
+    return restan
+
+
+async def _purge_user(db: AsyncSession, u) -> None:
+    """Borrado físico: cascadas (publicaciones, sesiones) + SET NULL (reportes)."""
+    await db.delete(u)
+    await db.commit()
+
+
+async def _revocar_sesiones_usuario(db: AsyncSession, usuario_id: int,
+                                     jti: str | None = None) -> int:
+    """Revoca sesiones activas del usuario (todas, o solo el jti dado).
+
+    Fuente única para /logout, /logout-all y /sesiones/revocar-todas.
+    No hace commit (lo hace el endpoint dueño de la transacción).
+    """
+    from ..models import Sesion
+    conds = [Sesion.usuario_id == usuario_id, Sesion.revocado.is_(False)]
+    if jti:
+        conds.append(Sesion.jti == jti)
+    res = await db.execute(select(Sesion).where(*conds))
+    n = 0
+    for s in res.scalars().all():
+        s.revocado = True
+        s.revocado_en = datetime.now(timezone.utc)
+        n += 1
+    return n
+
+
+class CuentaEliminarIn(BaseModel):
+    """Doble confirmación: email escrito a mano + contraseña (si tiene)."""
+    confirm_email: EmailStr
+    password: Optional[str] = Field(default=None, max_length=72)
+
+
+class CuentaRestaurarIn(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=72)
+
+
+# ---------------------------------------------------------------------------
+# Login (rate-limit memoria + persistente, sesiones registradas)
+# ---------------------------------------------------------------------------
+@router.post("/login", response_model=LoginOut, summary="Login JWT HS256 (expira según settings, hoy 2h T2)")
 async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_session)):
     _check_login_rate_limit(request)
-    # B0-1: intenta DB real primero; fallback mock solo dev.
+    email = _norm_email(data.email)
+    ip = _client_ip(request)
+    await _db_rate_check(db, f"login:ip:{ip}")
+    await _db_rate_check(db, f"login:user:{email}")
     try:
         from ..models import Usuario
-        res = await db.execute(select(Usuario).where(Usuario.email == data.email))
+        res = await db.execute(select(Usuario).where(Usuario.email == email))
         u_db = res.scalars().first()
         if u_db is not None:
+            # v13.1 soft-delete: en gracia -> 403 con guía de restore;
+            # gracia vencida -> purga física y se trata como inexistente.
+            restan = _gracia_restante(u_db)
+            if restan is not None:
+                if restan >= 0:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=(f"Tu cuenta está en proceso de eliminación "
+                                f"(quedan {restan} días). Restáurala en "
+                                f"/api/auth/cuenta/restaurar o crea una nueva tras la purga."),
+                    )
+                try:
+                    await _purge_user(db, u_db)
+                except Exception:
+                    pass
+                u_db = None
+        if u_db is not None:
+            # Sesión revocada globalmente -> el jti viejo ya no vale, pero el
+            # login con credenciales sigue permitido (emite jti nuevo).
             if not verify_password(data.password, u_db.password_hash):
+                await _db_rate_record(db, f"login:ip:{ip}", False)
+                await _db_rate_record(db, f"login:user:{email}", False)
                 raise HTTPException(status_code=401, detail="Credenciales inválidas")
-            token = create_token({
-                "sub": u_db.email, "rol": u_db.rol, "id": u_db.id,
-                "telefono_verificado": bool(u_db.telefono_verificado),
-            })
-            return {"access_token": token, "token_type": "bearer", "expires_in_hours": 8, "rol": u_db.rol, "mock": False}
-        # No en DB: en prod 401 directo (no filtrar existencia, no mock).
+            await _db_rate_record(db, f"login:ip:{ip}", True)
+            await _db_rate_record(db, f"login:user:{email}", True)
+            token = _issue_token(u_db.id, u_db.email, u_db.rol,
+                                 bool(u_db.telefono_verificado),
+                                 bool(getattr(u_db, "email_verificado", False)))
+            try:
+                import jwt as _jwt
+                jti = _jwt.decode(token, options={"verify_signature": False}).get("jti", "")
+                await _registrar_sesion(db, u_db.id, jti, request)
+            except Exception:
+                pass
+            return {"access_token": token, "token_type": "bearer",
+                    "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": u_db.rol, "mock": False}
         if not _mock_enabled():
+            await _db_rate_record(db, f"login:ip:{ip}", False)
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
-        # Fallback mock dev:
-        u = MOCK_USERS.get(data.email)
+        u = MOCK_USERS.get(email) or MOCK_USERS.get(data.email)
         if not u or not verify_password(data.password, u["password"]):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
-        token = create_token({"sub": data.email, "rol": u["rol"], "id": u["id"], "telefono_verificado": True})
-        return {"access_token": token, "token_type": "bearer", "expires_in_hours": 8, "rol": u["rol"], "mock": True}
+        token = _issue_token(u["id"], email, u["rol"], True, bool(u.get("email_verificado", True)))
+        return {"access_token": token, "token_type": "bearer",
+                "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": u["rol"], "mock": True}
     except HTTPException:
         raise
     except Exception as e:
@@ -161,12 +786,17 @@ async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_
         logger.error(f"[auth login] DB falló: {e!r}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        u = MOCK_USERS.get(data.email)
+        u = MOCK_USERS.get(email) or MOCK_USERS.get(data.email)
         if not u or not verify_password(data.password, u["password"]):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
-        token = create_token({"sub": data.email, "rol": u["rol"], "id": u["id"], "telefono_verificado": True})
-        return {"access_token": token, "token_type": "bearer", "expires_in_hours": 8, "rol": u["rol"], "mock": True}
+        token = _issue_token(u["id"], email, u["rol"], True, bool(u.get("email_verificado", True)))
+        return {"access_token": token, "token_type": "bearer",
+                "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": u["rol"], "mock": True}
 
+
+# ---------------------------------------------------------------------------
+# Perfil (extiende contrato previo con email_verificado/auth_provider)
+# ---------------------------------------------------------------------------
 @router.get("/perfil", response_model=PerfilOut, summary="Obtener perfil del usuario autenticado")
 async def get_perfil(
     user: dict = Depends(get_current_user),
@@ -180,17 +810,11 @@ async def get_perfil(
         if user_id:
             u = await db.get(Usuario, user_id)
         elif email:
-            res = await db.execute(select(Usuario).where(Usuario.email == email))
+            res = await db.execute(select(Usuario).where(Usuario.email == _norm_email(email)))
             u = res.scalars().first()
         if u:
-            return PerfilOut(
-                id=u.id,
-                email=u.email,
-                nombre_completo=u.nombre_completo,
-                telefono_whatsapp=u.telefono_whatsapp,
-                telefono_verificado=bool(u.telefono_verificado),
-                rol=u.rol,
-            )
+            # v14.1: la revocación JTI ya la aplica get_current_user (central).
+            return _perfil_out_db(u)
         if not _mock_enabled():
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
     except HTTPException:
@@ -200,8 +824,7 @@ async def get_perfil(
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
-    # Fallback mock dev
-    m = MOCK_USERS.get(email)
+    m = MOCK_USERS.get(email) or MOCK_USERS.get(_norm_email(email or ""))
     if not m:
         for em, udata in MOCK_USERS.items():
             if udata.get("id") == user_id:
@@ -216,15 +839,299 @@ async def get_perfil(
             telefono_whatsapp="573001234567",
             telefono_verificado=bool(user.get("telefono_verificado", False)),
             rol=user.get("rol", "ARRENDADOR"),
+            email_verificado=bool(user.get("email_verificado", False)),
+            auth_provider="password",
         )
-    return PerfilOut(
-        id=m.get("id", user_id or 1),
-        email=email,
-        nombre_completo=m.get("nombre_completo", "Arrendador Demo"),
-        telefono_whatsapp=m.get("telefono_whatsapp", "573001234567"),
-        telefono_verificado=bool(m.get("telefono_verificado", False)),
-        rol=m.get("rol", "ARRENDADOR"),
-    )
+    return _perfil_out_mock(m, email, user_id, user)
+
+
+@router.patch("/perfil/password", summary="Cambiar contraseña (requiere la actual)")
+async def cambiar_password(
+    data: PasswordChangeIn,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    import re as _re
+
+    def _debil(pw: str) -> Optional[str]:
+        if len(pw) < 8:
+            return "La nueva contraseña debe tener al menos 8 caracteres"
+        if not _re.search(r"[A-Za-z]", pw) or not _re.search(r"[0-9]", pw):
+            return "La nueva contraseña debe incluir letras y números"
+        return None
+
+    email = user.get("sub")
+    user_id = user.get("id")
+    _check_password_rate_limit(f"{user_id or email}")
+    err = _debil(data.nueva)
+    if err:
+        raise HTTPException(status_code=422, detail=err)
+    if data.nueva == data.actual:
+        raise HTTPException(status_code=422, detail="La nueva contraseña debe ser distinta de la actual")
+    try:
+        from ..models import Usuario
+        u = None
+        if user_id:
+            u = await db.get(Usuario, user_id)
+        elif email:
+            res = await db.execute(select(Usuario).where(Usuario.email == _norm_email(email)))
+            u = res.scalars().first()
+        if u:
+            if not verify_password(data.actual, u.password_hash):
+                raise HTTPException(status_code=403, detail="La contraseña actual no coincide")
+            u.password_hash = hash_password(data.nueva)
+            await db.commit()
+            return {"mensaje": "Contraseña actualizada con éxito."}
+        if not _mock_enabled():
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[auth password] DB falló: {e!r}", exc_info=True)
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+
+    m = MOCK_USERS.get(email)
+    if not m:
+        for em, udata in MOCK_USERS.items():
+            if udata.get("id") == user_id:
+                m = udata
+                email = em
+                break
+    if not m:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if not verify_password(data.actual, m["password"]):
+        raise HTTPException(status_code=403, detail="La contraseña actual no coincide")
+    m["password"] = hash_password(data.nueva)
+    return {"mensaje": "Contraseña actualizada con éxito."}
+
+
+@router.post("/perfil/solicitud-verificacion", status_code=202, summary="Solicitar verificación de teléfono")
+async def solicitar_verificacion(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    return {"mensaje": "Solicitud registrada. Un administrador verificará tu línea.", "estado": "PENDIENTE"}
+
+
+# ---------------------------------------------------------------------------
+# M3: avatar dedicado (solo sesión autenticada, cualquier rol incl. ESTUDIANTE).
+# PROHIBIDO reutilizar /upload/una (ese exige ARRENDADOR y daría 403 a
+# estudiantes). Valida MIME imagen + 5MB, guarda vía storage y actualiza
+# foto_perfil_url en la MISMA transacción.
+# Bloque 1: throttle anti-abuso (memoria en dev + PG persistente en prod,
+# mismo patrón que OTP) y limpieza de archivos huérfanos del disco local.
+# ---------------------------------------------------------------------------
+_AVATAR_MIME = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+}
+_AVATAR_MAX = 5 * 1024 * 1024
+_AVATAR_MEM: dict[str, list[float]] = {}
+AVATAR_LIMIT = 10
+AVATAR_WINDOW_S = 3600.0
+_TG_MEM: dict[str, list[float]] = {}
+TG_LIMIT = 5
+TG_WINDOW_S = 900.0
+
+
+@router.post("/avatar", summary="M3: subir avatar (cualquier rol autenticado, 5MB, imagen)")
+async def subir_avatar(
+    request: Request,
+    file: UploadFile = File(..., description="Imagen de perfil, max 5MB, JPEG/PNG/WebP/GIF"),
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """M3 endpoint dedicado (no reutiliza /upload/una que exige ARRENDADOR).
+
+    Requiere solo sesión activa (ESTUDIANTE incluido). Valida MIME + 5MB y
+    actualiza `foto_perfil_url` en la misma transacción.
+    """
+    return await _avatar_guardar(request, file, user, db)
+
+
+async def _avatar_guardar(
+    request,
+    file,
+    user: dict,
+    db: AsyncSession,
+) -> dict:
+    import os as _os
+    import uuid as _uuid
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    mime = (getattr(file, "content_type", "") or "").lower()
+    if mime not in _AVATAR_MIME:
+        raise HTTPException(status_code=400, detail="Solo imágenes JPEG/PNG/WebP/GIF (SVG bloqueado)")
+    ext = _os.path.splitext(getattr(file, "filename", "") or "")[1].lower()
+    if ext != _AVATAR_MIME[mime]:
+        raise HTTPException(status_code=400, detail=f"Extensión {ext or '(sin extensión)'} no coincide con {mime}")
+    # Bloque 1: throttle tras validar forma (los 400 no queman cuota ni
+    # disco) y antes de leer bytes/guardar. 10/hora por usuario.
+    _check_otp_mem(_AVATAR_MEM, f"avatar:{uid}", AVATAR_LIMIT, AVATAR_WINDOW_S,
+                   "Demasiadas subidas de avatar, espera 1 hora")
+    await _db_rate_check(db, f"avatar:{uid}", limite=AVATAR_LIMIT, ventana_s=int(AVATAR_WINDOW_S))
+    size = 0
+    chunks: list[bytes] = []
+    first = True
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        if first:
+            # Magic check mínimo (misma política que uploads.py, sin Pillow).
+            if mime == "image/jpeg" and not chunk.startswith(b"\xff\xd8\xff"):
+                raise HTTPException(status_code=400, detail="Contenido no es JPEG válido")
+            if mime == "image/png" and not chunk.startswith(b"\x89PNG\r\n\x1a\n"):
+                raise HTTPException(status_code=400, detail="Contenido no es PNG válido")
+            if mime == "image/gif" and not (chunk.startswith(b"GIF87a") or chunk.startswith(b"GIF89a")):
+                raise HTTPException(status_code=400, detail="Contenido no es GIF válido")
+            if mime == "image/webp" and not (chunk[:4] == b"RIFF" and chunk[8:12] == b"WEBP"):
+                raise HTTPException(status_code=400, detail="Contenido no es WebP válido")
+            first = False
+        size += len(chunk)
+        if size > _AVATAR_MAX:
+            raise HTTPException(status_code=413, detail="La imagen excede 5MB")
+        chunks.append(chunk)
+    if size == 0:
+        raise HTTPException(status_code=400, detail="Archivo vacío")
+    content = b"".join(chunks)
+    try:
+        from ..services.storage import get_storage_backend, es_persistente
+        base = str(request.base_url).rstrip("/") if request is not None else ""
+        backend = get_storage_backend(base_url=base or "http://localhost")
+        # AUDITORÍA PRE-PUSH (M3): disco local en prod = EFÍMERO (Render lo
+        # borra). No se rompe (save graceful 503), pero se advierte: para
+        # avatares durables configura CLOUDINARY_*.
+        try:
+            if getattr(backend, "name", "") == "local" and getattr(settings, "ENV", "dev") == "prod":
+                logger.warning("[avatar] prod con disco EFÍMERO (sin CLOUDINARY_*): el avatar se perderá al redeploy")
+        except Exception:
+            pass
+        filename = f"avatar-{_uuid.uuid4().hex}{ext}"
+        url = backend.save(content, filename, mime)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[avatar storage] falló: {e!r}", exc_info=True)
+        raise HTTPException(status_code=503, detail="No se pudo guardar la imagen")
+    # Misma transacción: actualiza foto_perfil_url en BD.
+    try:
+        from ..models import Usuario
+        u = await db.get(Usuario, uid)
+        if not u:
+            if not _mock_enabled():
+                # Bloque 1: sin usuario no hay dueño para el archivo recién
+                # guardado -> se borra para no dejar huérfanos en disco.
+                try:
+                    from ..services.storage import borrar_local_si_huerfano as _del
+                    _del(url)
+                except Exception:
+                    pass
+                raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        else:
+            anterior = u.foto_perfil_url
+            u.foto_perfil_url = url[:500]
+            await db.commit()
+            await db.refresh(u)
+            # Bloque 1: registra el intento (cuota) y borra el avatar previo
+            # si era archivo local (el reemplazo lo deja huérfano).
+            await _db_rate_record(db, f"avatar:{uid}", False)
+            try:
+                from ..services.storage import borrar_local_si_huerfano as _del
+                if anterior and anterior != u.foto_perfil_url:
+                    _del(anterior)
+            except Exception:
+                pass
+            return {"foto_perfil_url": u.foto_perfil_url, "mensaje": "Foto de perfil actualizada."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[avatar db] falló: {e!r}", exc_info=True)
+        if not _mock_enabled():
+            # Bloque 1: el archivo ya se guardó pero la BD falló -> huérfano.
+            try:
+                from ..services.storage import borrar_local_si_huerfano as _del
+                _del(url)
+            except Exception:
+                pass
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    # Mock dev: actualiza MOCK_USERS.
+    for _em, _m in MOCK_USERS.items():
+        if _m.get("id") == uid:
+            anterior = _m.get("foto_perfil_url")
+            _m["foto_perfil_url"] = url[:500]
+            try:
+                from ..services.storage import borrar_local_si_huerfano as _del
+                if anterior and anterior != url[:500]:
+                    _del(anterior)
+            except Exception:
+                pass
+            break
+    return {"foto_perfil_url": url[:500], "mensaje": "Foto de perfil actualizada (mock).", "mock": True}
+
+
+@router.delete("/avatar", summary="M3: quitar foto (muestra iniciales)")
+async def quitar_avatar(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Setea foto_perfil_url=null (el frontend muestra iniciales).
+
+    Bloque 1: también borra el archivo local anterior (quitar dejaba el
+    archivo huérfano ocupando disco para siempre).
+    """
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    try:
+        from ..models import Usuario
+        from ..services.storage import borrar_local_si_huerfano as _del
+        u = await db.get(Usuario, uid)
+        if u:
+            anterior = u.foto_perfil_url
+            u.foto_perfil_url = None
+            await db.commit()
+            try:
+                _del(anterior)
+            except Exception:
+                pass
+            return {"foto_perfil_url": None, "mensaje": "Foto eliminada."}
+        if not _mock_enabled():
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[avatar quitar] falló: {e!r}", exc_info=True)
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    for _em, _m in MOCK_USERS.items():
+        if _m.get("id") == uid:
+            anterior = _m.get("foto_perfil_url")
+            _m["foto_perfil_url"] = None
+            try:
+                from ..services.storage import borrar_local_si_huerfano as _del
+                _del(anterior)
+            except Exception:
+                pass
+            break
+    return {"foto_perfil_url": None, "mensaje": "Foto eliminada (mock).", "mock": True}
+
 
 @router.patch("/perfil", response_model=PerfilOut, summary="Actualizar nombre y teléfono (verificación solo-lectura)")
 async def update_perfil(
@@ -240,24 +1147,33 @@ async def update_perfil(
         if user_id:
             u = await db.get(Usuario, user_id)
         elif email:
-            res = await db.execute(select(Usuario).where(Usuario.email == email))
+            res = await db.execute(select(Usuario).where(Usuario.email == _norm_email(email)))
             u = res.scalars().first()
         if u:
-            if data.nombre_completo is not None:
-                u.nombre_completo = data.nombre_completo
-            if data.telefono_whatsapp is not None:
-                u.telefono_whatsapp = data.telefono_whatsapp
-            # OLA2-M4: sin escritura de telefono_verificado (solo-lectura).
+            cambios = _sanitizar_cambios_perfil(data)
+            if "nombre" in cambios:
+                u.nombre_completo = cambios["nombre"]
+            # v13.2: None desvincula (y pierde verificación); cambio real
+            # de número también pierde verificación (re-verificar por admin).
+            if "telefono" in cambios:
+                if (cambios["telefono"] or "") != (u.telefono_whatsapp or ""):
+                    u.telefono_whatsapp = cambios["telefono"]
+                    u.telefono_verificado = False
+            if "bio" in cambios:
+                u.bio = cambios["bio"]
+            if "foto" in cambios:
+                u.foto_perfil_url = cambios["foto"]
+            if "preferencias" in cambios:
+                actual = getattr(u, "preferencias", None) or {}
+                if not isinstance(actual, dict):
+                    actual = {}
+                actual.update(cambios["preferencias"])
+                u.preferencias = dict(actual)
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(u, "preferencias")
             await db.commit()
             await db.refresh(u)
-            return PerfilOut(
-                id=u.id,
-                email=u.email,
-                nombre_completo=u.nombre_completo,
-                telefono_whatsapp=u.telefono_whatsapp,
-                telefono_verificado=bool(u.telefono_verificado),
-                rol=u.rol,
-            )
+            return _perfil_out_db(u)
         if not _mock_enabled():
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
     except HTTPException:
@@ -271,7 +1187,6 @@ async def update_perfil(
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
-    # Fallback mock dev
     m = MOCK_USERS.get(email)
     if not m:
         for em, udata in MOCK_USERS.items():
@@ -287,31 +1202,922 @@ async def update_perfil(
             "nombre_completo": "Arrendador Demo",
             "telefono_whatsapp": "573001234567",
             "telefono_verificado": False,
+            "email_verificado": False,
         }
         MOCK_USERS[email or "arrendador@alojau.com"] = m
 
     if data.nombre_completo is not None:
         m["nombre_completo"] = data.nombre_completo
-    if data.telefono_whatsapp is not None:
-        m["telefono_whatsapp"] = data.telefono_whatsapp
-    # OLA2-M4: sin escritura de telefono_verificado (solo-lectura).
+    # v13.2: espejo del comportamiento DB en mocks (vía sanitizador común).
+    cambios = _sanitizar_cambios_perfil(data)
+    if "telefono" in cambios:
+        if (cambios["telefono"] or "") != (m.get("telefono_whatsapp") or ""):
+            m["telefono_whatsapp"] = cambios["telefono"]
+            m["telefono_verificado"] = False
+    if "bio" in cambios:
+        m["bio"] = cambios["bio"]
+    if "foto" in cambios:
+        m["foto_perfil_url"] = cambios["foto"]
+    if "preferencias" in cambios:
+        actual = m.get("preferencias") or {}
+        if not isinstance(actual, dict):
+            actual = {}
+        actual.update(cambios["preferencias"])
+        m["preferencias"] = dict(actual)
 
-    # Sincronizar con publicaciones mock del usuario para que el contacto refleje el teléfono
     try:
         from .publicaciones import MOCK_PUBS
         for pub in MOCK_PUBS:
             if pub.get("usuario_id") == m.get("id"):
-                if data.telefono_whatsapp is not None:
-                    pub["telefono_whatsapp"] = data.telefono_whatsapp
+                if "telefono_whatsapp" in data.model_fields_set:
+                    pub["telefono_whatsapp"] = m.get("telefono_whatsapp")
     except Exception:
         pass
 
-    return PerfilOut(
-        id=m.get("id", user_id or 1),
-        email=email or "arrendador@alojau.com",
-        nombre_completo=m.get("nombre_completo", "Arrendador Demo"),
-        telefono_whatsapp=m.get("telefono_whatsapp", "573001234567"),
-        telefono_verificado=bool(m.get("telefono_verificado", False)),
-        rol=m.get("rol", "ARRENDADOR"),
-    )
+    return _perfil_out_mock(m, email, user_id, user)
 
+
+# ---------------------------------------------------------------------------
+# v13: OTP ligero (6 dígitos, 10 min) vía Email o Telegram webhook gratuito
+# ---------------------------------------------------------------------------
+_MOCK_OTPS: dict[str, dict] = {}
+
+
+async def _telegram_chat_para_email(db: AsyncSession, email: str) -> str | None:
+    """Retorna el telegram_chat_id vinculado del usuario (o None si no hay).
+
+    Busca en BD y en MOCK_USERS (dev). Nunca retorna el TELEGRAM_CHAT_ID
+    global (ese es un canal/grupo de desarrollo, prohibido para OTP).
+    """
+    email_n = _norm_email(email)
+    try:
+        from ..models import Usuario
+        try:
+            res = await db.execute(select(Usuario).where(Usuario.email == email_n))
+            u = res.scalars().first()
+            if u is not None:
+                chat = getattr(u, "telegram_chat_id", None)
+                if chat:
+                    return str(chat)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    try:
+        m = MOCK_USERS.get(email_n)
+        if m and m.get("telegram_chat_id"):
+            return str(m["telegram_chat_id"])
+    except Exception:
+        pass
+    return None
+
+
+async def _crear_otp(db: AsyncSession, email: str, proposito: str) -> tuple[str, str]:
+    """Genera y persiste OTP. Retorna (código plano, canal).
+
+    M5 bugfix privacidad: el código SOLO viaja por DM si el usuario posee
+    `telegram_chat_id` vinculado; si no, fallback por correo (canal "email"
+    con semántica correcta). NUNCA se postea a canales/grupos globales.
+    """
+    email = _norm_email(email)
+    codigo = f"{secrets.randbelow(1_000_000):06d}"
+    expira = datetime.now(timezone.utc) + timedelta(minutes=10)
+    try:
+        from ..models import OtpCode
+        db.add(OtpCode(
+            email=email, codigo_hash=hashlib.sha256(codigo.encode()).hexdigest(),
+            proposito=proposito, expira_en=expira,
+        ))
+        await db.commit()
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        _MOCK_OTPS[f"{email}:{proposito}"] = {
+            "hash": hashlib.sha256(codigo.encode()).hexdigest(),
+            "expira": time.monotonic() + 600,
+        }
+    chat_id = await _telegram_chat_para_email(db, email)
+    canal = _enviar_codigo(email, codigo, proposito, chat_id=chat_id)
+    return codigo, canal
+
+
+def _enviar_codigo(email: str, codigo: str, proposito: str, chat_id: str | None = None) -> str:
+    """Envía el OTP y retorna el canal usado ("telegram" o "email").
+
+    M5 bugfix explícito: Telegram SOLO por DM si hay `chat_id` vinculado
+    del usuario. Sin vinculación -> fallback correo (canal "email").
+    PROHIBIDO usar TELEGRAM_CHAT_ID global (canal/grupo dev) para OTP.
+    """
+    if chat_id and settings.TELEGRAM_BOT_TOKEN.strip():
+        try:
+            import urllib.request
+            import urllib.parse
+            texto = f"AlojaU ({proposito}): tu código es {codigo}. Expira en 10 minutos."
+            data = urllib.parse.urlencode(
+                {"chat_id": str(chat_id), "text": texto}).encode()
+            req = urllib.request.Request(
+                f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage",
+                data=data, headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            with urllib.request.urlopen(req, timeout=8) as _:
+                pass
+            return "telegram"
+        except Exception as e:
+            logger.warning(f"[otp telegram DM] falló, usando email: {e!r}")
+    # Sin DM vinculado o sin bot: Email-code (log en dev, Supabase en prod).
+    # Semántica correcta: canal "email" = llegó (o se logueó) por correo.
+    if chat_id and not settings.TELEGRAM_BOT_TOKEN.strip():
+        logger.info(f"[otp {proposito}] usuario con telegram sin bot configurado, fallback email para {email}")
+    logger.info(f"[otp {proposito}] código para {email}: {codigo} (10 min, canal email)")
+    return "email"
+
+
+# v14.1: throttle OTP en memoria (cubre mock/dev) + persistente (prod).
+_OTP_SOLICITAR: dict[str, list[float]] = {}
+_OTP_VERIFICAR: dict[str, list[float]] = {}
+OTP_SOL_LIMIT = 5
+OTP_SOL_WINDOW_S = 900.0
+OTP_VER_LIMIT = 10
+OTP_VER_WINDOW_S = 600.0
+
+
+def _check_otp_mem(store: dict[str, list[float]], clave: str, limite: int,
+                   ventana_s: float, mensaje: str) -> None:
+    ahora = time.monotonic()
+    hist = [t for t in store.get(clave, []) if ahora - t < ventana_s]
+    if len(hist) >= limite:
+        raise HTTPException(status_code=429, detail=mensaje)
+    hist.append(ahora)
+    store[clave] = hist
+
+
+# ---------------------------------------------------------------------------
+# M5 vinculación Telegram $0 (HMAC un solo uso, 5min).
+# ---------------------------------------------------------------------------
+_TELEGRAM_VINCULOS: dict[str, dict] = {}  # nonce -> {user_id, exp, usado}
+_TELEGRAM_USADOS: set[str] = set()
+
+
+def _firmar_vinculo(user_id: int, exp: int, nonce: str) -> str:
+    import hashlib as _hl
+    import hmac as _hm
+    payload = f"{user_id}.{exp}.{nonce}"
+    sig = _hm.new(settings.SECRET_KEY.encode(), payload.encode(), _hl.sha256).hexdigest()[:32]
+    return f"{payload}.{sig}"
+
+
+def _desarmar_token_vinculo(token: str) -> tuple[int, int, str] | None:
+    """Parse + HMAC + expiración de un token (sin tocar stores).
+
+    Fuente única para las dos variantes de validación. Retorna
+    (uid, exp, nonce) o None si el formato/firma/expiración fallan.
+    """
+    import hashlib as _hl
+    import hmac as _hm
+    try:
+        partes = (token or "").split(".")
+        if len(partes) != 4:
+            return None
+        uid_s, exp_s, nonce, sig = partes
+        uid = int(uid_s)
+        exp = int(exp_s)
+        if time.time() > exp:
+            return None
+        esperado = _hm.new(
+            settings.SECRET_KEY.encode(), f"{uid}.{exp}.{nonce}".encode(), _hl.sha256
+        ).hexdigest()[:32]
+        if not secrets.compare_digest(esperado, sig):
+            return None
+        return uid, exp, nonce
+    except Exception:
+        return None
+
+
+def validar_token_vinculo(token: str) -> int | None:
+    """Valida y consume (un solo uso) un token de vinculación (vía memoria).
+
+    Retorna user_id si es válido y no expirado/usado; lo marca usado.
+    Camino rápido en-proceso (dev/tests de HMAC); el webhook productivo
+    debe usar `validar_token_vinculo_db` (fuente PG, sobrevive redeploys).
+    """
+    try:
+        parsed = _desarmar_token_vinculo(token)
+        if not parsed:
+            return None
+        uid, exp, nonce = parsed
+        if nonce in _TELEGRAM_USADOS:
+            return None
+        rec = _TELEGRAM_VINCULOS.get(nonce)
+        if not rec or rec.get("user_id") != uid or rec.get("exp") != exp:
+            return None
+        if rec.get("usado"):
+            return None
+        rec["usado"] = True
+        _TELEGRAM_USADOS.add(nonce)
+        return uid
+    except Exception:
+        return None
+
+
+async def validar_token_vinculo_db(db: AsyncSession, token: str) -> int | None:
+    """Variante persistente para el webhook del bot (Bloque 2).
+
+    Misma semántica que `validar_token_vinculo` pero contra PG con
+    `SELECT FOR UPDATE` (cierra la carrera de doble-consumo entre workers).
+    Si PG no responde, cae al camino en memoria (resiliencia dev).
+    """
+    parsed = _desarmar_token_vinculo(token)
+    if not parsed:
+        return None
+    uid, exp, nonce = parsed
+    try:
+        from ..models import TelegramVinculo
+        res = await db.execute(
+            select(TelegramVinculo).where(TelegramVinculo.nonce == nonce).with_for_update()
+        )
+        row = res.scalars().first()
+        if not row or int(row.usuario_id) != uid:
+            return None
+        exp_db = row.expira_en
+        if getattr(exp_db, "tzinfo", None) is None:
+            exp_db = exp_db.replace(tzinfo=timezone.utc)
+        if exp_db <= datetime.now(timezone.utc) or row.usado:
+            return None
+        row.usado = True
+        await db.commit()
+        try:
+            _TELEGRAM_USADOS.add(nonce)
+            _TELEGRAM_VINCULOS.pop(nonce, None)
+        except Exception:
+            pass
+        return uid
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.warning(f"[telegram validar] PG no disponible, fallback memoria: {e!r}")
+        if not _mock_enabled():
+            return None
+        return validar_token_vinculo(token)
+
+
+@router.post("/telegram/vincular-inicio", summary="M5: iniciar vinculación Telegram (bot_url HMAC 5min)")
+async def telegram_vincular_inicio(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Requiere sesión autenticada. Retorna bot_url t.me con token HMAC
+    de un solo uso (5min). El frontend abre ese bot_url directamente.
+    """
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    # Bloque 1: throttle 5/15min por usuario (memoria en dev + PG en prod).
+    _check_otp_mem(_TG_MEM, f"tg:{uid}", TG_LIMIT, TG_WINDOW_S,
+                   "Demasiadas vinculaciones de Telegram, espera 15 minutos")
+    await _db_rate_check(db, f"tg:{uid}", limite=TG_LIMIT, ventana_s=int(TG_WINDOW_S))
+    username = (settings.TELEGRAM_BOT_USERNAME or "").strip().lstrip("@")
+    if not username:
+        raise HTTPException(status_code=503, detail="Telegram no configurado (TELEGRAM_BOT_USERNAME). Vincula por correo.")
+    exp = int(time.time()) + 300
+    nonce = secrets.token_hex(8)
+    token = _firmar_vinculo(uid, exp, nonce)
+    _TELEGRAM_VINCULOS[nonce] = {"user_id": uid, "exp": exp, "usado": False}
+    # Bloque 2: espejo persistente (fuente de verdad ante redeploys).
+    # Best-effort en dev sin PG: la memoria sigue cubriendo.
+    try:
+        from ..models import TelegramVinculo
+        db.add(TelegramVinculo(
+            nonce=nonce, usuario_id=uid,
+            expira_en=datetime.fromtimestamp(exp, tz=timezone.utc),
+            usado=False,
+        ))
+        await db.commit()
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.warning(f"[telegram inicio] PG no disponible, solo memoria: {e!r}")
+    await _db_rate_record(db, f"tg:{uid}", False)
+    # Limpieza best-effort de expirados (memoria acotada + PG).
+    try:
+        ahora = time.time()
+        for k in [k for k, v in _TELEGRAM_VINCULOS.items() if v.get("exp", 0) < ahora - 60]:
+            _TELEGRAM_VINCULOS.pop(k, None)
+    except Exception:
+        pass
+    try:
+        from ..models import TelegramVinculo
+        await db.execute(
+            TelegramVinculo.__table__.delete().where(
+                TelegramVinculo.expira_en < datetime.now(timezone.utc) - timedelta(seconds=60))
+        )
+        await db.commit()
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+    return {"bot_url": f"https://t.me/{username}?start={token}", "expira_segundos": 300}
+
+
+@router.post("/otp/solicitar", status_code=202, summary="Solicitar código OTP 6 dígitos (10 min)")
+async def otp_solicitar(data: OtpSolicitarIn, db: AsyncSession = Depends(get_session)):
+    email = _norm_email(data.email)
+    # v14.1 anti-spam/adivinanza: 5 solicitudes por email cada 15 min.
+    _check_otp_mem(_OTP_SOLICITAR, email, OTP_SOL_LIMIT, OTP_SOL_WINDOW_S,
+                   "Demasiadas solicitudes de código, espera 15 minutos")
+    await _db_rate_check(db, f"otp_sol:{email}", limite=OTP_SOL_LIMIT, ventana_s=int(OTP_SOL_WINDOW_S))
+    _, canal = await _crear_otp(db, email, data.proposito)
+    await _db_rate_record(db, f"otp_sol:{email}", False)
+    return {"mensaje": "Si el correo existe, enviamos un código de 6 dígitos válido 10 minutos.",
+            "expira_minutos": 10, "canal": canal}
+
+
+@router.post("/otp/verificar", summary="Verificar OTP y confirmar email")
+async def otp_verificar(data: OtpVerificarIn, db: AsyncSession = Depends(get_session)):
+    email = _norm_email(data.email)
+    # v14.1 anti-fuerza-bruta (código de ~20 bits): 10 intentos cada 10 min.
+    _check_otp_mem(_OTP_VERIFICAR, email, OTP_VER_LIMIT, OTP_VER_WINDOW_S,
+                   "Demasiados intentos de código, espera 10 minutos")
+    await _db_rate_check(db, f"otp_ver:{email}", limite=OTP_VER_LIMIT, ventana_s=int(OTP_VER_WINDOW_S))
+    digest = hashlib.sha256(data.codigo.encode()).hexdigest()
+    ok = False
+    try:
+        from ..models import OtpCode, Usuario
+        stmt = select(OtpCode).where(
+            OtpCode.email == email,
+            OtpCode.proposito == data.proposito,
+            OtpCode.consumido.is_(False),
+            OtpCode.expira_en > datetime.now(timezone.utc),
+        ).order_by(OtpCode.id.desc())
+        row = (await db.execute(stmt)).scalars().first()
+        if row and secrets.compare_digest(row.codigo_hash, digest):
+            row.consumido = True
+            ok = True
+            if data.proposito == "email_verify":
+                ures = await db.execute(select(Usuario).where(Usuario.email == email))
+                u = ures.scalars().first()
+                if u:
+                    u.email_verificado = True
+            await db.commit()
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+    if not ok:
+        # Fallback memoria (sin PG): valida contra _MOCK_OTPS.
+        entry = _MOCK_OTPS.get(f"{email}:{data.proposito}")
+        if entry and time.monotonic() < entry["expira"] and secrets.compare_digest(entry["hash"], digest):
+            ok = True
+            _MOCK_OTPS.pop(f"{email}:{data.proposito}", None)
+            m = MOCK_USERS.get(email)
+            if m and data.proposito == "email_verify":
+                m["email_verificado"] = True
+    if not ok:
+        await _db_rate_record(db, f"otp_ver:{email}", False)
+        raise HTTPException(status_code=401, detail="Código inválido o expirado")
+    return {"mensaje": "Verificación exitosa.", "email_verificado": True}
+
+
+# ---------------------------------------------------------------------------
+# v13: Recovery un solo uso (15 min) + fortaleza v13
+# ---------------------------------------------------------------------------
+_MOCK_RESETS: dict[str, dict] = {}
+
+
+@router.post("/recovery/solicitar", status_code=202, summary="Solicitar enlace de recuperación (15 min)")
+async def recovery_solicitar(data: RecoverySolicitarIn, request: Request,
+                             db: AsyncSession = Depends(get_session)):
+    email = _norm_email(data.email)
+    await _db_rate_check(db, f"recovery:{email}", limite=5, ventana_s=900)
+    token = secrets.token_urlsafe(32)
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    expira = datetime.now(timezone.utc) + timedelta(minutes=15)
+    try:
+        from ..models import PasswordReset
+        db.add(PasswordReset(email=email, token_hash=digest, expira_en=expira))
+        await db.commit()
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        _MOCK_RESETS[email] = {"hash": digest, "expira": time.monotonic() + 900}
+    # Respuesta genérica anti-enumeración; en dev se loguea el token.
+    logger.info(f"[recovery] token para {email} (15 min, un solo uso)")
+    resp: dict = {"mensaje": "Si el correo existe, enviamos un enlace válido 15 minutos."}
+    if settings.ENV != "prod" and _mock_enabled():
+        resp["dev_token"] = token  # solo dev/test para e2e sin SMTP
+    return resp
+
+
+@router.post("/recovery/confirmar", summary="Confirmar recuperación con token de un solo uso")
+async def recovery_confirmar(data: RecoveryConfirmarIn, db: AsyncSession = Depends(get_session)):
+    email = _norm_email(data.email)
+    err = _password_fuerte_v13(data.nueva_password)
+    if err:
+        raise HTTPException(status_code=422, detail=f"Contraseña débil: {err}")
+    digest = hashlib.sha256(data.token.encode()).hexdigest()
+    ok = False
+    try:
+        from ..models import PasswordReset, Usuario
+        stmt = select(PasswordReset).where(
+            PasswordReset.email == email,
+            PasswordReset.token_hash == digest,
+            PasswordReset.consumido.is_(False),
+            PasswordReset.expira_en > datetime.now(timezone.utc),
+        ).order_by(PasswordReset.id.desc())
+        row = (await db.execute(stmt)).scalars().first()
+        if row:
+            ures = await db.execute(select(Usuario).where(Usuario.email == email))
+            u = ures.scalars().first()
+            if u:
+                u.password_hash = hash_password(data.nueva_password)
+                row.consumido = True
+                await db.commit()
+                # Revoca sesiones previas (el atacante con sesión vieja queda fuera).
+                try:
+                    from ..models import Sesion
+                    sres = await db.execute(
+                        select(Sesion).where(Sesion.usuario_id == u.id,
+                                             Sesion.revocado.is_(False)))
+                    for s in sres.scalars().all():
+                        s.revocado = True
+                        s.revocado_en = datetime.now(timezone.utc)
+                    await db.commit()
+                except Exception:
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
+                ok = True
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+    if not ok:
+        entry = _MOCK_RESETS.get(email)
+        if entry and time.monotonic() < entry["expira"] and secrets.compare_digest(entry["hash"], digest):
+            ok = True
+            _MOCK_RESETS.pop(email, None)
+            m = MOCK_USERS.get(email)
+            if m:
+                m["password"] = hash_password(data.nueva_password)
+    if not ok:
+        raise HTTPException(status_code=401, detail="Enlace inválido, expirado o ya usado")
+    return {"mensaje": "Contraseña restablecida. Sesiones anteriores revocadas."}
+
+
+# ---------------------------------------------------------------------------
+# v13: Google OAuth vía Supabase + identity linking anti-duplicados
+# ---------------------------------------------------------------------------
+@router.get("/oauth/google", summary="URL de login con Google (Supabase OAuth)")
+async def oauth_google_url(redirect_to: str | None = None):
+    """Retorna la authorization URL. `redirect_to` opcional debe estar en la
+    allow-list (localhost:5173 o prod); si no, se usa prod por defecto.
+
+    Si Supabase no está configurado (dev sin dashboard), retorna 503 con
+    pasos manuales en vez de una URL rota (protocolo human-in-the-loop).
+    """
+    if not settings.supabase_configured:
+        raise HTTPException(
+            status_code=503,
+            detail=("Google OAuth no configurado. En Supabase Dashboard -> Authentication -> "
+                    "Providers -> Google: activa el proveedor y anade Redirect URLs "
+                    "http://localhost:5173/auth/callback y "
+                    "https://aloja-u.vercel.app/auth/callback. Luego define SUPABASE_URL."),
+        )
+    permitidas = settings.oauth_redirect_urls
+    redirect = (redirect_to.rstrip("/") if redirect_to else "") or permitidas[1]
+    if redirect not in permitidas:
+        raise HTTPException(status_code=422, detail=f"redirect_to debe ser una de {permitidas}")
+    base = settings.SUPABASE_URL.rstrip("/")
+    url = (f"{base}/auth/v1/authorize?provider=google"
+           f"&redirect_to={redirect}/auth/callback")
+    return {"authorization_url": url,
+            "redirect_urls": permitidas}
+
+
+@router.post("/oauth/google/callback", response_model=LoginOut,
+             summary="Callback Google: linking por email, sin duplicados")
+async def oauth_google_callback(data: GoogleCallbackIn, request: Request,
+                                db: AsyncSession = Depends(get_session)):
+    """Fusiona identidad Google con cuenta manual del mismo email.
+
+    - Email normalizado (lower+trim) como clave de linking.
+    - Si existe cuenta password con ese email: la vincula (auth_provider
+      combinado, supabase_id guardado, email_verificado=True) y emite JWT.
+    - Si no existe: crea ESTUDIANTE verificado con consentimiento Ley 1581
+      implícito de Google (acepto=True, ip registrada, versión vigente).
+    - Carrera concurrente: UNIQUE(email) + IntegrityError -> re-lee y vincula.
+    """
+    email = _norm_email(data.email)
+    # Validación opcional del JWT Supabase contra JWKS (fail-closed si se envía).
+    if data.supabase_jwt and settings.supabase_configured:
+        _verificar_jwt_google(data)
+    ip = _client_ip(request)
+    es_nuevo = False
+    try:
+        from ..models import Usuario
+        res = await db.execute(select(Usuario).where(Usuario.email == email))
+        u = res.scalars().first()
+        if u:
+            # v13.1: si estaba en período de gracia, el login con Google la revive.
+            restan = _gracia_restante(u)
+            if restan is not None and restan < 0:
+                try:
+                    await _purge_user(db, u)
+                except Exception:
+                    pass
+                u = None
+            else:
+                if restan is not None:
+                    u.eliminado_en = None
+                # Linking: conserva password manual (login dual) y marca Google.
+                prov = getattr(u, "auth_provider", "password") or "password"
+                if "google" not in prov:
+                    u.auth_provider = f"{prov}+google" if prov else "google"
+                if data.supabase_id:
+                    u.supabase_id = data.supabase_id
+                u.email_verificado = True
+                await db.commit()
+                await db.refresh(u)
+        if not u:
+            # v13.2: Google no entrega teléfono -> NULL (nunca placeholder).
+            tel_g = normalizar_telefono(data.telefono_whatsapp) if data.telefono_whatsapp else None
+            u = Usuario(                nombre_completo=data.nombre_completo.strip()[:150],
+                email=email,
+                password_hash=hash_password(secrets.token_urlsafe(24)),
+                telefono_whatsapp=tel_g,
+                foto_perfil_url=validar_foto_url(data.foto_perfil_url),
+                rol="ESTUDIANTE",
+                telefono_verificado=False,
+                email_verificado=True,
+                auth_provider="google",
+                supabase_id=data.supabase_id,
+                acepto_tratamiento_datos=True,
+                fecha_consentimiento=datetime.now(timezone.utc),
+                ip_consentimiento=ip,
+                version_politica=settings.POLITICA_VERSION,
+            )
+            db.add(u)
+            try:
+                await db.commit()
+                es_nuevo = True  # creado en esta petición (mensaje "¡Cuenta creada!")
+            except IntegrityError:
+                # Perdió la carrera: otro request creó la fila -> vincular.
+                await db.rollback()
+                res2 = await db.execute(select(Usuario).where(Usuario.email == email))
+                u = res2.scalars().first()
+                if not u:
+                    raise
+                if data.supabase_id:
+                    u.supabase_id = data.supabase_id
+                u.email_verificado = True
+                await db.commit()
+            await db.refresh(u)
+        token = _issue_token(u.id, u.email, u.rol, bool(u.telefono_verificado), True)
+        try:
+            import jwt as _jwt
+            jti = _jwt.decode(token, options={"verify_signature": False}).get("jti", "")
+            await _registrar_sesion(db, u.id, jti, request)
+        except Exception:
+            pass
+        return {"access_token": token, "token_type": "bearer",
+                "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": u.rol, "mock": False,
+                "es_nuevo": es_nuevo}
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[oauth google] DB falló: {e!r}", exc_info=True)
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+        m = MOCK_USERS.get(email)
+        es_nuevo_mock = False
+        if not m:
+            es_nuevo_mock = True
+            m = {
+                "password": hash_password(secrets.token_urlsafe(16)),
+                "rol": "ESTUDIANTE",
+                "id": 90 + len(MOCK_USERS),
+                "nombre_completo": data.nombre_completo,
+                "telefono_whatsapp": (normalizar_telefono(data.telefono_whatsapp)
+                                      if data.telefono_whatsapp else None),
+                "telefono_verificado": False,
+                "email_verificado": True,
+                "auth_provider": "google",
+            }
+            try:
+                m["foto_perfil_url"] = validar_foto_url(data.foto_perfil_url)
+            except HTTPException:
+                m["foto_perfil_url"] = None
+            MOCK_USERS[email] = m
+        else:
+            m["email_verificado"] = True
+            m["auth_provider"] = "google" if m.get("auth_provider") == "password" else f"{m.get('auth_provider','')}+google"
+        token = _issue_token(m["id"], email, m["rol"], False, True)
+        return {"access_token": token, "token_type": "bearer",
+                "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": m["rol"], "mock": True,
+                "es_nuevo": es_nuevo_mock}
+
+
+# ---------------------------------------------------------------------------
+# v13: promoción dinámica ESTUDIANTE -> ARRENDADOR (al publicar)
+# ---------------------------------------------------------------------------
+async def promover_a_arrendador(db: AsyncSession, usuario_id: int) -> Optional[str]:
+    """Promueve a ARRENDADOR si era ESTUDIANTE. Retorna el rol final o None.
+
+    v13.2: delega en role_lifecycle (row-lock); NO hace commit (lo hace el
+    endpoint dueño de la transacción).
+    """
+    try:
+        from app.services import role_lifecycle as _rl
+        return await _rl.promover_si_estudiante(db, usuario_id)
+    except Exception:
+        return None
+
+
+@router.post("/promover", summary="Promover mi cuenta a ARRENDADOR (desde ESTUDIANTE)")
+async def promoverme(user: dict = Depends(get_current_user),
+                     db: AsyncSession = Depends(get_session)):
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    rol = await promover_a_arrendador(db, uid)
+    if rol is not None:
+        # v13.2: el helper ya no hace commit (lo hace el dueño de la txn).
+        try:
+            await db.commit()
+        except Exception:
+            pass
+    if rol is None:
+        if not _mock_enabled():
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        for em, m in MOCK_USERS.items():
+            if m.get("id") == uid and m.get("rol") == "ESTUDIANTE":
+                m["rol"] = "ARRENDADOR"
+                rol = "ARRENDADOR"
+                break
+        rol = rol or user.get("rol")
+    return {"rol": rol, "mensaje": "Cuenta promovida a ARRENDADOR." if rol == "ARRENDADOR" else "Sin cambios."}
+
+
+# ---------------------------------------------------------------------------
+# v13: sesiones activas + revocación global ("cerrar en todos los dispositivos")
+# ---------------------------------------------------------------------------
+@router.get("/sesiones", response_model=list[SesionOut], summary="Listar sesiones activas")
+async def listar_sesiones(user: dict = Depends(get_current_user),
+                          db: AsyncSession = Depends(get_session)):
+    uid = user.get("id")
+    actual_jti = user.get("jti")
+    try:
+        from ..models import Sesion
+        res = await db.execute(
+            select(Sesion).where(Sesion.usuario_id == uid,
+                                 Sesion.revocado.is_(False)).order_by(Sesion.id.desc()))
+        out = []
+        for s in res.scalars().all():
+            out.append(SesionOut(
+                jti=s.jti, ip=s.ip,
+                creado_en=s.creado_en.isoformat() if s.creado_en else None,
+                actual=bool(actual_jti and s.jti == actual_jti),
+                user_agent=getattr(s, "user_agent", None),
+            ))
+        return out
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+        return [SesionOut(jti=str(actual_jti or "mock"), ip="127.0.0.1", actual=True,
+                          user_agent="mock")]
+
+
+@router.post("/sesiones/revocar-todas", summary="Cerrar sesión en todos los dispositivos")
+async def revocar_sesiones(user: dict = Depends(get_current_user),
+                           db: AsyncSession = Depends(get_session)):
+    uid = user.get("id")
+    try:
+        n = await _revocar_sesiones_usuario(db, uid)
+        await db.commit()
+        return {"mensaje": f"Sesiones revocadas: {n}. Vuelve a iniciar sesión.", "revocadas": n}
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[sesiones revocar] DB falló: {e!r}", exc_info=True)
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+        return {"mensaje": "Sesiones revocadas (mock).", "revocadas": 1}
+
+
+def _claims_sin_verificar_revocacion(authorization: str | None) -> dict | None:
+    """Decodifica el Bearer sin exigir sesión activa (logout idempotente).
+
+    Un token ya revocado debe poder cerrar sesión igual (doble clic, multi
+    pestaña). Retorna claims o None si no hay token decodificable.
+    """
+    if not authorization or not authorization.strip():
+        return None
+    parts = authorization.strip().split()
+    if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
+        return None
+    try:
+        from ..core.security import decode_token
+        return decode_token(parts[1].strip())
+    except Exception:
+        return None
+
+
+@router.post("/logout", summary="Cerrar sesión actual (revoca este token)")
+async def logout_actual(
+    db: AsyncSession = Depends(get_session),
+    authorization: str | None = Header(None),
+):
+    """M1 efecto fantasma: revoca el jti del token actual en BD.
+
+    Idempotente: sin token, token legacy sin jti o ya revocado responden 200
+    igual (el frontend limpia el estado local de todas formas). Sin PG en
+    dev responde ok mock.
+    """
+    claims = _claims_sin_verificar_revocacion(authorization)
+    if not claims:
+        return {"mensaje": "Sesión cerrada.", "revocadas": 0}
+    jti = claims.get("jti")
+    uid = claims.get("id")
+    if not jti or not isinstance(uid, int):
+        return {"mensaje": "Sesión cerrada.", "revocadas": 0}
+    try:
+        n = await _revocar_sesiones_usuario(db, uid, jti)
+        await db.commit()
+        return {"mensaje": "Sesión cerrada.", "revocadas": n}
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[logout] DB falló: {e!r}", exc_info=True)
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+        return {"mensaje": "Sesión cerrada (mock).", "revocadas": 1, "mock": True}
+
+
+@router.post("/logout-all", summary="Cerrar sesión en todos los dispositivos")
+async def logout_todas(
+    db: AsyncSession = Depends(get_session),
+    authorization: str | None = Header(None),
+):
+    """Alias explícito de revocación global (misma semántica que
+    /sesiones/revocar-todas). Idempotente como /logout."""
+    claims = _claims_sin_verificar_revocacion(authorization)
+    if not claims or not isinstance(claims.get("id"), int):
+        return {"mensaje": "Sesiones revocadas.", "revocadas": 0}
+    uid = claims["id"]
+    try:
+        n = await _revocar_sesiones_usuario(db, uid)
+        await db.commit()
+        return {"mensaje": f"Sesiones revocadas: {n}. Vuelve a iniciar sesión.",
+                "revocadas": n}
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[logout-all] DB falló: {e!r}", exc_info=True)
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+        return {"mensaje": "Sesiones revocadas (mock).", "revocadas": 1, "mock": True}
+
+
+# ---------------------------------------------------------------------------
+# v13.1: eliminar cuenta (soft-delete 30 días) + restaurar + purga.
+# ---------------------------------------------------------------------------
+@router.delete("/cuenta", summary="Eliminar mi cuenta (soft-delete 30 días)")
+async def eliminar_cuenta(data: CuentaEliminarIn,
+                          user: dict = Depends(get_current_user),
+                          db: AsyncSession = Depends(get_session)):
+    """Borrado con doble confirmación y período de gracia recuperable.
+
+    - Cuentas `password`: exige la contraseña actual.
+    - Cuentas solo-Google (sin contraseña conocida): basta el email escrito.
+    Efecto: eliminado_en=ahora + sesiones revocadas. Purga física a los
+    30 días (login/register la ejecutan si la gracia venció + endpoint admin).
+    """
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    if _norm_email(data.confirm_email) != _norm_email(user.get("sub") or ""):
+        raise HTTPException(status_code=422, detail="El correo de confirmación no coincide")
+    try:
+        from ..models import Usuario
+        u = await db.get(Usuario, uid)
+        if not u:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        prov = getattr(u, "auth_provider", "password") or "password"
+        if prov == "password":
+            if not data.password or not verify_password(data.password, u.password_hash):
+                raise HTTPException(status_code=403, detail="Contraseña incorrecta")
+        u.eliminado_en = datetime.now(timezone.utc)
+        await _revocar_sesiones_usuario(db, u.id)
+        # M4 historial: la auto-eliminación queda auditada (misma transacción).
+        try:
+            from ..models import PublicacionesAudit
+            db.add(PublicacionesAudit(
+                publicacion_id=None, usuario_id=u.id,
+                evento="CUENTA_DELETE",
+                detalle=f"Soft-delete por el usuario (gracia {CUENTA_GRACE_DAYS}d)",
+            ))
+        except Exception:
+            pass
+        await db.commit()
+        return {"mensaje": (f"Cuenta marcada para eliminación. Tienes {CUENTA_GRACE_DAYS} días "
+                            "para recuperarla en /api/auth/cuenta/restaurar."),
+                "gracia_dias": CUENTA_GRACE_DAYS}
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[cuenta eliminar] DB falló: {e!r}", exc_info=True)
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+        for em, m in MOCK_USERS.items():
+            if m.get("id") == uid:
+                if (m.get("auth_provider", "password") == "password"
+                        and (not data.password or not verify_password(data.password, m["password"]))):
+                    raise HTTPException(status_code=403, detail="Contraseña incorrecta")
+                m["eliminado_en"] = datetime.now(timezone.utc).isoformat()
+                break
+        return {"mensaje": "Cuenta marcada para eliminación (mock).",
+                "gracia_dias": CUENTA_GRACE_DAYS}
+
+
+@router.post("/cuenta/restaurar", response_model=LoginOut, summary="Restaurar cuenta en gracia")
+async def restaurar_cuenta(data: CuentaRestaurarIn, request: Request,
+                           db: AsyncSession = Depends(get_session)):
+    """Revive una cuenta eliminada dentro de los 30 días (emite sesión nueva)."""
+    email = _norm_email(data.email)
+    try:
+        from ..models import Usuario
+        res = await db.execute(select(Usuario).where(Usuario.email == email))
+        u = res.scalars().first()
+        if not u:
+            raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+        restan = _gracia_restante(u)
+        if restan is None:
+            raise HTTPException(status_code=409, detail="La cuenta está activa, inicia sesión normal")
+        if restan < 0:
+            try:
+                await _purge_user(db, u)
+            except Exception:
+                pass
+            raise HTTPException(status_code=410, detail="Gracia vencida: la cuenta fue purgada")
+        if not verify_password(data.password, u.password_hash):
+            raise HTTPException(status_code=401, detail="Credenciales inválidas")
+        u.eliminado_en = None
+        await db.commit()
+        token = _issue_token(u.id, u.email, u.rol, bool(u.telefono_verificado),
+                             bool(getattr(u, "email_verificado", False)))
+        try:
+            import jwt as _jwt
+            jti = _jwt.decode(token, options={"verify_signature": False}).get("jti", "")
+            await _registrar_sesion(db, u.id, jti, request)
+        except Exception:
+            pass
+        return {"access_token": token, "token_type": "bearer",
+                "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": u.rol, "mock": False}
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[cuenta restaurar] DB falló: {e!r}", exc_info=True)
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+        m = MOCK_USERS.get(email)
+        if not m or not m.get("eliminado_en"):
+            raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+        if not verify_password(data.password, m["password"]):
+            raise HTTPException(status_code=401, detail="Credenciales inválidas")
+        m.pop("eliminado_en", None)
+        token = _issue_token(m["id"], email, m["rol"], False, True)
+        return {"access_token": token, "token_type": "bearer",
+                "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": m["rol"], "mock": True}

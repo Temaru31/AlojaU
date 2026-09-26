@@ -1,6 +1,10 @@
-// Banner discreto cold-start Render (30-50s por inactividad).
-// Uso: <ColdStartBanner /> entre Nav y main. Ej: visible solo si un request supera 4s.
+// Banner discreto cold-start Render (15-45s por inactividad, free tier).
+// v13: copia exacta requerida + reintento visible. Uso: <ColdStartBanner />
+// entre Nav y main. Visible solo si un request supera 4s (evento api.js).
 import { useEffect, useState } from 'react'
+
+export const COLD_START_MESSAGE =
+  'Iniciando servidores seguros de AlojaU, dame unos segundos...'
 
 export default function ColdStartBanner() {
   const [visible, setVisible] = useState(false)
@@ -30,7 +34,9 @@ export default function ColdStartBanner() {
           className="w-4 h-4 shrink-0 rounded-full border-2 border-white/30 border-t-gold-400 animate-spin"
         />
         <p className="text-xs sm:text-sm text-navy-100">
-          Despertando el servidor, puede tardar hasta 50 segundos por inactividad. Tus datos se cargarán solos, no recargues.
+          {COLD_START_MESSAGE} El servidor gratuito se estaba despertando
+          (puede tardar hasta 50 segundos). Tus datos se cargarán solos,
+          no recargues la página.
         </p>
       </div>
     </div>

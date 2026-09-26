@@ -1,42 +1,59 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, cleanup } from '@testing-library/react'
-import Filtros from './Filtros'
+import Filtros, { contarAvanzados } from './Filtros'
 
 afterEach(()=> cleanup())
 
-describe('Filtros - HU-002', ()=>{
-  it('renderiza inputs sin desbordar (responsive)', ()=>{
-    const { container } = render(<Filtros filtros={{}} setFiltros={vi.fn()} />)
-    expect(screen.getByPlaceholderText('Min COP')).toBeInTheDocument()
-    expect(screen.getByPlaceholderText('Max COP')).toBeInTheDocument()
-    // grid responsive
-    expect(container.querySelector('.grid')).toBeInTheDocument()
+describe('Filtros - HU-002 + Fase 3 avanzados', ()=>{
+  it('muestra botón desplegable con badge cuando hay filtros activos', ()=>{
+    render(<Filtros filtros={{ tipo: 'APARTAESTUDIO', servicios: '1,4' }} setFiltros={vi.fn()} defaultOpen />)
+    expect(screen.getByRole('button', { name: /Filtros avanzados/ })).toBeInTheDocument()
+    expect(screen.getByLabelText(/3 filtros activos/)).toBeInTheDocument()
   })
 
-  it('llama setFiltros al cambiar Min', ()=>{
-    const setFiltros = vi.fn()
-    render(<Filtros filtros={{}} setFiltros={setFiltros} />)
-    fireEvent.change(screen.getByPlaceholderText('Min COP'), { target: { value: '400000' }})
-    expect(setFiltros).toHaveBeenCalledWith(expect.objectContaining({ min: '400000' }))
+  it('desplegado muestra precio, tipo y servicios', ()=>{
+    render(<Filtros filtros={{}} setFiltros={vi.fn()} defaultOpen />)
+    expect(screen.getByPlaceholderText('Min COP')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Max COP')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Todos los tipos')).toBeInTheDocument()
+    expect(screen.getByLabelText('WiFi Fibra')).toBeInTheDocument()
+  })
+
+  it('contarAvanzados incluye precio', ()=>{
+    expect(contarAvanzados({})).toBe(0)
+    expect(contarAvanzados({ min: '100', max: '200', tipo: 'APARTAESTUDIO', servicios: '1,4' })).toBe(5)
+  })
+
+  it('soloPanel rinde campos sin cabecera toggle', ()=>{
+    render(<Filtros filtros={{}} setFiltros={vi.fn()} soloPanel />)
+    expect(screen.queryByRole('button', { name: /Filtros avanzados/ })).not.toBeInTheDocument()
+    expect(screen.getByPlaceholderText('Min COP')).toBeInTheDocument()
   })
 
   it('cambia tipo', ()=>{
     const setFiltros = vi.fn()
-    render(<Filtros filtros={{tipo:''}} setFiltros={setFiltros} />)
+    render(<Filtros filtros={{tipo:''}} setFiltros={setFiltros} defaultOpen />)
     const select = screen.getByDisplayValue('Todos los tipos')
     fireEvent.change(select, { target: { value: 'APARTAESTUDIO' }})
     expect(setFiltros).toHaveBeenCalledWith(expect.objectContaining({ tipo: 'APARTAESTUDIO' }))
   })
 
-  it('botón Limpiar resetea', ()=>{
+  it('botón Limpiar resetea avanzados (incluye precio)', ()=>{
     const setFiltros = vi.fn()
-    render(<Filtros filtros={{min:'100', max:'200'}} setFiltros={setFiltros} />)
+    render(<Filtros filtros={{min:'100', max:'200', tipo:'APARTAESTUDIO'}} setFiltros={setFiltros} defaultOpen />)
     fireEvent.click(screen.getByText('Limpiar filtros'))
-    expect(setFiltros).toHaveBeenCalledWith({})
+    expect(setFiltros).toHaveBeenCalledWith(expect.objectContaining({ min: '', max: '', tipo: '', servicios: '' }))
   })
 
   it('incluye opción HABITACION_INDEPENDIENTE (fix previo faltante)', ()=>{
-    render(<Filtros filtros={{}} setFiltros={vi.fn()} />)
-    expect(screen.getByText('Habitacion independiente')).toBeInTheDocument()
+    render(<Filtros filtros={{}} setFiltros={vi.fn()} defaultOpen />)
+    // M2 dinámico: nombre con acento + icono (fallback local).
+    expect(screen.getByText(/Habitación independiente/)).toBeInTheDocument()
+  })
+
+  it('M2 catálogo dinámico incluye nuevos slugs (sin renombrar históricos)', ()=>{
+    render(<Filtros filtros={{}} setFiltros={vi.fn()} defaultOpen />)
+    expect(screen.getByText(/Apartamento completo/)).toBeInTheDocument()
+    expect(screen.getByText(/piso compartido/i)).toBeInTheDocument()
   })
 })

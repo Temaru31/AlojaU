@@ -5,7 +5,7 @@
 // Sincronización: Perfil/Publicar emiten 'alojau:auth-change' tras login/logout;
 // además se escucha 'storage' (multi-pestaña). El perfil se valida contra
 // GET /api/auth/perfil; si el token es inválido (401) se limpia solo.
-import { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react'
 import { api } from '../services/api'
 
 const AuthContext = createContext(null)
@@ -18,6 +18,29 @@ export const emitAuthChange = () => {
   } catch {
     // SSR/tests sin window: noop
   }
+}
+
+// M1 efecto fantasma: claves de sesión/datos locales de AlojaU. Centralizar
+// aquí evita que un logout deje favoritos, comparador, historial o perfil
+// de otro usuario visibles. No toca claves ajenas a la app ni cachés
+// geográficos impersonales (ej. geocode).
+export const SESION_KEYS = [
+  'alojau_token',
+  'favoritos',
+  'alojau_favoritos',
+  'alojau_comparar',
+  'alojau_contactos',
+  'alojau_historial',
+  'alojau_config_publica',
+]
+
+export function limpiarSesionLocal() {
+  for (const k of SESION_KEYS) {
+    try { localStorage.removeItem(k) } catch { /* noop */ }
+  }
+  // Selectivo (no clear()): otra pestaña duplicada podría estar a mitad de
+  // un retorno OAuth con su redirect pendiente.
+  try { sessionStorage.removeItem('alojau_post_login_redirect') } catch { /* noop */ }
 }
 
 const readToken = () => {
@@ -82,16 +105,46 @@ export function AuthProvider({ children }) {
     emitAuthChange()
   }, [sync])
 
-  const logout = useCallback(() => {
-    try { localStorage.removeItem(TOKEN_KEY) } catch { /* noop */ }
+  // M1 cierre total: revoca en BD (best-effort), limpia todo rastro local,
+  // resetea el usuario y reemplaza la ruta para no dejar estados en memoria.
+  const logout = useCallback(async () => {
+    const t = readToken()
+    if (t) {
+      try {
+        await api.post('/api/auth/logout', {}, {
+          headers: { Authorization: `Bearer ${t}` },
+        })
+      } catch { /* best-effort: el estado local se limpia igual */ }
+    }
+    limpiarSesionLocal()
     setToken('')
     setUser(null)
     setLoading(false)
     emitAuthChange()
+    try {
+      window.location.replace('/')
+    } catch { /* SSR/tests sin location */ }
   }, [])
 
+  const refresh = useCallback(() => sync(readToken()), [sync])
+
+  // R9: parche local del usuario (ej. avatar recién subido) sin refetch.
+  // Fusiona sobre el usuario actual para que Nav/Perfil se actualicen al
+  // instante; el próximo refresh() revalida contra el backend.
+  const actualizarUsuario = useCallback((parche) => {
+    if (!parche || typeof parche !== 'object') return
+    setUser((prev) => (prev ? { ...prev, ...parche } : prev))
+  }, [])
+
+  // v14.1: value memoizado — sin esto cada setLoading crea objeto nuevo y
+  // re-renderiza a todos los consumidores (Nav, Perfil, MisPublicaciones…).
+  const value = useMemo(
+    () => ({ token, user, loading, login, logout, refresh, actualizarUsuario }),
+    [token, user, loading, login, logout, refresh, actualizarUsuario],
+  )
+
   return (
-    <AuthContext.Provider value={{ token, user, loading, login, logout, refresh: () => sync(readToken()) }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   )
@@ -101,7 +154,7 @@ export function useAuth() {
   const ctx = useContext(AuthContext)
   if (!ctx) {
     // Fallback seguro para tests o rendering sin provider (sesión anónima).
-    return { token: '', user: null, loading: false, login: () => {}, logout: () => {}, refresh: () => {} }
+    return { token: '', user: null, loading: false, login: () => {}, logout: () => {}, refresh: () => {}, actualizarUsuario: () => {} }
   }
   return ctx
 }

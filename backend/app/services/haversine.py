@@ -21,16 +21,21 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return haversine_m(lat1, lon1, lat2, lon2) / 1000.0
 
 
-# 004 POIs: minutos a pie desde distancia geodésica.
-# Factor 1.3 = la ruta real a pie es ~30% más larga que la línea recta
-# (cuadras de Popayán); 80 m/min = paso estándar (igual que el frontend).
+# 004 POIs + v10: minutos a pie desde distancia geodésica.
+# Factor 1.28 = tortuosidad urbana (la ruta real a pie es ~28% más larga que
+# la línea recta); 66 m/min = ~4 km/h urbano (igual que el frontend:
+# formatters.js PEATONAL_FACTOR / VELOCIDAD_M_MIN).
 # Fuente única backend de "Y min a pie" (ver view.build_detail campus_ref).
+PEATONAL_FACTOR = 1.28
+VELOCIDAD_M_MIN = 66
+
+
 def tiempo_pie_min(dist_m: int | None) -> int | None:
     """Minutos a pie (mínimo 1) o None si la distancia es desconocida."""
     if dist_m is None:
         return None
     try:
-        return max(1, round(float(dist_m) * 1.3 / 80))
+        return max(1, round(float(dist_m) * PEATONAL_FACTOR / VELOCIDAD_M_MIN))
     except (TypeError, ValueError):
         return None
 

@@ -9,8 +9,12 @@ import { useAuth } from '../contexts/AuthContext'
 import { formatDistancia } from '../utils/formatters'
 import SmartImage from '../components/SmartImage'
 import Paginacion from '../components/Paginacion'
+import ConfirmDialog from '../components/ConfirmDialog'
 import EditarPublicacionModal from '../components/EditarPublicacionModal'
 import RenovarModal from '../components/RenovarModal'
+import { portadaUrl } from '../utils/portada'
+import { getEtiquetaTipo } from '../utils/tiposVivienda'
+import useTiposVivienda from '../hooks/useTiposVivienda'
 
 /**
  * Reglas de cálculo de días de vigencia:
@@ -81,43 +85,52 @@ export function formatFechaExpiracion(fechaRaw) {
   })
 }
 
-// Labels amigables (nunca enum crudo)
+// Labels amigables (nunca enum crudo). M6: la pausa del dueño se distingue
+// de la pausa por moderación (el arrendador debe saber por qué no se ve).
 const ESTADO_LABEL = {
   ACTIVO: 'Publicada',
   PENDIENTE: 'En revisión',
   EXPIRADO: 'Vencida',
-  PAUSADO: 'Pausada',
+  PAUSADO: '⏸️ Pausada por el Arrendador',
+  PAUSADO_POR_REPORTE: '⚠️ Pausada por Moderación',
+  REVISION_REQUERIDA: '⚠️ En revisión de Moderación',
   RECHAZADO: 'Rechazada',
   ARRENDADO: 'Arrendada',
   DESACTIVADO: 'Desactivada',
 }
+
+// M6: orden del panel (server-side vía ?orden=: ordenar en cliente mentiría
+// con paginación multipágina).
+export const ORDENES_MIS_PUBS = [
+  { value: 'recientes', label: 'Más recientes' },
+  { value: 'vistas', label: 'Más vistas' },
+  { value: 'estado', label: 'Estado' },
+]
 
 const ESTADO_STYLE = {
   ACTIVO: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   PENDIENTE: 'bg-amber-50 text-amber-700 border-amber-200',
   EXPIRADO: 'bg-red-50 text-red-700 border-red-200',
   PAUSADO: 'bg-neutral-50 text-neutral-600 border-neutral-200',
+  PAUSADO_POR_REPORTE: 'bg-red-50 text-red-700 border-red-200',
+  REVISION_REQUERIDA: 'bg-orange-50 text-orange-700 border-orange-200',
   RECHAZADO: 'bg-rose-50 text-rose-700 border-rose-200',
-}
-
-const TIPO_LABEL = {
-  HABITACION_INDEPENDIENTE: 'Habitación independiente',
-  HABITACION_FAMILIAR: 'Habitación familiar',
-  APARTAESTUDIO: 'Apartaestudio',
-  COMPARTIDO: 'Compartido',
 }
 
 const FILTROS = [
   { value: '', label: 'Todas' },
   { value: 'ACTIVO', label: 'Publicadas' },
   { value: 'PENDIENTE', label: 'En revisión' },
+  { value: 'PAUSADO', label: 'Pausadas' },
   { value: 'EXPIRADO', label: 'Vencidas' },
 ]
 
 const PAGE_SIZE = 12
 
 export default function MisPublicaciones() {
-  const { token } = useAuth()
+  const { token, refresh } = useAuth()
+  // M2: catálogo dinámico con fallback estático.
+  const { tipos: tiposCatalogo } = useTiposVivienda()
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [pages, setPages] = useState(1)
@@ -128,6 +141,62 @@ export default function MisPublicaciones() {
   const [reloadKey, setReloadKey] = useState(0)
   const [editando, setEditando] = useState(null)
   const [renovando, setRenovando] = useState(null)
+  // Borrado con modal independiente (nunca cambia el texto del botón).
+  const [aEliminar, setAEliminar] = useState(null)
+  const [eliminando, setEliminando] = useState(false)
+  // v15.2: switch ACTIVA/PAUSADA del dueño.
+  const [cambiandoEstado, setCambiandoEstado] = useState(null)
+  // M2: pausar oculta la vitrina -> confirmación en 2 pasos (reanudar no).
+  const [aPausar, setAPausar] = useState(null)
+  // M6: orden server-side (se envía al backend y resetea la página).
+  const [orden, setOrden] = useState('recientes')
+
+  const handleEstado = async (p) => {
+    if (p.estado === 'ACTIVO' && aPausar !== p.id) {
+      setAPausar(p.id)
+      return
+    }
+    const nuevo = p.estado === 'ACTIVO' ? 'PAUSADO' : 'ACTIVO'
+    setCambiandoEstado(p.id)
+    setError('')
+    try {
+      const r = await api.patch(`/api/publicaciones/${p.id}/estado`, { estado: nuevo }, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      setItems(prev => prev.map(x => x.id === p.id ? { ...x, estado: r.data?.estado || nuevo } : x))
+      setAPausar(null)
+      if (r.data?.rol_actualizado) {
+        try { await refresh?.() } catch { /* noop */ }
+      }
+    } catch (err) {
+      setError(err?.response?.data?.detail || 'No se pudo cambiar el estado.')
+      setAPausar(null)
+    } finally {
+      setCambiandoEstado(null)
+    }
+  }
+
+  const handleEliminar = async (p) => {
+    setEliminando(true)
+    setError('')
+    try {
+      const r = await api.delete(`/api/publicaciones/${p.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      setItems(prev => prev.filter(x => x.id !== p.id))
+      setTotal(t => Math.max(0, t - 1))
+      setAEliminar(null)
+      // v13.2 reactividad de rol: si hubo democión, re-sincroniza el perfil.
+      if (r.data?.rol_actualizado) {
+        try { await refresh?.() } catch { /* noop */ }
+      }
+    } catch (err) {
+      setError(err?.response?.data?.detail || 'No se pudo eliminar la publicación.')
+      setAEliminar(null)
+    } finally {
+      setEliminando(false)
+    }
+  }
 
   // OLA4: AbortController — cambiar de filtro/página aborta la petición anterior
   // para que una respuesta tardía no pise los resultados actuales.
@@ -141,7 +210,7 @@ export default function MisPublicaciones() {
     setLoading(true)
     setError('')
     api.get('/api/publicaciones/mias', {
-      params: { page, size: PAGE_SIZE, ...(filtro ? { estado: filtro } : {}) },
+      params: { page, size: PAGE_SIZE, ...(filtro ? { estado: filtro } : {}), orden },
       headers: { Authorization: `Bearer ${token}` },
       signal: controller.signal,
     })
@@ -165,9 +234,10 @@ export default function MisPublicaciones() {
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [token, page, filtro, reloadKey])
+  }, [token, page, filtro, orden, reloadKey])
 
   const cambiarFiltro = (v) => { setFiltro(v); setPage(1) }
+  const cambiarOrden = (v) => { setOrden(v); setPage(1) }
 
   // Estado no autenticado
   if (!token) {
@@ -198,31 +268,52 @@ export default function MisPublicaciones() {
         </h1>
       </div>
 
-      {/* Filtros por estado */}
-      <div className="flex flex-wrap gap-2 mb-4" role="group" aria-label="Filtrar por estado">
-        {FILTROS.map(f => (
-          <button type="button"
-            key={f.value}
-            onClick={() => cambiarFiltro(f.value)}
-            aria-pressed={filtro === f.value}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${
-              filtro === f.value
-                ? 'bg-navy-800 text-white border-navy-800'
-                : 'bg-white border-neutral-200 text-neutral-600 hover:border-navy-300'
-            }`}
+      {/* Filtros por estado + orden del panel */}
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Filtrar por estado">
+          {FILTROS.map(f => (
+            <button type="button"
+              key={f.value}
+              onClick={() => cambiarFiltro(f.value)}
+              aria-pressed={filtro === f.value}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${
+                filtro === f.value
+                  ? 'bg-navy-800 text-white border-navy-800'
+                  : 'bg-white border-neutral-200 text-neutral-600 hover:border-navy-300'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <label className="ml-auto inline-flex items-center gap-1.5 text-xs text-neutral-500">
+          Ordenar:
+          <select
+            value={orden}
+            onChange={e => cambiarOrden(e.target.value)}
+            aria-label="Ordenar mis publicaciones"
+            className="text-xs font-medium border border-neutral-200 rounded-lg px-2 py-1.5 bg-white text-neutral-700"
           >
-            {f.label}
-          </button>
-        ))}
+            {ORDENES_MIS_PUBS.map(o => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </label>
       </div>
 
-      {/* Alerta de error */}
+      {/* Alerta de error: la sesión vencida guía a re-ingresar (reintentar no sirve sin token). */}
       {error && (
         <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-3" role="alert">
           <p className="text-xs text-red-700 flex-1">{error}</p>
-          <button type="button" onClick={() => setReloadKey(k => k + 1)} className="text-xs font-semibold text-red-700 hover:text-red-800 underline shrink-0">
-            Reintentar
-          </button>
+          {/Sesión vencida/i.test(error) ? (
+            <Link to="/perfil" className="text-xs font-semibold text-red-700 hover:text-red-800 underline shrink-0">
+              Volver a ingresar
+            </Link>
+          ) : (
+            <button type="button" onClick={() => setReloadKey(k => k + 1)} className="text-xs font-semibold text-red-700 hover:text-red-800 underline shrink-0">
+              Reintentar
+            </button>
+          )}
         </div>
       )}
 
@@ -269,9 +360,11 @@ export default function MisPublicaciones() {
             {items.map((p) => {
               const vigencia = calcularVigencia(p.fecha_expiracion)
               const fechaExpTexto = formatFechaExpiracion(p.fecha_expiracion)
-              const cover = Array.isArray(p.fotos) && p.fotos.length > 0 ? p.fotos[0] : null
+              // BUG#1: portada = orden=1 vía helper central.
+              const cover = portadaUrl(p)
               const zonaTexto = p.zona_nombre || p.zona || 'Zona no informada'
-              const tipoTexto = TIPO_LABEL[p.tipo_inmueble] || p.tipo_inmueble || 'Vivienda'
+              // Bloque 3: fuente única (dinámico + fallback central).
+              const tipoTexto = getEtiquetaTipo(p.tipo_inmueble, tiposCatalogo, 'Vivienda')
               const canonValor = p.canon_mensual ?? p.canon
 
               return (
@@ -335,6 +428,11 @@ export default function MisPublicaciones() {
                             · Confianza {p.indice_confianza}/100
                           </span>
                         )}
+                        {typeof p.vistas === 'number' && (
+                          <span className="text-xs font-normal text-neutral-400 ml-2" aria-label={`${p.vistas} vistas`}>
+                            · 👁 {p.vistas}
+                          </span>
+                        )}
                       </p>
 
                       {/* Fechas de vigencia */}
@@ -358,6 +456,28 @@ export default function MisPublicaciones() {
 
                     {/* Acciones de la tarjeta */}
                     <div className="flex flex-wrap items-center justify-end gap-2 pt-3 mt-3 border-t border-neutral-100">
+                      {/* v15.2 switch ACTIVA/PAUSADA del dueño (pausar: 2 pasos) */}
+                      {(p.estado === 'ACTIVO' || p.estado === 'PAUSADO') && (
+                        <button
+                          onClick={() => handleEstado(p)}
+                          onBlur={() => setAPausar(null)}
+                          disabled={cambiandoEstado === p.id}
+                          aria-label={p.estado === 'ACTIVO'
+                            ? (aPausar === p.id ? `Confirmar pausa de ${p.titulo}` : `Pausar ${p.titulo}`)
+                            : `Reanudar ${p.titulo}`}
+                          aria-pressed={p.estado === 'ACTIVO'}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition disabled:opacity-50 ${p.estado === 'ACTIVO'
+                            ? (aPausar === p.id
+                              ? 'bg-amber-500 border-amber-500 text-white hover:bg-amber-600'
+                              : 'border-amber-300 text-amber-700 hover:bg-amber-50')
+                            : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'
+                            }`}
+                        >
+                          {cambiandoEstado === p.id ? '…' : p.estado === 'ACTIVO'
+                            ? (aPausar === p.id ? '¿Pausar?' : '⏸ Pausar')
+                            : '▶ Reanudar'}
+                        </button>
+                      )}
                       <button
                         onClick={() => setRenovando(p)}
                         aria-label={`Renovar ${p.titulo}`}
@@ -372,6 +492,14 @@ export default function MisPublicaciones() {
                         className="px-3 py-1.5 rounded-lg text-xs font-medium border border-neutral-200 text-neutral-600 hover:border-navy-300 hover:text-navy-700 transition"
                       >
                         Editar
+                      </button>
+
+                      <button
+                        onClick={() => setAEliminar(p)}
+                        aria-label={`Eliminar ${p.titulo}`}
+                        className="px-3 py-1.5 min-h-[44px] rounded-lg text-xs font-medium border border-neutral-200 text-neutral-400 hover:border-red-300 hover:text-red-600 active:bg-red-50 transition"
+                      >
+                        Eliminar
                       </button>
 
                       <Link
@@ -413,6 +541,20 @@ export default function MisPublicaciones() {
               : x
             ))
           }}
+        />
+      )}
+
+      {/* Modal independiente de eliminar (nunca muta el botón de la tarjeta). */}
+      {aEliminar && (
+        <ConfirmDialog
+          titulo="¿Eliminar esta publicación?"
+          descripcion={`"${aEliminar.titulo}" dejará de ser visible de inmediato y no se puede deshacer. Si solo quieres ocultarla por un tiempo, considera pausarla.`}
+          cancelar="Cancelar"
+          confirmar="Sí, eliminar"
+          peligro
+          ocupado={eliminando}
+          onCancelar={() => { if (!eliminando) setAEliminar(null) }}
+          onConfirmar={() => handleEliminar(aEliminar)}
         />
       )}
     </div>

@@ -12,7 +12,13 @@ import logging
 import os
 import uuid
 from app.core.config import settings
-from app.routers import publicaciones, campus, auth, uploads, reportes, admin
+from app.routers import publicaciones, campus, auth, uploads, reportes, admin, ciudades, admin_automation, zonas, housing_types
+
+# Detalle #7 DX local: el OTP se loguea con logger.info pero uvicorn deja el
+# root en WARNING y el código era invisible. En dev/test se sube a INFO para
+# verlo; en prod se respeta el nivel del entorno (sin secretos en logs).
+if getattr(settings, "ENV", "dev") != "prod":
+    logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger("alojau")
 
@@ -44,11 +50,13 @@ app = FastAPI(
 )
 
 # CORS restringido (DoD-5): nunca "*" con credentials
+# Detalle #10: sin PUT (ningún endpoint lo usa; todo es PATCH/POST) — reduce
+# superficie preflight sin romper contratos.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -103,8 +111,18 @@ def health():
     return {"status": "ok", "service": "AlojaU API", "version": "0.1.0", "sprint": "Sprint1 HU-001,002,003,005,007,008"}
 
 # Static uploads (HU-005) - sirve /uploads/{uuid}.jpg
+# AUDITORÍA PRE-PUSH: makedirs tolerante (contenedor read-only no debe tumbar
+# el arranque; StaticFiles exige dir existente -> se crea bajo try).
 _upload_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
-os.makedirs(_upload_dir, exist_ok=True)
+try:
+    os.makedirs(_upload_dir, exist_ok=True)
+except Exception:
+    logger.warning("[storage] /uploads no escribible al arrancar (FS efímero/solo-lectura)")
+    try:
+        os.makedirs("/tmp/alojau_uploads", exist_ok=True)
+        _upload_dir = "/tmp/alojau_uploads"
+    except Exception:
+        pass
 app.mount("/uploads", StaticFiles(directory=_upload_dir), name="uploads")
 
 # Favicon AlojaU para /docs (F1: reemplaza rayo FastAPI por marca propia)
@@ -124,13 +142,18 @@ async def custom_docs():
         swagger_favicon_url="/static/favicon.svg",
     )
 
-# Routers Sprint1 + T1 reportes + RBAC admin
+# Routers Sprint1 + T1 reportes + RBAC admin + multiciudad + automation + zonas + M2 housing
+app.include_router(ciudades.router)
+app.include_router(zonas.router)
+app.include_router(admin_automation.router)
 app.include_router(campus.router)
 app.include_router(publicaciones.router)
 app.include_router(auth.router)
 app.include_router(uploads.router)
 app.include_router(reportes.router)
 app.include_router(admin.router)
+app.include_router(housing_types.router_public)
+app.include_router(housing_types.router_admin)
 
 # Legacy mock endpoints removidos: ahora en routers/publicaciones.py y routers/campus.py
 # - GET /api/publicaciones?campus_id=&precio_min=&precio_max=&tipo=&servicios=  (HU-001+002)

@@ -7,8 +7,7 @@ pydantic-settings==2.15.0
 email-validator==2.3.0
 alembic==1.13.1
 python-dotenv>=1.2.2
-passlib[bcrypt]==1.7.4
-bcrypt==4.0.1
+bcrypt==4.0.1  # hashing directo (passlib abandonado, removido; ver app/core/security.py)
 PyJWT>=2.10  # OLA1: reemplaza python-jose (abandonado + CVEs JWT bomb); solo HS256
 python-multipart>=0.0.31
 httpx==0.28.1  # solo para TestClient / tests

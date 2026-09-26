@@ -15,8 +15,34 @@ def whatsapp_link(titulo: str, pub_id: int, tel: Optional[str]) -> Optional[str]
     return f"https://wa.me/{tel}?text={urlquote(f'Hola, vi {titulo} (ID {pub_id}) en AlojaU y me interesa.')}"
 
 
-def mock_to_out(pub: dict, campus_id: Optional[int] = None) -> dict:
-    """Convierte dict mock a payload detalle (Haversine + Trust + alias compat)."""
+def _mock_imagenes(pub: dict) -> list:
+    """Simula filas ImagenPublicacion desde fotos mock (ids/orden deterministas).
+
+    BUG#1: antes devolvía imagenes: [] siempre, así que la portada mock no
+    existía. Id virtual estable: pub_id*1000 + índice (1-based), orden = índice.
+    Así fotos[0] == imagenes[0].url == portada en dev sin PG.
+    """
+    fotos = pub.get("fotos", []) or []
+    try:
+        base = int(pub.get("id", 0)) * 1000
+    except Exception:
+        base = 0
+    return [{"id": base + i, "url": u, "orden": i} for i, u in enumerate(fotos, start=1)]
+
+
+def mock_foto_ids(pub: dict) -> list[int]:
+    """Ids virtuales de fotos mock (para DELETE/orden sin PG)."""
+    return [im["id"] for im in _mock_imagenes(pub)]
+
+
+def mock_to_out(pub: dict, campus_id: Optional[int] = None,
+                mostrar_vistas: bool = True) -> dict:
+    """Convierte dict mock a payload detalle (Haversine + Trust + alias compat).
+
+    mostrar_vistas=False en lista/similares públicas (el contador es solo del
+    dueño/admin por setting vistas_visibles_publico=false); True en mias y
+    detalle propio. En dev sin PG el dueño SÍ ve su contador en /mias mock.
+    """
     dist = None
     if campus_id and campus_id in MOCK_CAMPUS and pub.get("latitud") is not None and pub.get("longitud") is not None:
         c = MOCK_CAMPUS[campus_id]
@@ -46,8 +72,9 @@ def mock_to_out(pub: dict, campus_id: Optional[int] = None) -> dict:
         "deposito": pub.get("deposito_requerido", 0),
         "deposito_requerido": pub.get("deposito_requerido", 0),
         "zona_barrio_id": pub["zona_barrio_id"],
-        "zona": pub.get("zona_nombre"),
-        "zona_nombre": pub.get("zona_nombre"),
+        "barrio_texto": pub.get("barrio_texto"),
+        "zona": pub.get("zona_nombre") or pub.get("barrio_texto"),
+        "zona_nombre": pub.get("zona_nombre") or pub.get("barrio_texto"),
         "direccion_referencial": pub["direccion_referencial"],
         "reglas": pub.get("reglas_convivencia"),
         "reglas_convivencia": pub.get("reglas_convivencia"),
@@ -72,6 +99,11 @@ def mock_to_out(pub: dict, campus_id: Optional[int] = None) -> dict:
         "telefono_whatsapp": tel,
         "whatsapp_url": whatsapp_link(pub["titulo"], pub["id"], tel),
         "usuario_id": pub.get("usuario_id"),
+        # v15.2 paridad mock (sin ids de foto ni contador en memoria).
+        "created_at": pub.get("fecha_publicacion"),
+        "updated_at": pub.get("fecha_renovacion"),
+        "vistas": (pub.get("vistas", 0) or 0) if mostrar_vistas else None,
+        "imagenes": _mock_imagenes(pub),
         # Oleada 2: coords para MapaZona modo aviso + deep-link (eran internas, ahora visibles).
         "latitud": pub.get("latitud"),
         "longitud": pub.get("longitud"),
@@ -94,6 +126,13 @@ def initial_trust(payload, telefono_verificado: bool) -> dict:
     )
 
 
+def _zona_display(p) -> str | None:
+    """Zona del catálogo o barrio libre (v10); None si no hay ninguno."""
+    z = getattr(p, "zona", None)
+    nombre = z.nombre if z is not None and getattr(z, "nombre", None) else None
+    return nombre or getattr(p, "barrio_texto", None) or None
+
+
 def trust_for_row(p, reportes_activos: int, tel_ver: bool) -> dict:
     """Índice para una fila ORM (lista o detalle)."""
     return calcular_indice(
@@ -110,38 +149,71 @@ def trust_for_row(p, reportes_activos: int, tel_ver: bool) -> dict:
     )
 
 
-def build_card(p, dist, trust: dict, zona_nombre, tel: Optional[str]) -> dict:
-    """Item GET /api/publicaciones (canónicos + alias compat)."""
+def _ordenadas(imagenes) -> list:
+    """Fotos ORM en orden de portada (orden=1 primero).
+
+    BUG#1: el eager-load ya viene ordenado por la relationship, pero se
+    re-ordena aquí defensivamente: si algún query futuro olvida el order_by,
+    la portada sigue siendo fotos[0]. Soporta objetos ORM y dicts mock.
+    """
+    try:
+        return sorted(list(imagenes or []), key=lambda i: (
+            getattr(i, "orden", None) if not isinstance(i, dict)
+            else i.get("orden", 0)
+        ) or 0)
+    except Exception:
+        return list(imagenes or [])
+
+
+def build_card(p, dist, trust: dict, zona_nombre, tel: Optional[str],
+               mostrar_vistas: bool = True) -> dict:
+    """Item GET /api/publicaciones (canónicos + alias compat).
+
+    fotos[0] es siempre la portada (orden=1): ver _ordenadas/BUG#1.
+    """
+    imgs = _ordenadas(p.imagenes)
     return {
         "id": p.id, "titulo": p.titulo, "descripcion": p.descripcion,
         "tipo_inmueble": p.tipo_inmueble, "canon_mensual": float(p.canon_mensual), "canon": float(p.canon_mensual),
         "deposito_requerido": float(p.deposito_requerido),
-        "zona_barrio_id": p.zona_barrio_id, "zona": zona_nombre, "zona_nombre": zona_nombre,
+        "zona_barrio_id": p.zona_barrio_id, "barrio_texto": getattr(p, "barrio_texto", None),
+        "zona": zona_nombre, "zona_nombre": zona_nombre,
         "direccion_referencial": p.direccion_referencial,
         "reglas_convivencia": p.reglas_convivencia, "estado": p.estado,
         "fecha_renovacion": p.fecha_renovacion, "fecha_expiracion": p.fecha_expiracion,
         "servicios": [s.nombre for s in p.servicios], "servicios_ids": [s.id for s in p.servicios],
-        "fotos": [im.url for im in p.imagenes], "num_fotos": len(p.imagenes),
+        "fotos": [im.url for im in imgs], "num_fotos": len(imgs),
         "distancia_geodesica_m": dist, "dist_m": dist,
         "indice_confianza": trust["indice"], "indice": trust["indice"], "desglose": trust["desglose"],
         "nivel_confianza": trust["nivel"], "nivel": trust["nivel"],
         "telefono_whatsapp": tel if tel else None,
         "usuario_id": p.usuario_id,
+        # v15.2 frescura + métricas (aditivos, sin romper contratos).
+        "fecha_publicacion": p.fecha_publicacion,
+        "created_at": p.fecha_publicacion,
+        "updated_at": p.fecha_renovacion,
+        "vistas": (getattr(p, "vistas", 0) or 0) if mostrar_vistas else None,
     }
 
 
-def build_detail(p, reportes_activos: int, u, dist, campus_ref: Optional[dict] = None) -> dict:
-    """Detalle GET /api/publicaciones/{id} (canónicos + alias compat)."""
+def build_detail(p, reportes_activos: int, u, dist, campus_ref: Optional[dict] = None,
+                 mostrar_vistas: bool = True) -> dict:
+    """Detalle GET /api/publicaciones/{id} (canónicos + alias compat).
+
+    BUG#1: fotos e imagenes comparten el mismo orden (portada primero).
+    """
     tel_ver = bool(u.telefono_verificado) if u else False
     trust = trust_for_row(p, reportes_activos, tel_ver)
     tel = u.telefono_whatsapp if tel_ver and u else None
-    zona_nombre = p.zona.nombre if hasattr(p, "zona") and p.zona else "No informado"
-    fotos = [im.url for im in p.imagenes]
+    zona_nombre = _zona_display(p) or "No informado"
+    imgs = _ordenadas(p.imagenes)
+    fotos = [im.url for im in imgs]
     return {
         "id": p.id, "titulo": p.titulo, "descripcion": p.descripcion,
         "tipo_inmueble": p.tipo_inmueble, "canon_mensual": float(p.canon_mensual), "canon": float(p.canon_mensual),
         "deposito": float(p.deposito_requerido), "deposito_requerido": float(p.deposito_requerido),
-        "zona_barrio_id": p.zona_barrio_id, "zona": zona_nombre, "zona_nombre": zona_nombre,
+        "zona_barrio_id": p.zona_barrio_id, "barrio_texto": getattr(p, "barrio_texto", None),
+        "zona": zona_nombre, "zona_nombre": zona_nombre,
         "direccion_referencial": p.direccion_referencial, "reglas": p.reglas_convivencia,
         "reglas_convivencia": p.reglas_convivencia,
         "estado": p.estado, "fecha_renovacion": p.fecha_renovacion, "fecha_expiracion": p.fecha_expiracion,
@@ -157,25 +229,44 @@ def build_detail(p, reportes_activos: int, u, dist, campus_ref: Optional[dict] =
         "longitud": float(p.longitud) if p.longitud is not None else None,
         # 004 POIs: referencia resuelta con ?campus_id= (mapa dinámico del Detalle).
         "campus_ref": campus_ref,
+        # v15.2 autoría + frescura + métricas + gestión multimedia (aditivos).
+        "usuario_id": p.usuario_id,
+        "fecha_publicacion": p.fecha_publicacion,
+        "created_at": p.fecha_publicacion,
+        "updated_at": p.fecha_renovacion,
+        "vistas": (getattr(p, "vistas", 0) or 0) if mostrar_vistas else None,
+        "imagenes": [
+            {"id": im.id, "url": im.url, "orden": im.orden}
+            for im in imgs
+        ],
     }
 
 
-def cards_for_page(pubs, reportes_map: dict, users_map: dict, dist_map: dict, campus_id=None) -> list:
+def cards_for_page(pubs, reportes_map: dict, users_map: dict, dist_map: dict, campus_id=None,
+                   mostrar_vistas: bool = True) -> list:
     """Items GET /api/publicaciones desde agregados en memoria (sin queries)."""
     out = []
     for p in pubs:
         u = users_map.get(p.usuario_id)
         tel_ver = bool(u.telefono_verificado) if u else False
         trust = trust_for_row(p, reportes_map.get(p.id, 0), tel_ver)
-        zona_nombre = p.zona.nombre if hasattr(p, "zona") and p.zona else None
+        zona_nombre = _zona_display(p)
         tel = u.telefono_whatsapp if tel_ver and u else None
-        out.append(build_card(p, dist_map.get(p.id) if campus_id else None, trust, zona_nombre, tel))
+        out.append(build_card(p, dist_map.get(p.id) if campus_id else None, trust, zona_nombre, tel,
+                              mostrar_vistas))
     return out
 
 
-def filter_mock_pubs(pubs: List[dict], campus_id=None, precio_min=None, precio_max=None, tipo=None, servicios_ids=None, q=None):
-    """Filtros HU-001/002 + Oleada 2 (q texto libre) sobre MOCK_PUBS (solo dev sin PG)."""
+def filter_mock_pubs(pubs: List[dict], campus_id=None, precio_min=None, precio_max=None, tipo=None, servicios_ids=None, q=None, ciudad_id=None, ciudad_slug=None):
+    """Filtros HU-001/002 + Fase 2 tokenizada + multiciudad sobre MOCK_PUBS (solo dev sin PG).
+
+    - Tokeniza q, filtra stop-words ES, OR parcial con score (mayoría primero).
+    - Busca en titulo, descripcion, zona_nombre, tipo (con sinónimos) y servicios.
+    - ciudad_id/ciudad_slug filtran por mock ciudad_id (default 1 Popayán).
+    """
     from app.services.haversine import haversine_m as _h
+    from app.services.search import normalize_token, tokenize_query, tipo_canonico_para_token
+    from app.services.ciudades import slugify
     import unicodedata
 
     def _norm(s: str) -> str:
@@ -183,6 +274,15 @@ def filter_mock_pubs(pubs: List[dict], campus_id=None, precio_min=None, precio_m
         return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
 
     filtradas = [p for p in pubs if p["estado"] == "ACTIVO"]
+    # Fase 4 multiciudad (mock): los pubs demo son ciudad_id 1 salvo que el dict lo indique.
+    if ciudad_slug and not ciudad_id:
+        wanted = slugify(ciudad_slug)
+        # Mock solo conoce Popayán (id 1 / slug popayan).
+        if wanted != "popayan":
+            return []
+        ciudad_id = 1
+    if ciudad_id:
+        filtradas = [p for p in filtradas if int(p.get("ciudad_id", 1)) == int(ciudad_id)]
     if campus_id:
         # Paridad con el trigger 004 (enlaza TODOS los lugares): si ningún pub
         # lista este lugar (p.ej. POI nuevo en mock), no se filtra por membresía;
@@ -202,19 +302,34 @@ def filter_mock_pubs(pubs: List[dict], campus_id=None, precio_min=None, precio_m
     if servicios_ids:
         filtradas = [p for p in filtradas if all(s in p.get("servicios_ids", []) for s in servicios_ids)]
     if q and q.strip():
-        nq = _norm(q.strip())
-        # Relevancia simple: empieza-por-título > contiene-en-título > contiene-en-descripción.
+        tokens = tokenize_query(q)
+        if not tokens:
+            return filtradas  # solo stop-words -> sin filtro de texto
         scored = []
         for p in filtradas:
-            nt, nd = _norm(p.get("titulo", "")), _norm(p.get("descripcion", ""))
-            if nt.startswith(nq):
-                scored.append((0, p))
-            elif nq in nt:
-                scored.append((1, p))
-            elif nq in nd:
-                scored.append((2, p))
-        scored.sort(key=lambda t: t[0])
-        filtradas = [p for _, p in scored]
+            nt = _norm(p.get("titulo", ""))
+            nd = _norm(p.get("descripcion", ""))
+            nz = _norm(p.get("zona_nombre") or p.get("barrio_texto") or "")
+            ns = _norm(" ".join(p.get("servicios", []) or []))
+            ntipo = _norm(p.get("tipo_inmueble", "").replace("_", " "))
+            haystacks = (nt, nd, nz, ns, ntipo)
+            hits = 0
+            for tok in tokens:
+                ntok = normalize_token(tok)
+                canon = tipo_canonico_para_token(tok)
+                matched = any(ntok in h for h in haystacks)
+                if not matched and canon:
+                    if canon == "HABITACION":
+                        matched = p.get("tipo_inmueble", "").startswith("HABITACION")
+                    else:
+                        matched = p.get("tipo_inmueble") == canon
+                if matched:
+                    hits += 1
+            if hits > 0:
+                # (-hits, id) => mayoría primero, determinista.
+                scored.append((-hits, p.get("id", 0), p))
+        scored.sort(key=lambda t: (t[0], t[1]))
+        filtradas = [p for _, _, p in scored]
     return filtradas
 
 

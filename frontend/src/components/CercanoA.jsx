@@ -29,6 +29,10 @@ export default function CercanoA({ lugares = [], value, onChange, inputId = 'cer
   const [filtro, setFiltro] = useState('')
   const raizRef = useRef(null)
   const inputRef = useRef(null)
+  // Bloque 3: el foco diferido se cancela al desmontar (ref nula = noop,
+  // pero el timer huérfano igual se limpia por higiene).
+  const focoTimer = useRef(null)
+  useEffect(() => () => window.clearTimeout(focoTimer.current), [])
   const seleccionado = lugares.find(l => String(l.id) === String(value))
 
   useEffect(() => {
@@ -70,7 +74,7 @@ export default function CercanoA({ lugares = [], value, onChange, inputId = 'cer
         aria-expanded={abierto}
         onClick={() => {
           setAbierto(v => !v)
-          if (!abierto) window.setTimeout(() => inputRef.current?.focus(), 0)
+          if (!abierto) { window.clearTimeout(focoTimer.current); focoTimer.current = window.setTimeout(() => inputRef.current?.focus(), 0) }
         }}
         className="select-field flex w-full items-center justify-between gap-2 text-left"
       >

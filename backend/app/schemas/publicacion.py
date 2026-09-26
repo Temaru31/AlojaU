@@ -1,9 +1,48 @@
-from pydantic import BaseModel, Field, ConfigDict, HttpUrl, model_validator
-from typing import Optional, Literal, List
+from pydantic import BaseModel, Field, ConfigDict, HttpUrl, model_validator, field_validator
+from typing import Optional, List
 from decimal import Decimal
 from datetime import datetime
 
-TipoInmueble = Literal["HABITACION_FAMILIAR","HABITACION_INDEPENDIENTE","APARTAESTUDIO","COMPARTIDO"]
+# M2 tipos dinámicos: el catálogo vive en housing_types (esta_activo=true).
+# Pydantic valida forma + allowlist sincrónica (FALLBACK 6 slugs); el endpoint
+# valida contra la tabla (async, con caché 5min) para tipos creados por admin.
+# Cero breaking: los 4 históricos siguen válidos.
+try:
+    from app.services.housing_types import FALLBACK_TIPOS as _HT_FB
+    TIPOS_FALLBACK_SLUGS = frozenset(t["slug"] for t in _HT_FB)
+except Exception:
+    TIPOS_FALLBACK_SLUGS = frozenset({
+        "HABITACION_FAMILIAR", "HABITACION_INDEPENDIENTE",
+        "APARTAESTUDIO", "COMPARTIDO",
+        "APARTAMENTO_COMPLETO", "HABITACION_PISO_COMPARTIDO",
+    })
+
+TipoInmueble = str
+
+
+def _validar_tipo_sincrono(v):
+    """Validador Pydantic sync: solo forma SLUG (la pertenencia la valida el
+    endpoint contra housing_types esta_activo=true con caché 5min).
+
+    Así un slug nuevo creado por admin pasa Pydantic y el endpoint lo acepta;
+    un slug inexistente ("INVALIDO") pasa forma pero el endpoint responde 422.
+    """
+    if v is None:
+        return v
+    s = str(v).strip()
+    if not s:
+        raise ValueError("tipo_inmueble requerido")
+    if len(s) > 40 or len(s) < 3 or not s.replace("_", "").isalnum() or s != s.upper():
+        raise ValueError("tipo_inmueble debe ser SLUG_MAYUSCULAS (ej. APARTAESTUDIO)")
+    return s
+
+# Los campos de texto libre son texto plano — sin HTML ejecutable.
+# Se rechaza < y > (no solo "script"): cubre <img onerror>, <svg>, etc.
+# sin falsos negativos por variantes/ofuscación.
+def _rechazar_html(v):
+    if v is not None and ("<" in v or ">" in v):
+        raise ValueError("no se permite HTML ni los caracteres < > (texto plano)")
+    return v
 
 class PublicacionCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -12,30 +51,57 @@ class PublicacionCreate(BaseModel):
     tipo_inmueble: TipoInmueble
     canon_mensual: Decimal = Field(gt=0, le=10_000_000)
     deposito_requerido: Decimal = Field(ge=0, default=0)
-    zona_barrio_id: int = Field(gt=0)
+    # Zona del catálogo opcional: si el barrio no existe, va texto libre en
+    # barrio_texto (al menos uno de los dos es obligatorio).
+    zona_barrio_id: Optional[int] = Field(default=None, gt=0)
+    barrio_texto: Optional[str] = Field(default=None, min_length=3, max_length=120)
     direccion_referencial: str = Field(min_length=10, max_length=200)
-    reglas_convivencia: str = Field(min_length=10, max_length=1000)
+    # FASE 3 (2026-09-24): unificado con frontend LIMITES.reglas.max (2000;
+    # antes 1000 aquí y 2000 en constants.js: el usuario podía escribir 1500,
+    # el frontend lo aceptaba y la API lo tumbaba con 422 técnico).
+    reglas_convivencia: str = Field(min_length=10, max_length=2000)
     latitud: Optional[float] = Field(ge=-90, le=90, default=None)
     longitud: Optional[float] = Field(ge=-180, le=180, default=None)
     servicios_ids: list[int] = Field(min_length=1)
-    campus_ids: list[int] = Field(min_length=1)
+    # Campus opcional: el trigger autovincula todos los lugares con sus
+    # distancias geodésicas calculadas desde lat/lng del aviso.
+    campus_ids: list[int] = Field(default_factory=list)
     fotos: list[HttpUrl] = Field(min_length=3, max_length=10, description="≥3 fotos HU-005 C2")
     incluye_servicios_base: bool = True
 
+    @field_validator("titulo", "descripcion", "reglas_convivencia", "direccion_referencial", "barrio_texto")
+    @classmethod
+    def sin_html(cls, v):
+        # Texto plano, sin HTML ejecutable -> 422.
+        return _rechazar_html(v)
+
+    @field_validator("tipo_inmueble")
+    @classmethod
+    def tipo_forma(cls, v):
+        # M2: forma SLUG (pertenencia contra housing_types la valida el endpoint).
+        return _validar_tipo_sincrono(v)
+
     @model_validator(mode="after")
     def lat_lng_both_or_none(self):
-        # B0-5: lat/lng both-or-none -> 422 si solo uno presente.
+        # Lat/lng both-or-none: 422 si solo uno presente.
         if (self.latitud is None) != (self.longitud is None):
             raise ValueError("latitud y longitud deben ir juntas (both-or-none)")
+        return self
+
+    @model_validator(mode="after")
+    def zona_o_barrio(self):
+        # Barrio del catálogo o texto libre (flexi-barrios).
+        if self.zona_barrio_id is None and not (self.barrio_texto or '').strip():
+            raise ValueError("indica la zona del catálogo o escribe el nombre del barrio")
         return self
 
 
 class PublicacionUpdate(BaseModel):
     """Edición parcial del dueño (PATCH /api/publicaciones/{id}).
 
-    Solo campos escalares (sin relaciones): servicios/fotos/zona se editan
-    en T3-ciclo-vida. Al menos 1 campo, todos con las mismas cotas que Create.
-    El estado NO cambia con la edición (re-moderación llega en T2).
+    Escalares + `servicios_ids` opcional (las fotos van por
+    PATCH /{id}/fotos con reconciliación atómica). Al menos 1 campo, todos
+    con las mismas cotas que Create. El estado NO cambia con la edición.
     """
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -45,43 +111,48 @@ class PublicacionUpdate(BaseModel):
     canon_mensual: Optional[Decimal] = Field(default=None, gt=0, le=10_000_000)
     deposito_requerido: Optional[Decimal] = Field(default=None, ge=0)
     direccion_referencial: Optional[str] = Field(default=None, min_length=10, max_length=200)
-    reglas_convivencia: Optional[str] = Field(default=None, min_length=10, max_length=1000)
+    # FASE 3: misma unificación que en Create (ver arriba).
+    reglas_convivencia: Optional[str] = Field(default=None, min_length=10, max_length=2000)
+    # M4 edición bufferizada: etiquetas del aviso (reemplazo total, mín 1).
+    servicios_ids: Optional[list[int]] = Field(default=None, min_length=1, max_length=10)
+    # M4 commit único: set completo y ordenado de fotos (posición 0 = portada).
+    # Si viene, escalares + etiquetas + fotos se guardan en UNA transacción.
+    fotos: Optional[list[str]] = Field(default=None, min_length=1, max_length=10)
+
+    @field_validator("titulo", "descripcion", "direccion_referencial", "reglas_convivencia")
+    @classmethod
+    def sin_html(cls, v):
+        # Mismo criterio que en creación (PATCH edita estos campos).
+        return _rechazar_html(v)
+
+    @field_validator("tipo_inmueble")
+    @classmethod
+    def tipo_forma(cls, v):
+        # M2: misma forma SLUG que en creación.
+        return _validar_tipo_sincrono(v)
+
+    @field_validator("fotos")
+    @classmethod
+    def fotos_sanas(cls, v):
+        # Mismo criterio que PATCH /{id}/fotos (un solo lugar de verdad para
+        # el set; el endpoint lo reutiliza). 422 si vacías/duplicadas/no-http.
+        if v is None:
+            return v
+        limpias = [str(u or "").strip()[:500] for u in v if str(u or "").strip()]
+        if not limpias:
+            raise ValueError("fotos vacío")
+        if len(set(limpias)) != len(limpias):
+            raise ValueError("fotos duplicadas")
+        for u in limpias:
+            if not (u.startswith("https://") or u.startswith("http://")):
+                raise ValueError("URLs deben ser http(s)")
+        return limpias
 
     @model_validator(mode="after")
     def at_least_one(self):
         if all(v is None for v in self.model_dump().values()):
             raise ValueError("Envía al menos 1 campo para editar")
         return self
-
-class DesgloseConfianza(BaseModel):
-    completitud: int
-    telefono: int
-    fotos: int
-    vigencia: int
-    reportes: int
-
-class PublicacionOut(BaseModel):
-    id: int
-    titulo: str
-    tipo_inmueble: str
-    canon_mensual: float
-    deposito_requerido: float
-    zona_nombre: Optional[str] = None
-    direccion_referencial: str
-    estado: str
-    servicios: list[str] = []
-    fotos: list[str] = []
-    num_fotos: int = 0
-    distancia_geodesica_m: Optional[int] = None
-    indice_confianza: int = 0
-    desglose: Optional[DesgloseConfianza] = None
-    nivel_confianza: str = "basico"
-    advertencia_confianza: str = "Informativo, no garantiza seguridad. Verificar antes de pagar."
-    telefono_whatsapp: Optional[str] = None
-    whatsapp_url: Optional[str] = None
-    fecha_renovacion: Optional[str] = None
-    fecha_expiracion: Optional[str] = None
-
 
 # --- F1 DTOs estrictos (OpenAPI explícito, alias documentados, sin extra="allow") ---
 class DesgloseOut(BaseModel):
@@ -131,7 +202,8 @@ class PublicacionCardOut(BaseModel):
     canon_mensual: float
     canon: float  # alias compat FE legacy
     deposito_requerido: float
-    zona_barrio_id: int
+    zona_barrio_id: Optional[int] = None
+    barrio_texto: Optional[str] = None  # v10: barrio libre si no hay zona del catálogo
     zona: Optional[str] = None  # alias compat
     zona_nombre: Optional[str] = None
     direccion_referencial: Optional[str] = None
@@ -152,6 +224,19 @@ class PublicacionCardOut(BaseModel):
     nivel: str  # alias compat
     telefono_whatsapp: Optional[str] = None
     usuario_id: int
+    # v15.2 frescura + métricas (aditivos).
+    fecha_publicacion: Optional[datetime] = None
+    created_at: Optional[datetime] = None  # alias = fecha_publicacion
+    updated_at: Optional[datetime] = None  # alias = fecha_renovacion
+    vistas: Optional[int] = None  # None = oculto (setting o no dueño)
+
+
+class ImagenOut(BaseModel):
+    """Foto con id para gestión del dueño (borrar/reordenar/portada)."""
+
+    id: int
+    url: str
+    orden: int
 
 
 class PaginatedPublicaciones(BaseModel):
@@ -173,7 +258,8 @@ class PublicacionDetailOut(BaseModel):
     canon: float  # alias compat
     deposito: float  # alias compat
     deposito_requerido: float
-    zona_barrio_id: int
+    zona_barrio_id: Optional[int] = None
+    barrio_texto: Optional[str] = None  # v10: barrio libre si no hay zona del catálogo
     zona: Optional[str] = None  # alias compat
     zona_nombre: Optional[str] = None
     direccion_referencial: Optional[str] = None
@@ -201,6 +287,13 @@ class PublicacionDetailOut(BaseModel):
     longitud: Optional[float] = None
     # 004 POIs: referencia resuelta cuando se pide ?campus_id= (mapa dinámico).
     campus_ref: Optional[CampusRefOut] = None
+    # v15.2 autoría + frescura + métricas + gestión multimedia (aditivos).
+    usuario_id: int
+    fecha_publicacion: Optional[datetime] = None
+    created_at: Optional[datetime] = None  # alias = fecha_publicacion
+    updated_at: Optional[datetime] = None  # alias = fecha_renovacion
+    vistas: Optional[int] = None  # None = oculto (setting o no dueño)
+    imagenes: List[ImagenOut] = []
 
 
 class PublicacionCreatedOut(BaseModel):
@@ -211,6 +304,11 @@ class PublicacionCreatedOut(BaseModel):
     desglose: DesgloseOut
     advertencia: Optional[str] = None
     mensaje: Optional[str] = None
+    # v13.2 reactividad de rol: el frontend refresca el perfil si cambió.
+    rol: Optional[str] = None
+    rol_actualizado: bool = False
+    # v15.2 auto-moderación (None cuando el flag está OFF).
+    moderacion: Optional[dict] = None
 
 
 class RenovacionOut(BaseModel):

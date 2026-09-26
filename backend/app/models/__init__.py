@@ -5,6 +5,7 @@ from sqlalchemy import (
     String, Text, Numeric, Table, UniqueConstraint, Index, func, text as sa_text
 )
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from datetime import datetime, timezone
 
@@ -71,23 +72,60 @@ class CampusUniversitario(Base):
     ciudad: Mapped["Ciudad"] = relationship(back_populates="campuses")
 
 # ---------------------------------------------------------------------------
-# Usuarios
+# Usuarios (v13: ESTUDIANTE base + ARRENDADOR + ADMIN + futuros roles)
 # ---------------------------------------------------------------------------
 class Usuario(Base):
     __tablename__ = "usuarios"
     __table_args__ = (
-        CheckConstraint("rol IN ('ARRENDADOR','ADMIN')", name="chk_rol"),
+        CheckConstraint(
+            "rol IN ('ESTUDIANTE','ARRENDADOR','ADMIN','MODERADOR_CAMPUS','AUDITOR_LEGAL')",
+            name="chk_rol",
+        ),
         CheckConstraint("telefono_whatsapp ~ '^\\+?[0-9]{7,20}$'", name="chk_telefono_formato"),
         Index("idx_usuarios_rol", "rol"),
+        Index("idx_usuarios_eliminado", "eliminado_en"),
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     nombre_completo: Mapped[str] = mapped_column(String(150), nullable=False)
     email: Mapped[str] = mapped_column(String(180), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    telefono_whatsapp: Mapped[str] = mapped_column(String(20), nullable=False)
-    rol: Mapped[str] = mapped_column(String(20), nullable=False)  # ARRENDADOR / ADMIN
+    # v13.2 marketplace: teléfono opcional (NULL = sin vincular; el CHECK solo
+    # valida no-nulos). Se exige al publicar, no al registrarse.
+    telefono_whatsapp: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    rol: Mapped[str] = mapped_column(String(20), nullable=False, default="ESTUDIANTE")  # v13 base
     telefono_verificado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # v13 Enterprise Auth / Ley 1581:
+    auth_provider: Mapped[str] = mapped_column(String(30), default="password", nullable=False)
+    supabase_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    email_verificado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    acepto_tratamiento_datos: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    fecha_consentimiento: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ip_consentimiento: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    version_politica: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # v13.1 soft-delete: NULL = activa; fecha = en período de gracia (30 días)
+    # antes del borrado físico (purga). Permite recuperar la cuenta.
+    eliminado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # v13.2 marketplace flexible: bio, foto y preferencias extensibles.
+    bio: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    foto_perfil_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    preferencias: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict,
+                                               server_default="{}")
+    # M5 Telegram $0: chat_id para DM de OTP (NULL = sin vincular).
+    # Nunca se postea a canales/grupos; solo DM si existe.
+    telegram_chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+# ---------------------------------------------------------------------------
+# Tipos de vivienda dinámicos (mig 013, M2). Catálogo en BD, no CHECK.
+# ---------------------------------------------------------------------------
+class HousingType(Base):
+    __tablename__ = "housing_types"
+    slug: Mapped[str] = mapped_column(String(40), primary_key=True)
+    nombre_visible: Mapped[str] = mapped_column(String(80), nullable=False)
+    descripcion_tooltip: Mapped[str | None] = mapped_column(Text, nullable=True)
+    icono: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    esta_activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
 
 # ---------------------------------------------------------------------------
 # Publicaciones (FIX: + latitud, longitud, indice_confianza + relationships)
@@ -95,8 +133,10 @@ class Usuario(Base):
 class Publicacion(Base):
     __tablename__ = "publicaciones"
     __table_args__ = (
-        CheckConstraint("tipo_inmueble IN ('HABITACION_FAMILIAR','HABITACION_INDEPENDIENTE','APARTAESTUDIO','COMPARTIDO')", name="chk_tipo"),
-        CheckConstraint("estado IN ('PENDIENTE','ACTIVO','PAUSADO','ARRENDADO','EXPIRADO','RECHAZADO','DESACTIVADO')", name="chk_estado"),
+        # M2: chk_tipo reemplazada por FK RESTRICT a housing_types (mig 013).
+        # Se evita borrar slugs en uso (ON DELETE RESTRICT).
+        # Fase 5 (aditivo): + PAUSADO_POR_REPORTE + REVISION_REQUERIDA. Los 7 previos siguen válidos.
+        CheckConstraint("estado IN ('PENDIENTE','ACTIVO','PAUSADO','ARRENDADO','EXPIRADO','RECHAZADO','DESACTIVADO','PAUSADO_POR_REPORTE','REVISION_REQUERIDA')", name="chk_estado"),
         CheckConstraint("canon_mensual > 0", name="chk_canon"),
         CheckConstraint("deposito_requerido >= 0", name="chk_deposito"),
         CheckConstraint("indice_confianza BETWEEN 0 AND 100", name="chk_confianza"),
@@ -112,10 +152,15 @@ class Publicacion(Base):
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
-    zona_barrio_id: Mapped[int] = mapped_column(ForeignKey("zonas_barrios.id", ondelete="RESTRICT"), nullable=False)
+    # Zona opcional: el barrio personalizado vive en barrio_texto.
+    zona_barrio_id: Mapped[int | None] = mapped_column(ForeignKey("zonas_barrios.id", ondelete="RESTRICT"), nullable=True)
+    barrio_texto: Mapped[str | None] = mapped_column(String(120), nullable=True)
     titulo: Mapped[str] = mapped_column(String(150), nullable=False)
     descripcion: Mapped[str] = mapped_column(Text, nullable=False)
-    tipo_inmueble: Mapped[str] = mapped_column(String(30), nullable=False)
+    # M2 FK RESTRICT a housing_types.slug (mig 013). El CHECK estático se eliminó.
+    tipo_inmueble: Mapped[str] = mapped_column(
+        String(40), ForeignKey("housing_types.slug", ondelete="RESTRICT", onupdate="CASCADE"),
+        nullable=False)
     canon_mensual: Mapped[float] = mapped_column(Numeric(10,2), nullable=False)
     deposito_requerido: Mapped[float] = mapped_column(Numeric(10,2), default=0, nullable=False)
     incluye_servicios_base: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -126,15 +171,21 @@ class Publicacion(Base):
     latitud: Mapped[float | None] = mapped_column(Numeric(10,7), nullable=True)
     longitud: Mapped[float | None] = mapped_column(Numeric(10,7), nullable=True)
     indice_confianza: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+    # v15.2 métrica de vistas (incremental, dedup diaria por IP en endpoint).
+    vistas: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     fecha_publicacion: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     fecha_renovacion: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     fecha_expiracion: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sa_text("NOW() + INTERVAL '30 days'"))
 
     # Relationships para evitar N+1 y permitir selectinload (router espera .servicios y .imagenes)
-    zona: Mapped["ZonaBarrio"] = relationship(lazy="joined")
+    zona: Mapped["ZonaBarrio | None"] = relationship(lazy="joined")
     usuario: Mapped["Usuario"] = relationship(lazy="joined")
     servicios: Mapped[list["ServicioCatalogo"]] = relationship(secondary="publicacion_servicios", lazy="selectin")
-    imagenes: Mapped[list["ImagenPublicacion"]] = relationship(back_populates="publicacion", cascade="all, delete-orphan", lazy="selectin")
+    # BUG#1 portada: orden determinista en TODOS los eager-loads (fetch_page,
+    # detail, mias, pendientes, cambiar-estado, similares, editar). Sin esto
+    # fotos[0] era orden de heap, no la portada (orden=1). Fuente única de
+    # verdad a nivel ORM; la capa vista además ordena defensivamente por orden.
+    imagenes: Mapped[list["ImagenPublicacion"]] = relationship(back_populates="publicacion", cascade="all, delete-orphan", lazy="selectin", order_by="ImagenPublicacion.orden")
     campus_links: Mapped[list["PublicacionCampus"]] = relationship(back_populates="publicacion", cascade="all, delete-orphan", lazy="selectin")
 
 # ---------------------------------------------------------------------------
@@ -169,7 +220,7 @@ class PublicacionCampus(Base):
     )
     publicacion_id: Mapped[int] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), primary_key=True)
     campus_id: Mapped[int] = mapped_column(ForeignKey("campus_universitarios.id", ondelete="CASCADE"), primary_key=True)
-    # B0-5: NULL cuando pub sin coords (no 0). Requiere migración DB si columna era NOT NULL.
+    # NULL cuando la pub no tiene coords (no 0).
     distancia_geodesica_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     publicacion: Mapped["Publicacion"] = relationship(back_populates="campus_links")
@@ -215,13 +266,151 @@ class ReportePublicacion(Base):
 class PublicacionesAudit(Base):
     __tablename__ = "publicaciones_audit"
     __table_args__ = (
-        CheckConstraint("evento IN ('CREATED','APPROVED','REJECTED','PAUSED','RESUMED','RENTED','EXPIRED','RENEWED','BLOCKED')", name="chk_evento"),
+        # M4 historial: + SETTINGS (ajustes) y CUENTA_DELETE (soft-delete).
+        CheckConstraint("evento IN ('CREATED','APPROVED','REJECTED','PAUSED','RESUMED','RENTED','EXPIRED','RENEWED','BLOCKED','SETTINGS','CUENTA_DELETE')", name="chk_evento"),
         Index("idx_audit_pub", "publicacion_id"),
         Index("idx_audit_evento", "evento"),
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    publicacion_id: Mapped[int] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), nullable=False)
+    # M4: NULL cuando el acto no refiere a un aviso (SETTINGS, CUENTA_DELETE).
+    publicacion_id: Mapped[int | None] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), nullable=True)
     usuario_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
     evento: Mapped[str] = mapped_column(String(20), nullable=False)
     detalle: Mapped[str | None] = mapped_column(Text, nullable=True)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------------------------------------------------------------------------
+# Fase 5: ajustes automatizados por UI (tabla system_settings, borrador).
+# La máquina de estados extendida (PAUSADO_POR_REPORTE, REVISION_REQUERIDA)
+# llega vía migración 005; el CHECK del modelo se amplía sin romper los
+# 7 estados previos (aditivo). Ver docs/ADMIN_AUTOMATION_SPECS.md.
+# ---------------------------------------------------------------------------
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+    __table_args__ = (
+        UniqueConstraint("clave", name="uq_system_settings_clave"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    clave: Mapped[str] = mapped_column(String(80), nullable=False)
+    valor: Mapped[str] = mapped_column(Text, nullable=False)
+    tipo: Mapped[str] = mapped_column(String(20), nullable=False, default="int")
+    descripcion: Mapped[str | None] = mapped_column(Text, nullable=True)
+    actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------------------------------------------------------------------------
+# v13 Enterprise Auth: rate-limit persistente, OTP, recovery y sesiones.
+# Tablas pequeñas, TTL por expiración, índices por (clave, creado).
+# ---------------------------------------------------------------------------
+class RateLimitAttempt(Base):
+    """Intentos de login/recovery persistentes (sobreviven reinicios Render)."""
+    __tablename__ = "rate_limit_attempts"
+    __table_args__ = (
+        Index("idx_ratelimit_clave_creado", "clave", "creado_en"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    clave: Mapped[str] = mapped_column(String(180), nullable=False)  # "login:ip:x" | "login:user:x"
+    exito: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OtpCode(Base):
+    """Códigos de 6 dígitos con expiración 10min (Email o Telegram)."""
+    __tablename__ = "otp_codes"
+    __table_args__ = (
+        Index("idx_otp_email_creado", "email", "creado_en"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(180), nullable=False)
+    codigo_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    proposito: Mapped[str] = mapped_column(String(30), nullable=False, default="email_verify")
+    consumido: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    expira_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PasswordReset(Base):
+    """Enlaces firmados de un solo uso, expiración corta (15min)."""
+    __tablename__ = "password_resets"
+    __table_args__ = (
+        Index("idx_pwreset_email_creado", "email", "creado_en"),
+        UniqueConstraint("token_hash", name="uq_pwreset_token"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(180), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    consumido: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    expira_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Sesion(Base):
+    """Sesiones activas (jti de refresh/access) para revocación global."""
+    __tablename__ = "sesiones"
+    __table_args__ = (
+        Index("idx_sesiones_usuario", "usuario_id"),
+        UniqueConstraint("jti", name="uq_sesiones_jti"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
+    jti: Mapped[str] = mapped_column(String(64), nullable=False)
+    ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    revocado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    revocado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class VistaDedup(Base):
+    """v15.2 dedup diaria de vistas: 1 conteo por (aviso, IP, día).
+
+    Se guarda el hash SHA256 (nunca la IP en claro). Sin FK (las filas
+    sobreviven a la purga del aviso; limpieza por antigüedad).
+    """
+    __tablename__ = "vistas_dedup"
+    __table_args__ = (
+        UniqueConstraint("publicacion_id", "marca", name="uq_vista_pub_marca"),
+        Index("idx_vistas_dedup_dia", "dia"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    publicacion_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    marca: Mapped[str] = mapped_column(String(64), nullable=False)
+    dia: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TelegramVinculo(Base):
+    """Bloque 2: nonces HMAC de vinculación persistentes (mig 015).
+
+    La memoria (_TELEGRAM_VINCULOS) queda como L1/dev; PG es la fuente de
+    verdad que sobrevive redeploys e instancias múltiples.
+    """
+    __tablename__ = "telegram_vinculos"
+    __table_args__ = (
+        Index("idx_telegram_vinculos_expira", "expira_en"),
+    )
+    nonce: Mapped[str] = mapped_column(String(32), primary_key=True)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
+    expira_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    usado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class IdempotencyKey(Base):
+    """Bloque 2: respuestas guardadas para reintentos seguros (mig 016).
+
+    PK compuesta (clave, usuario_id, ruta): cierra la carrera entre lookup
+    e insert (UNIQUE -> replay) y evita fugas entre usuarios.
+    """
+    __tablename__ = "idempotency_keys"
+    __table_args__ = (
+        Index("idx_idempotency_expira", "expira_en"),
+    )
+    clave: Mapped[str] = mapped_column(String(64), primary_key=True)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), primary_key=True)
+    ruta: Mapped[str] = mapped_column(String(120), primary_key=True)
+    codigo: Mapped[int] = mapped_column(Integer, default=201, nullable=False)
+    cuerpo: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    expira_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

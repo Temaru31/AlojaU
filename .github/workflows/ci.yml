@@ -1,0 +1,143 @@
+# CI — AlojaU (Tarea 1, AUDITORIA.md §8)
+# Jobs separados: backend (Python 3.11 + pytest + PostgreSQL) y
+# frontend (Node 20 + oxlint + vitest + build).
+# Triggers: Pull Requests y push a main/develop.
+# Fuera de alcance aquí (tareas 2-7): CodeQL, Dependabot, SonarCloud,
+# staging y branch protection.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (pytest + coverage)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: alojau
+          POSTGRES_PASSWORD: alojau123
+          POSTGRES_DB: alojau
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U alojau"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      ENV: test
+      DATABASE_URL: postgresql+asyncpg://alojau:alojau123@localhost:5432/alojau
+      # Dummy SOLO para CI (nunca prod): SECRET_KEY exige >=32 chars (fail-closed en app/core/config.py).
+      SECRET_KEY: ci_dummy_secret_key_para_tests_32_chars_min
+      # Los tests usan MOCK_TOKENS por diseño (auth dev), por eso el mock sigue habilitado en CI.
+      # ENV=test garantiza que el guard anti-prod de tests/conftest.py no aborte la suite.
+      USE_MOCK_FALLBACK: "True"
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3000
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Init DB schema
+        # tests/conftest.py hace TRUNCATE + seed.sql por test, pero las tablas
+        # deben existir: se crean una vez aquí desde db/schema.sql (al día con
+        # migraciones 003/004/005: FTS, categoria, automation).
+        run: |
+          python - <<'EOF'
+          import asyncio
+          import os
+          import asyncpg
+
+
+          async def main():
+              dsn = os.environ["DATABASE_URL"].replace(
+                  "postgresql+asyncpg://", "postgresql://"
+              )
+              conn = await asyncpg.connect(dsn)
+              try:
+                  with open("db/schema.sql", encoding="utf-8") as f:
+                      await conn.execute(f.read())
+              finally:
+                  await conn.close()
+
+
+          asyncio.run(main())
+          EOF
+
+      - name: Run tests with coverage (min 70%)
+        # `python -m` (no el binario `pytest`): antepone el CWD (backend/) al
+        # sys.path, sin lo cual `from app...` falla en colección con
+        # ModuleNotFoundError (21 archivos). Verificado localmente.
+        run: python -m pytest tests/ -q --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=70
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
+
+  frontend:
+    name: frontend (lint + tests + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (oxlint)
+        run: npm run lint
+
+      - name: Tests with coverage (min 70%)
+        # El umbral vive en vite.config.js (coverage.thresholds); si no llega
+        # a 70 %, este paso falla sin bajar el umbral ni tocar tests.
+        run: npm run test:coverage
+
+      - name: Build
+        run: npm run build
+        env:
+          # Fail-fast OLA2-M3: un build prod sin VITE_API_URL queda roto;
+          # en CI se usa la URL del backend local/staging como placeholder.
+          VITE_API_URL: http://localhost:8000
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/

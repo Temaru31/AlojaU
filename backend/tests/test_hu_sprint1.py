@@ -174,9 +174,13 @@ def test_hu005_c1_solo_arrendador():
     # con token Bearer vacío 401
     r3 = client.post("/api/publicaciones", json=BASE_PAYLOAD, headers={"Authorization": "Bearer "})
     assert r3.status_code == 401
-    # con mock admin (no arrendador) 403
+    # v13 RBAC por scopes: ADMIN incluye `publications:write` (superset de
+    # ARRENDADOR), así que publica (201). Sin scope de escritura -> 403:
+    # AUDITOR_LEGAL no tiene publications:write ni promoción automática.
     r4 = client.post("/api/publicaciones", json=BASE_PAYLOAD, headers=auth_header("mock-token-admin"))
-    assert r4.status_code == 403
+    assert r4.status_code == 201
+    r5 = client.post("/api/publicaciones", json=BASE_PAYLOAD, headers=auth_header("mock-token-auditor"))
+    assert r5.status_code == 403
 
 def test_hu005_c2_menos_de_3_fotos_rechazado():
     payload = {**BASE_PAYLOAD, "fotos": ["https://a.com/1.jpg", "https://a.com/2.jpg"]}

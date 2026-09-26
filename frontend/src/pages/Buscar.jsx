@@ -1,21 +1,130 @@
-import { useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { api } from '../services/api'
+import { api, isCancelError } from '../services/api'
 import Card from '../components/Card'
-import Casa3D from '../components/Casa3D'
+import useMediaQuery from '../hooks/useMediaQuery'
+// Bloque 1: three.js (~736 kB) solo se descarga en desktop. El import
+// estático anterior metía el 3D en el bundle inicial y el efecto de Casa3D
+// lo ejecutaba incluso oculto con `hidden` (también en móvil).
+const Casa3D = lazy(() => import('../components/Casa3D'))
 import CercanoA, { etiquetaLugar } from '../components/CercanoA'
-import Filtros from '../components/Filtros'
+import CiudadSelector, { CIUDADES_FALLBACK, etiquetaCiudad } from '../components/CiudadSelector'
+import { contarAvanzados, parseServicios, toggleServicio, PanelPrimario, MasFiltrosModal, SERVICIOS_OPCIONES } from '../components/Filtros'
+import useTiposVivienda, { TIPOS_FALLBACK } from '../hooks/useTiposVivienda'
+import useFocusTrap from '../hooks/useFocusTrap'
 import Paginacion from '../components/Paginacion'
 import SearchBar from '../components/SearchBar'
 
+function parseCiudadId(searchParams) {
+  const raw = searchParams.get('ciudad_id')
+  if (raw == null || raw === '') return null
+  const n = Number(raw)
+  return Number.isInteger(n) && n >= 1 ? n : null
+}
+
+// Bloque 2 del sheet: chips de tipo desde el catálogo dinámico (misma
+// fuente que desktop: `filtros.tipo`). Crece solo con scroll horizontal.
+export function BloqueTipos({ filtros, setFiltros }) {
+  const { tipos } = useTiposVivienda()
+  const lista = Array.isArray(tipos) && tipos.length > 0 ? tipos : TIPOS_FALLBACK
+  return (
+    <div className="flex gap-2 overflow-x-auto no-scrollbar fade-x pb-1" role="group" aria-label="Tipo de inmueble">
+      {[{ slug: '', nombre_visible: 'Todos' }, ...lista].map((t) => {
+        const activo = (filtros.tipo || '') === t.slug
+        return (
+          <button
+            key={t.slug || 'todos'}
+            type="button"
+            onClick={() => setFiltros({ ...filtros, tipo: t.slug })}
+            aria-pressed={activo}
+            title={t.descripcion_tooltip || t.nombre_visible}
+            className={`shrink-0 min-h-[44px] px-3.5 py-2 rounded-full border text-xs font-bold transition active:scale-[0.97] ${activo
+              ? 'border-navy-800 ring-2 ring-navy-800/25 bg-navy-800 text-white'
+              : 'border-neutral-200 bg-white text-neutral-600 active:bg-neutral-50'
+              }`}
+          >
+            {t.icono ? `${t.icono} ` : ''}{t.nombre_visible}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// Bloque 4 del sheet: grid de servicios colapsable. Con el catálogo actual
+// (5) va abierto; si supera 6 ítems arranca colapsado para no saturar.
+export const UMBRAL_COLAPSO_SERVICIOS = 6
+
+export function BloqueServicios({ items = SERVICIOS_OPCIONES, filtros, setFiltros }) {
+  const [abierto, setAbierto] = useState(items.length <= UMBRAL_COLAPSO_SERVICIOS)
+  const elegidos = parseServicios(filtros.servicios)
+  return (
+    <section aria-labelledby="f-serv-m" className="space-y-2">
+      <button
+        type="button"
+        onClick={() => setAbierto((v) => !v)}
+        aria-expanded={abierto}
+        aria-controls="f-serv-grid-m"
+        className="flex w-full items-center justify-between gap-2 min-h-[44px]"
+      >
+        <span className="text-xs font-bold text-navy-800" id="f-serv-m">
+          4 · Servicios y comodidades
+          {elegidos.length > 0 && (
+            <span className="ml-2 inline-flex items-center rounded-full bg-navy-800 px-2 py-0.5 text-[11px] font-bold text-white">
+              {elegidos.length}
+            </span>
+          )}
+        </span>
+        <span aria-hidden="true" className={`text-neutral-400 text-xs transition-transform ${abierto ? 'rotate-180' : ''}`}>▼</span>
+      </button>
+      {abierto && (
+        <div id="f-serv-grid-m" className="grid grid-cols-2 gap-2">
+          {items.map((opt) => (
+            <label
+              key={opt.id}
+              className={`flex items-center gap-2 min-h-[44px] px-3 rounded-xl border text-xs font-semibold cursor-pointer transition active:scale-[0.98] ${elegidos.includes(String(opt.id))
+                ? 'border-navy-800 ring-2 ring-navy-800/25 bg-navy-50 text-navy-900'
+                : 'border-neutral-200 bg-white text-neutral-600 active:bg-neutral-50'
+                }`}
+            >
+              <input
+                type="checkbox"
+                className="w-4 h-4 rounded border-neutral-300 text-navy-800 accent-navy-800"
+                checked={elegidos.includes(String(opt.id))}
+                onChange={(e) => setFiltros({ ...filtros, servicios: toggleServicio(filtros.servicios, opt.id, e.target.checked) })}
+                aria-label={opt.label}
+              />
+              {opt.label}
+            </label>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+// Gate del hero 3D: fuera de desktop no se monta nada (cero bytes de three).
+function Casa3DGate() {
+  const esDesktop = useMediaQuery('(min-width: 1024px)')
+  if (!esDesktop) return null
+  return (
+    <Suspense fallback={<div className="min-h-[220px]" aria-hidden="true" />}>
+      <Casa3D compact />
+    </Suspense>
+  )
+}
+
 export default function Buscar() {
   const [campus, setCampus] = useState([])
+  // Una sola fuente de ciudades para el selector Y la píldora del Hero.
+  const [ciudades, setCiudades] = useState(CIUDADES_FALLBACK)
   const [searchParams, setSearchParams] = useSearchParams()
   // 004 POIs: sin ?campus_id= no hay filtro de cercanía (estado inicial vacío).
   // NaN-safe: un valor manual inválido (?campus_id=abc) equivale a "Todos".
   const campusIdRaw = searchParams.get('campus_id')
   const campusIdNum = campusIdRaw != null ? Number(campusIdRaw) : NaN
   const campusId = Number.isInteger(campusIdNum) && campusIdNum >= 1 ? campusIdNum : null
+  const ciudadId = parseCiudadId(searchParams)
   const page = Number(searchParams.get('page') || 1)
   const q = searchParams.get('q') || ''
   const [filtros, setFiltros] = useState({
@@ -32,6 +141,27 @@ export default function Buscar() {
   const [pages, setPages] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // Panel avanzado controlado desde la barra flotante (una sola fila).
+  const [avanzadosAbiertos, setAvanzadosAbiertos] = useState(false)
+  // Bottom sheet de filtros solo en móvil (<768px).
+  const [sheetAbierto, setSheetAbierto] = useState(false)
+  // Bloque 3: Tab cicla dentro del sheet + foco vuelve al botón Filtros.
+  const sheetRef = useRef(null)
+  useFocusTrap(sheetRef, sheetAbierto)
+  const numAvanzados = contarAvanzados(filtros)
+
+  // Cierra el sheet con Escape y bloquea el scroll del fondo mientras abre.
+  useEffect(() => {
+    if (!sheetAbierto) return
+    const onKey = (e) => { if (e.key === 'Escape') setSheetAbierto(false) }
+    document.addEventListener('keydown', onKey)
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prev
+    }
+  }, [sheetAbierto])
 
   const setCampusId = (id) => {
     const params = new URLSearchParams(searchParams)
@@ -41,16 +171,35 @@ export default function Buscar() {
     setSearchParams(params)
   }
 
+  const setCiudadId = (id) => {
+    const params = new URLSearchParams(searchParams)
+    if (id == null || id === '') params.delete('ciudad_id')
+    else params.set('ciudad_id', id)
+    params.set('page', 1)
+    setSearchParams(params)
+  }
+
   const setQ = (texto) => {
     const params = new URLSearchParams(searchParams)
-    texto.trim() ? params.set('q', texto.trim()) : params.delete('q')
+    if (texto.trim()) params.set('q', texto.trim())
+    else params.delete('q')
     params.set('page', 1)
     if (params.toString() !== searchParams.toString()) setSearchParams(params)
   }
 
   const limpiarTodo = () => {
     setFiltros({ min: '', max: '', tipo: '', servicios: '' })
-    setQ('')
+    const params = new URLSearchParams(searchParams)
+    params.delete('q')
+    params.delete('precio_min')
+    params.delete('precio_max')
+    params.delete('tipo')
+    params.delete('servicios')
+    params.delete('campus_id')
+    params.delete('ciudad_id')
+    params.set('page', 1)
+    setSearchParams(params)
+    setAvanzadosAbiertos(false)
   }
 
   const setPage = (p) => {
@@ -70,37 +219,53 @@ export default function Buscar() {
     const t = setTimeout(() => {
       filtrosAplicados.current = firma
       const params = new URLSearchParams(queryString)
-      filtros.min ? params.set('precio_min', filtros.min) : params.delete('precio_min')
-      filtros.max ? params.set('precio_max', filtros.max) : params.delete('precio_max')
-      filtros.tipo ? params.set('tipo', filtros.tipo) : params.delete('tipo')
-      filtros.servicios ? params.set('servicios', filtros.servicios) : params.delete('servicios')
+      if (filtros.min) params.set('precio_min', filtros.min)
+      else params.delete('precio_min')
+      if (filtros.max) params.set('precio_max', filtros.max)
+      else params.delete('precio_max')
+      if (filtros.tipo) params.set('tipo', filtros.tipo)
+      else params.delete('tipo')
+      if (filtros.servicios) params.set('servicios', filtros.servicios)
+      else params.delete('servicios')
       params.set('page', 1)
       if (params.toString() !== queryString) {
         setSearchParams(params)
       }
     }, 400)
     return () => clearTimeout(t)
-  }, [filtros.min, filtros.max, filtros.tipo, filtros.servicios, queryString])
+  }, [filtros.min, filtros.max, filtros.tipo, filtros.servicios, queryString, setSearchParams])
 
   useEffect(() => {
     api.get('/api/campus')
       .then(r => setCampus(r.data))
       .catch(() => setCampus([{ id: 1, institucion: 'Universidad del Cauca', nombre_sede: 'Campus Tulcan' }]))
+    // Catálogo de ciudades una sola vez (selector + píldora comparten).
+    api.get('/api/ciudades')
+      .then((r) => {
+        if (Array.isArray(r.data) && r.data.length > 0) setCiudades(r.data)
+      })
+      .catch(() => { /* fallback Popayán */ })
   }, [])
 
-  // OLA4: AbortController + deps primitivas estables (sin objeto searchParams).
-  // La respuesta tardía de una búsqueda anterior ya no pisa a la actual.
+  // La píldora lee la ciudad SELECCIONADA en el CiudadSelector
+  // (misma lista, mismo value). Sin ciudad elegida -> default Popayán.
+  const ciudadSel = ciudades.find((c) => String(c.id) === String(ciudadId)) || ciudades[0] || null
+  const ciudadNombre = etiquetaCiudad(ciudadSel)
+
+  // Fase 3: AbortController + error SOLO ante HTTP >= 400 o fallo real de red.
+  // Un 200 OK con [] NUNCA pinta banner rojo: va a la tarjeta neutra de vacío.
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true); setError('')
-    const q = new URLSearchParams(queryString)
+    const qq = new URLSearchParams(queryString)
     const params = {
       campus_id: campusId ?? undefined,
-      precio_min: q.get('precio_min') || undefined,
-      precio_max: q.get('precio_max') || undefined,
-      tipo: q.get('tipo') || undefined,
-      servicios: q.get('servicios') || undefined,
-      q: q.get('q') || undefined,
+      ciudad_id: ciudadId ?? undefined,
+      precio_min: qq.get('precio_min') || undefined,
+      precio_max: qq.get('precio_max') || undefined,
+      tipo: qq.get('tipo') || undefined,
+      servicios: qq.get('servicios') || undefined,
+      q: qq.get('q') || undefined,
       page, size: 9
     }
     api.get('/api/publicaciones', { params, signal: controller.signal })
@@ -113,12 +278,16 @@ export default function Buscar() {
         }
       })
       .catch((err) => {
-        if (err?.code === 'ERR_CANCELED') return
+        if (isCancelError(err)) return
+        if (controller.signal.aborted) return
+        const status = err?.response?.status
+        // Solo errores HTTP reales (>=400) o fallos de red sin respuesta.
+        if (status != null && status < 400) return
         setError('No se pudo cargar publicaciones. Intenta de nuevo.'); setPubs([])
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [campusId, page, queryString])
+  }, [campusId, ciudadId, page, queryString])
 
   const currentCampus = campus.find(c => c.id == campusId)
 
@@ -180,8 +349,8 @@ export default function Buscar() {
 
   return (
     <div>
-      {/* Hero */}
-      <section ref={heroRef} className="relative overflow-hidden bg-navy-950">
+      {/* Hero compacto — max 280px en desktop para no empujar resultados below the fold. */}
+      <section ref={heroRef} className="relative overflow-hidden bg-navy-950 md:max-h-[280px]">
         <div
           className="absolute inset-0"
           style={{ background: 'linear-gradient(115deg, #0c1426 0%, #14213D 42%, #1e3460 78%, #263A5A 100%)' }}
@@ -204,22 +373,26 @@ export default function Buscar() {
           className="absolute inset-0"
           style={{ background: 'linear-gradient(to top, rgba(12,20,38,0.55), transparent 32%)' }}
         />
-        <div className="container-main relative py-14 md:py-20">
-          <div className="grid items-center gap-8 lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="container-main relative py-8 md:py-10">
+          <div className="grid items-center gap-4 lg:grid-cols-[1.1fr_0.9fr]">
             <div className="max-w-2xl">
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-full mb-5">
+              <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/10 rounded-full mb-3">
                 <div className="w-1.5 h-1.5 bg-gold-400 rounded-full" />
-                <span className="text-xs font-medium text-gold-300 tracking-wide uppercase">Popayan, Cauca</span>
+                <span className="text-xs font-medium text-gold-300 tracking-wide uppercase">{ciudadNombre}</span>
               </div>
-              <h1 className="font-display text-3xl md:text-[2.75rem] font-extrabold text-white leading-tight tracking-tight mb-4 text-balance">
-                Encuentra tu vivienda<br />
-                <span className="text-gold-400">cerca del campus</span>
+              <h1 className="font-display text-2xl md:text-[2rem] font-extrabold text-white leading-tight tracking-tight mb-2 text-balance">
+                Encuentra tu espacio ideal,{' '}
+                <span className="text-gold-400">donde lo necesitas</span>
               </h1>
-              <p className="text-navy-300 text-base md:text-lg leading-relaxed max-w-lg">
-                Compara opciones, revisa el indice de confianza y contacta directamente por WhatsApp.
+              <p className="text-navy-300 text-sm md:text-base leading-relaxed max-w-xl">
+                Habitaciones, apartaestudios y viviendas verificadas con ubicación real. Compara opciones, revisa el índice de confianza y conecta directo sin intermediarios.
               </p>
             </div>
-            <Casa3D />
+            <div className="hidden lg:block">
+              {/* Gate: sin desktop no se monta (ni descarga) el 3D. El
+                  fallback reserva alto para evitar CLS al hidratar. */}
+              <Casa3DGate />
+            </div>
           </div>
         </div>
         <div
@@ -230,25 +403,212 @@ export default function Buscar() {
         />
       </section>
 
-      {/* Buscador sticky: z-30 para quedar bajo nav (z-50) y backdrop del menú móvil (z-40) */}
-      <section className="bg-white border-b border-neutral-150 sticky top-16 z-30">
-        <div className="container-main py-4">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="flex-[1.2]">
-              <label className="block text-xs font-medium text-neutral-500 mb-1.5">Buscar</label>
-              <SearchBar value={q} onChange={setQ} />
+      {/* Móvil: cápsula compacta [buscar | filtros] + bottom sheet. */}
+      <div className="md:hidden sticky top-16 z-30">
+        <div className="container-main pt-2">
+          <div className="flex items-center gap-2 rounded-full bg-white border border-neutral-150 shadow-md pl-1 pr-1 py-1">
+            <div className="flex-1 min-w-0">
+              <SearchBar value={q} onChange={setQ} placeholder="Buscar zona…" />
             </div>
-            <div className="flex-1">
-              <label htmlFor="cercano-a" className="block text-xs font-medium text-neutral-500 mb-1.5">Cercano a…</label>
-              <CercanoA lugares={campus} value={campusId} onChange={setCampusId} inputId="cercano-a" />
+            <button
+              type="button"
+              onClick={() => setSheetAbierto(true)}
+              aria-label={`Abrir filtros${numAvanzados > 0 ? `, ${numAvanzados} activos` : ''}`}
+              className="shrink-0 inline-flex items-center gap-1.5 rounded-full bg-navy-800 text-white text-xs font-bold px-3.5 py-2.5"
+            >
+              <span aria-hidden="true">⚙️</span> Filtros
+              {numAvanzados > 0 && (
+                <span className="inline-flex items-center rounded-full bg-gold-400 px-1.5 py-px text-[10px] font-bold text-navy-900" aria-hidden="true">
+                  {numAvanzados}
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {sheetAbierto && (
+        <div ref={sheetRef} className="md:hidden fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Filtros de búsqueda">
+          <div aria-hidden="true" onClick={() => setSheetAbierto(false)} className="absolute inset-0 bg-navy-950/60 backdrop-blur-[2px] transition-opacity duration-150" />
+          <div className="absolute inset-x-0 bottom-0 max-h-[85vh] flex flex-col rounded-t-3xl bg-white shadow-2xl animar-subir">
+            <div aria-hidden="true" className="mx-auto mt-2.5 h-1.5 w-12 rounded-full bg-neutral-300" />
+            <div className="flex items-center justify-between px-4 pt-2 pb-3 border-b border-neutral-100">
+              <p className="text-sm font-bold text-navy-900">
+                Filtros
+                {numAvanzados > 0 && <span className="ml-2 text-[11px] font-bold text-navy-700 bg-navy-50 rounded-full px-2 py-0.5">{numAvanzados} activos</span>}
+              </p>
+              <button
+                type="button"
+                onClick={() => setSheetAbierto(false)}
+                aria-label="Cerrar filtros"
+                className="w-11 h-11 rounded-full text-neutral-500 hover:bg-neutral-100 active:bg-neutral-100 flex items-center justify-center text-xl"
+              >
+                ×
+              </button>
+            </div>
+            <div className="overflow-y-auto px-4 py-4 space-y-5">
+              {/* 1 · Ubicación / sector. */}
+              <section aria-labelledby="f-ubica-m" className="space-y-3">
+                <p className="text-xs font-bold text-navy-800" id="f-ubica-m">1 · Ubicación</p>
+                <div>
+                  <label className="block text-xs font-medium text-neutral-500 mb-1.5" htmlFor="cercano-a-m">Cercano a…</label>
+                  <CercanoA lugares={campus} value={campusId} onChange={setCampusId} inputId="cercano-a-m" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-neutral-500 mb-1.5" htmlFor="ciudad-m">Ciudad</label>
+                  <CiudadSelector value={ciudadId} onChange={setCiudadId} inputId="ciudad-m" ciudades={ciudades} />
+                </div>
+              </section>
+              {/* 2 · Tipo de inmueble: ÚNICA fuente (catálogo dinámico).
+                  Sin <select> nativo: en Android el popup lo pinta el OS en
+                  modo oscuro y rompe el sistema de diseño. */}
+              <section aria-labelledby="f-tipo-m" className="space-y-2">
+                <p className="text-xs font-bold text-navy-800" id="f-tipo-m">2 · Tipo de inmueble</p>
+                <BloqueTipos filtros={filtros} setFiltros={setFiltros} />
+              </section>
+              {/* 3 · Presupuesto: atajos + min/max en un solo bloque (el
+                  atajo escribe los inputs; pulsar el activo lo limpia). */}
+              <section aria-labelledby="f-pres-m" className="space-y-2">
+                <p className="text-xs font-bold text-navy-800" id="f-pres-m">3 · Presupuesto (COP)</p>
+                <div className="flex gap-2" role="group" aria-labelledby="f-pres-m">
+                  {[
+                    { etiqueta: '< $400 mil', min: '0', max: '400000' },
+                    { etiqueta: '$400 – $700 mil', min: '400000', max: '700000' },
+                    { etiqueta: '> $700 mil', min: '700000', max: '' },
+                  ].map((b) => {
+                    const activo = (filtros.min || '') === b.min && (filtros.max || '') === b.max
+                    return (
+                      <button
+                        key={b.etiqueta}
+                        type="button"
+                        onClick={() => setFiltros(activo
+                          ? { ...filtros, min: '', max: '' }
+                          : { ...filtros, min: b.min, max: b.max })}
+                        aria-pressed={activo}
+                        className={`flex-1 min-h-[44px] px-2 py-2 rounded-xl border text-xs font-bold transition active:scale-[0.97] ${activo
+                          ? 'border-navy-800 ring-2 ring-navy-800/25 bg-navy-50 text-navy-900'
+                          : 'border-neutral-200 bg-white text-neutral-600 active:bg-neutral-50'
+                          }`}
+                      >
+                        {b.etiqueta}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label htmlFor="f-min-m" className="sr-only">Precio mínimo en COP</label>
+                    <input
+                      id="f-min-m"
+                      type="number"
+                      placeholder="Mín COP"
+                      value={filtros.min || ''}
+                      onChange={(e) => setFiltros({ ...filtros, min: e.target.value })}
+                      min="0"
+                      className="input-field"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="f-max-m" className="sr-only">Precio máximo en COP</label>
+                    <input
+                      id="f-max-m"
+                      type="number"
+                      placeholder="Máx COP"
+                      value={filtros.max || ''}
+                      onChange={(e) => setFiltros({ ...filtros, max: e.target.value })}
+                      min="0"
+                      className="input-field"
+                    />
+                  </div>
+                </div>
+              </section>
+              {/* 4 · Servicios: colapsable a partir de 6 (escala sin saturar). */}
+              <BloqueServicios
+                items={SERVICIOS_OPCIONES}
+                filtros={filtros}
+                setFiltros={setFiltros}
+              />
+            </div>
+            {/* F4 barra de acción flotante con conteo en vivo (con salida
+                explícita para limpiar y copy honesto en cero). */}
+            <div className="p-4 pt-3 border-t border-neutral-100 bg-white/95 backdrop-blur rounded-b-3xl shadow-[0_-8px_24px_rgba(12,20,38,0.08)] flex gap-2">
+              <button
+                type="button"
+                onClick={() => setFiltros({ min: '', max: '', tipo: '', servicios: '' })}
+                aria-label="Limpiar todos los filtros"
+                className="shrink-0 min-h-[52px] px-4 rounded-2xl border border-neutral-200 text-xs font-bold text-neutral-600 active:bg-neutral-50 transition"
+              >
+                Limpiar
+              </button>
+              <button
+                type="button"
+                onClick={() => setSheetAbierto(false)}
+                className="btn-accent flex-1 justify-center !py-3.5 !rounded-2xl !text-sm active:scale-[0.99] transition"
+              >
+                {total === 0 ? 'Cerrar y ajustar' : `Mostrar ${total} alojamiento${total === 1 ? '' : 's'}`}
+              </button>
             </div>
           </div>
         </div>
-      </section>
+      )}
 
-      {/* Filtros + Resultados */}
+      {/* Barra flotante desktop (una sola fila, solapa el Hero, sin recarga). */}
+      <div className="hidden md:block sticky top-16 z-30">
+        <div className="container-main">
+          <div className="relative -mt-7 rounded-2xl bg-white border border-neutral-150 shadow-lg p-3">
+            <div className="flex flex-col lg:flex-row gap-2 lg:items-center">
+              <div className="flex-[1.6] min-w-0">
+                {/* SearchBar ya expone aria-label="Buscar publicaciones por texto". */}
+                <SearchBar value={q} onChange={setQ} />
+              </div>
+              <div className="flex-1 min-w-0 lg:max-w-60">
+                <label className="sr-only" htmlFor="cercano-a">Cercano a</label>
+                <CercanoA lugares={campus} value={campusId} onChange={setCampusId} inputId="cercano-a" />
+              </div>
+              <div className="flex-1 min-w-0 lg:max-w-52">
+                <label className="sr-only" htmlFor="ciudad">Ciudad</label>
+                <CiudadSelector value={ciudadId} onChange={setCiudadId} inputId="ciudad" ciudades={ciudades} />
+              </div>
+              <button
+                type="button"
+                onClick={() => setAvanzadosAbiertos((v) => !v)}
+                aria-expanded={avanzadosAbiertos}
+                aria-controls="panel-avanzados"
+                className="shrink-0 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border transition bg-navy-800 text-white border-navy-800 hover:bg-navy-900"
+              >
+                <span aria-hidden="true">🎛️</span> Filtros
+                {numAvanzados > 0 && (
+                  <span className="inline-flex items-center rounded-full bg-gold-400 px-2 py-0.5 text-[11px] font-bold text-navy-900" aria-label={`${numAvanzados} filtros activos`}>
+                    {numAvanzados}
+                  </span>
+                )}
+                <span aria-hidden="true" className={`text-[10px] transition-transform ${avanzadosAbiertos ? 'rotate-180' : ''}`}>▼</span>
+              </button>
+            </div>
+            {avanzadosAbiertos && (
+              <div id="panel-avanzados" className="mt-3 border-t border-neutral-100 pt-3 space-y-3">
+                {/* M4: primarios inline (texto ya arriba + precio/tipo/principales aquí) */}
+                <PanelPrimario filtros={filtros} setFiltros={setFiltros} />
+                <div className="flex items-center gap-2">
+                  <MasFiltrosModal filtros={filtros} setFiltros={setFiltros} />
+                  {numAvanzados > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFiltros({ min: '', max: '', tipo: '', servicios: '' })}
+                      className="btn-ghost text-xs"
+                    >
+                      Limpiar filtros
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Resultados */}
       <div className="container-main py-6 md:py-8">
-        <Filtros filtros={filtros} setFiltros={setFiltros} />
 
         <p className="text-xs text-neutral-400 mt-4" aria-live="polite">
           {loading ? 'Cargando...' : `${total} publicaciones · página ${page}/${pages}`}
@@ -273,7 +633,7 @@ export default function Buscar() {
         </div>
 
         {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 min-h-[420px]" role="status" aria-label="Cargando publicaciones" aria-busy="true">
             {[1, 2, 3, 4, 5, 6].map(i => (
               <div key={i} className="card p-4 animate-pulse">
                 <div className="h-36 bg-neutral-100 rounded-t-lg" />
@@ -308,18 +668,18 @@ export default function Buscar() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
               </svg>
             </div>
-            <p className="text-sm font-medium text-neutral-700 mb-1">Sin resultados{q && <> para “{q}”</>}</p>
+            <p className="text-sm font-medium text-neutral-700 mb-1">No encontramos alojamientos que coincidan con tu búsqueda{q && <> para “{q}”</>}</p>
             <p className="text-xs text-neutral-400 max-w-sm mx-auto">
               {q
                 ? <>Intenta con “habitación”, “amoblado” o “cerca a la universidad”, revisa la ortografía o limpia los filtros.</>
-                : <>Prueba otro campus o ajusta los filtros de búsqueda.</>}
+                : <>Prueba otro lugar cercano o ajusta los filtros de búsqueda.</>}
             </p>
             <button
               type="button"
               onClick={limpiarTodo}
               className="mt-5 text-xs font-semibold text-navy-700 border border-navy-200 rounded-md px-4 py-2 hover:bg-navy-50 transition"
             >
-              Limpiar búsqueda y filtros
+              Limpiar filtros
             </button>
           </div>
         )}
