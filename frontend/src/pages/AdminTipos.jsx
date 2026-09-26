@@ -197,7 +197,7 @@ export default function AdminTipos() {
               <li key={t.slug} className={`card p-4 space-y-2 ${t.esta_activo ? '' : 'opacity-70'}`}>
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-mono text-xs font-bold text-navy-800">{t.slug}</span>
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${t.esta_activo ? 'bg-emerald-100 text-emerald-800' : 'bg-neutral-100 text-neutral-500'}`}>
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${t.esta_activo ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : 'bg-neutral-100 text-neutral-600 border-neutral-200'}`}>
                     {t.esta_activo ? 'ACTIVO' : 'INACTIVO'}
                   </span>
                   <span className="flex-1" />

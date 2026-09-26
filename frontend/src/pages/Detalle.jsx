@@ -378,7 +378,7 @@ export default function Detalle() {
                     onClick={handleToggleFav}
                     aria-pressed={isFav}
                     aria-label={isFav ? 'Quitar de favoritos' : 'Guardar en favoritos'}
-                    className={`w-11 h-11 rounded-full text-lg flex items-center justify-center backdrop-blur-sm active:scale-95 transition ${isFav ? 'bg-red-500 text-white' : 'bg-black/50 text-white'}`}
+                    className={`w-11 h-11 rounded-full text-lg flex items-center justify-center backdrop-blur-sm border border-white/20 active:scale-95 transition ${isFav ? 'bg-red-500 text-white' : 'bg-black/60 text-white'}`}
                   >
                     <span aria-hidden="true">{isFav ? '♥' : '♡'}</span>
                   </button>
@@ -387,7 +387,7 @@ export default function Detalle() {
                     onClick={handleToggleComp}
                     aria-pressed={isComp}
                     aria-label={isComp ? 'Quitar de comparar' : 'Agregar a comparar'}
-                    className={`w-11 h-11 rounded-full text-lg font-bold flex items-center justify-center backdrop-blur-sm active:scale-95 transition ${isComp ? 'bg-indigo-600 text-white' : 'bg-black/50 text-white'}`}
+                    className={`w-11 h-11 rounded-full text-lg font-bold flex items-center justify-center backdrop-blur-sm border border-white/20 active:scale-95 transition ${isComp ? 'bg-indigo-600 text-white' : 'bg-black/60 text-white'}`}
                   >
                     <span aria-hidden="true">{isComp ? '✓' : '+'}</span>
                   </button>
@@ -786,7 +786,7 @@ export default function Detalle() {
               <span aria-hidden="true">💬</span> WhatsApp
             </a>
           ) : (
-            <span className="shrink-0 inline-flex items-center px-4 py-3 min-h-[48px] rounded-xl bg-neutral-100 text-neutral-400 text-xs font-semibold">
+            <span className="shrink-0 inline-flex items-center px-4 py-3 min-h-[48px] rounded-xl bg-neutral-100 text-neutral-600 border border-neutral-200 text-xs font-semibold">
               Sin contacto
             </span>
           )}

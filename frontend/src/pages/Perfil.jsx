@@ -405,7 +405,7 @@ export default function Perfil() {
             <span className="text-neutral-600">Mi Perfil</span>
           </nav>
 
-          <div className="card p-6 md:p-8">
+          <div className="card p-4 sm:p-6 md:p-8">
             <div className="w-12 h-12 bg-navy-50 text-navy-800 rounded-xl flex items-center justify-center mb-4">
               <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
@@ -559,7 +559,7 @@ export default function Perfil() {
         {tab === 'datos' && (
           <div id="panel-datos" role="tabpanel" aria-labelledby="tab-datos" aria-label="Datos personales y contacto" tabIndex={0} className="space-y-4">
             {/* Tarjeta identidad: quién eres + rol + progreso */}
-            <section aria-label="Tu cuenta" className="card p-6 space-y-4">
+            <section aria-label="Tu cuenta" className="card p-4 sm:p-6 space-y-4">
             <div className="flex items-center gap-4">
               <AvatarPerfil
                 perfil={perfil}
@@ -609,7 +609,7 @@ export default function Perfil() {
 
             <form onSubmit={handleGuardarDatos} className="space-y-4">
             {/* Tarjeta identidad editable: nombre */}
-            <section aria-label="Identidad" className="card p-6 space-y-4">
+            <section aria-label="Identidad" className="card p-4 sm:p-6 space-y-4">
               <h3 className="text-sm font-bold text-navy-900">👤 Identidad</h3>
               <div>
                 <label htmlFor="perfil-nombre" className="block text-sm font-semibold text-navy-800 mb-1.5">Nombre completo</label>
@@ -627,7 +627,7 @@ export default function Perfil() {
             </section>
 
             {/* Tarjeta contacto: correo + teléfono */}
-            <section aria-label="Contacto" className="card p-6 space-y-4">
+            <section aria-label="Contacto" className="card p-4 sm:p-6 space-y-4">
               <h3 className="text-sm font-bold text-navy-900">📱 Contacto</h3>
               <p className="text-[11px] text-neutral-400 -mt-2">Cómo te contactan los interesados. El teléfono verificado suma +20 de confianza.</p>
               <div>
@@ -709,7 +709,7 @@ export default function Perfil() {
             </section>
 
             {/* Tarjeta presentación: bio (la foto vive en el avatar superior, sin URL expuesta) */}
-            <section aria-label="Presentación" className="card p-6 space-y-4">
+            <section aria-label="Presentación" className="card p-4 sm:p-6 space-y-4">
               <h3 className="text-sm font-bold text-navy-900">✨ Presentación</h3>
               <p className="text-[11px] text-neutral-400 -mt-2">Opcional. Cuéntales a otros quién eres y qué buscas.</p>
               <div>
@@ -768,7 +768,7 @@ export default function Perfil() {
         )}
 
         {tab === 'seguridad' && (
-          <div id="panel-seguridad" role="tabpanel" aria-labelledby="tab-seguridad" aria-label="Seguridad y contraseña" tabIndex={0} className="card p-6 space-y-4">
+          <div id="panel-seguridad" role="tabpanel" aria-labelledby="tab-seguridad" aria-label="Seguridad y contraseña" tabIndex={0} className="card p-4 sm:p-6 space-y-4">
             <h2 className="text-base font-semibold text-navy-900">Cambiar contraseña</h2>
             {perfil?.auth_provider === 'google' ? (
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4" role="note">
@@ -944,7 +944,7 @@ export default function Perfil() {
         )}
 
         {tab === 'confianza' && (
-          <div id="panel-confianza" role="tabpanel" aria-labelledby="tab-confianza" aria-label="Índice de confianza" tabIndex={0} className="card p-6 space-y-4">
+          <div id="panel-confianza" role="tabpanel" aria-labelledby="tab-confianza" aria-label="Índice de confianza" tabIndex={0} className="card p-4 sm:p-6 space-y-4">
             <h2 className="text-base font-semibold text-navy-900">Tu confianza (0–100)</h2>
             <p className="text-xs text-neutral-500 leading-relaxed">
               Cada aviso publicado hereda estos puntos. En verde lo ya ganado, en ámbar lo pendiente con su acción.

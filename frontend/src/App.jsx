@@ -71,7 +71,7 @@ function Nav() {
   useEffect(() => { closeUser() }, [location.pathname])
 
   const mobileLinkCls = (active) =>
-    `flex items-center justify-between px-3 py-2.5 text-sm font-medium rounded-md transition-colors duration-200 ${active ? 'text-navy-800 bg-navy-50' : 'text-neutral-600 hover:bg-neutral-100'
+    `flex items-center justify-between px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-md transition-colors duration-200 ${active ? 'text-navy-800 bg-navy-50' : 'text-neutral-600 hover:bg-neutral-100'
     }`
 
   return (

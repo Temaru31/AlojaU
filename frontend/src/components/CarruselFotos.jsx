@@ -72,7 +72,7 @@ export default function CarruselFotos({ fotos = [], titulo = '', acciones = null
 
       {/* Contador numérico inferior-derecha */}
       <span
-        className="absolute bottom-2 right-2 bg-black/60 text-white text-xs font-semibold px-2.5 py-1 rounded-full backdrop-blur-sm"
+        className="absolute bottom-2 right-2 bg-black/70 text-white text-xs font-semibold px-2.5 py-1 rounded-full backdrop-blur-sm border border-white/20"
         aria-label={`Foto ${idx + 1} de ${total}`}
         aria-live="polite"
       >
@@ -87,7 +87,7 @@ export default function CarruselFotos({ fotos = [], titulo = '', acciones = null
             onClick={() => irA(idx - 1)}
             disabled={idx === 0}
             aria-label="Foto anterior"
-            className="absolute left-2 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/50 text-white text-lg flex items-center justify-center backdrop-blur-sm active:bg-black/70 disabled:opacity-30"
+            className="absolute left-2 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/60 text-white text-lg flex items-center justify-center backdrop-blur-sm border border-white/20 active:bg-black/70 disabled:opacity-30"
           >
             ‹
           </button>
@@ -96,7 +96,7 @@ export default function CarruselFotos({ fotos = [], titulo = '', acciones = null
             onClick={() => irA(idx + 1)}
             disabled={idx === total - 1}
             aria-label="Foto siguiente"
-            className="absolute right-2 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/50 text-white text-lg flex items-center justify-center backdrop-blur-sm active:bg-black/70 disabled:opacity-30"
+            className="absolute right-2 top-1/2 -translate-y-1/2 w-11 h-11 rounded-full bg-black/60 text-white text-lg flex items-center justify-center backdrop-blur-sm border border-white/20 active:bg-black/70 disabled:opacity-30"
           >
             ›
           </button>
