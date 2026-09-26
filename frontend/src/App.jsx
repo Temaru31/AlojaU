@@ -143,30 +143,51 @@ function Nav() {
                 {userOpen && (
                   <>
                     <div aria-hidden="true" onClick={closeUser} className="fixed inset-0 z-40" />
-                    <div role="menu" aria-label="Cuenta" className="absolute right-0 top-11 w-56 rounded-xl border border-neutral-150 shadow-xl bg-white p-2 z-50">
-                      <p className="px-3 py-2 text-xs text-neutral-400 truncate border-b border-neutral-100 mb-1" title={user?.email || ''}>
-                        {user?.email || 'Sesión activa'}
-                      </p>
-                      <Link to="/perfil" onClick={closeUser} role="menuitem" className="block px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-100">
-                        Mi Perfil
+                    <div role="menu" aria-label="Cuenta" className="absolute right-0 top-11 w-64 rounded-2xl border border-neutral-150 shadow-xl bg-white p-2 z-50 animar-subir">
+                      {/* Tarjeta de usuario (mismo lenguaje que el drawer móvil). */}
+                      <Link
+                        to="/perfil"
+                        onClick={closeUser}
+                        role="menuitem"
+                        aria-label="Abrir mi perfil"
+                        className="flex items-center gap-3 px-3 py-3 mb-1 rounded-xl bg-navy-50 border border-navy-100 hover:bg-navy-100 active:bg-navy-100 transition"
+                      >
+                        <span aria-hidden="true" className="relative w-10 h-10 rounded-full bg-navy-800 text-white text-xs font-bold flex items-center justify-center shrink-0">
+                          {inicialesDe(user)}
+                          {user?.foto_perfil_url && (
+                            <img src={user.foto_perfil_url} alt="" referrerPolicy="no-referrer" className="absolute inset-0 w-10 h-10 rounded-full object-cover border border-navy-100 bg-navy-800" onError={(e) => { e.currentTarget.style.display = 'none' }} />
+                          )}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-bold text-navy-900 truncate">{displayName}</span>
+                          <span className="block text-[11px] text-neutral-500 truncate">{user?.email || ''}</span>
+                          <span className="inline-block mt-0.5 text-[10px] font-bold px-1.5 py-px rounded bg-white text-navy-700 border border-navy-100">
+                            {user?.rol === 'ADMIN' ? 'Administrador' : user?.rol === 'ARRENDADOR' ? 'Arrendador' : 'Usuario Base'}
+                          </span>
+                        </span>
+                        <span aria-hidden="true" className="text-neutral-400">›</span>
                       </Link>
-                      <Link to="/mis-publicaciones" onClick={closeUser} role="menuitem" className="block px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-100">
-                        Mis Publicaciones
+                      <Link to="/perfil" onClick={closeUser} role="menuitem" className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-xl text-neutral-600 hover:bg-neutral-100 active:bg-neutral-100 transition">
+                        <span aria-hidden="true">👤</span> Mi Perfil
                       </Link>
-                      <Link to="/favoritos" onClick={closeUser} role="menuitem" className="block px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-100">
-                        Favoritos{favCount > 0 ? ` (${favCount})` : ''}
+                      <Link to="/mis-publicaciones" onClick={closeUser} role="menuitem" className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-xl text-neutral-600 hover:bg-neutral-100 active:bg-neutral-100 transition">
+                        <span aria-hidden="true">📢</span> Mis Publicaciones
+                      </Link>
+                      <Link to="/favoritos" onClick={closeUser} role="menuitem" className="flex items-center justify-between gap-2 px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-xl text-neutral-600 hover:bg-neutral-100 active:bg-neutral-100 transition">
+                        <span><span aria-hidden="true">🧡</span> Favoritos</span>
+                        {favCount > 0 && <span className="bg-red-100 text-red-700 text-[11px] font-bold px-1.5 py-0.5 rounded-full" aria-label={`${favCount} favoritos`}>{favCount}</span>}
                       </Link>
                       {(user?.rol || '').toUpperCase() === 'ADMIN' && (
-                        <Link to="/admin/dashboard" onClick={closeUser} role="menuitem" className="block px-3 py-2 text-sm font-bold rounded-md text-navy-800 bg-navy-50 hover:bg-navy-100">
-                          🛡️ Panel admin
+                        <Link to="/admin/dashboard" onClick={closeUser} role="menuitem" className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] text-sm font-bold rounded-xl text-navy-800 bg-navy-50 hover:bg-navy-100 active:bg-navy-100 transition">
+                          <span aria-hidden="true">🛡️</span> Panel Admin
                         </Link>
                       )}
                       <button type="button"
                         onClick={() => { logout(); closeUser() }}
                         role="menuitem"
-                        className="block w-full text-left px-3 py-2 text-sm font-semibold rounded-md text-red-600 hover:bg-red-50 transition-colors"
+                        className="flex items-center justify-center gap-2 w-full px-3 py-2.5 min-h-[44px] mt-1 text-sm font-bold rounded-xl text-red-600 hover:bg-red-50 active:bg-red-100 transition-colors"
                       >
-                        Cerrar sesión
+                        <span aria-hidden="true">🚪</span> Cerrar sesión
                       </button>
                     </div>
                   </>

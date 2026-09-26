@@ -44,6 +44,30 @@ describe('App smoke honesto (shell + landing sin red)', () => {
     expect(screen.queryByRole('button', { name: /Cerrar sesión/ })).not.toBeInTheDocument()
   })
 
+  it('dropdown escritorio armonizado: tarjeta, emojis y foto', async () => {
+    localStorage.setItem('alojau_token', 'tok-u')
+    api.get.mockImplementation((url) => {
+      if (url === '/api/auth/perfil') {
+        return Promise.resolve({ data: { email: 'ana@x.co', nombre_completo: 'Ana Ríos', rol: 'ARRENDADOR', foto_perfil_url: 'https://x/f.jpg' } })
+      }
+      if (url === '/api/publicaciones') {
+        return Promise.resolve({ data: { items: [], total: 0, page: 1, size: 9, pages: 1 } })
+      }
+      return Promise.resolve({ data: [] })
+    })
+    render(<App />)
+    await waitFor(() => expect(screen.getByText(/Encuentra tu espacio ideal/)).toBeInTheDocument())
+    fireEvent.click(await screen.findByRole('button', { name: 'Menú de usuario' }))
+    // Dentro del menú desktop el rol es menuitem (en el drawer móvil es link).
+    const tarjeta = await screen.findByRole('menuitem', { name: 'Abrir mi perfil' })
+    expect(tarjeta).toHaveAttribute('href', '/perfil')
+    expect(tarjeta).toHaveTextContent('Ana Ríos')
+    expect(tarjeta).toHaveTextContent('Arrendador')
+    expect(screen.getByRole('menuitem', { name: /Mis Publicaciones/ })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /Favoritos/ })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /Cerrar sesión/ })).toBeInTheDocument()
+  })
+
   it('R5 drawer móvil autenticado: tarjeta usuario → /perfil y salir en rojo', async () => {
     localStorage.setItem('alojau_token', 'tok-u')
     api.get.mockImplementation((url) => {
