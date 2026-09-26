@@ -1,7 +1,7 @@
 // Restablecer.jsx — Pantalla de cambio con indicador de fortaleza v13.
 // Recibe ?email=...&token=... (enlace de un solo uso, 15 min).
 // Uso: ruta /restablecer.
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../services/api'
 import PasswordStrength, { passwordValidaV13 } from '../components/PasswordStrength'
@@ -15,6 +15,9 @@ export default function Restablecer() {
   const [confirmar, setConfirmar] = useState('')
   const [estado, setEstado] = useState('idle')
   const [mensaje, setMensaje] = useState('')
+  // Bloque 3: el redirect diferido se cancela al desmontar.
+  const navTimer = useRef(null)
+  useEffect(() => () => window.clearTimeout(navTimer.current), [])
 
   const valida = useMemo(
     () => passwordValidaV13(nueva) && nueva === confirmar && email && token,
@@ -32,7 +35,8 @@ export default function Restablecer() {
       })
       setEstado('ok')
       setMensaje('Contraseña restablecida. Tus sesiones anteriores fueron revocadas.')
-      setTimeout(() => navigate('/perfil'), 1500)
+      // Bloque 3: navegar solo si se sigue montado (limpieza al desmontar).
+      navTimer.current = window.setTimeout(() => navigate('/perfil'), 1500)
     } catch (err) {
       setEstado('error')
       setMensaje(err?.response?.data?.detail || 'Enlace inválido, expirado o ya usado.')

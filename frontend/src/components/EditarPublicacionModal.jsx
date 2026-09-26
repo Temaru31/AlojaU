@@ -10,6 +10,7 @@ import ContadorCaracteres from './ContadorCaracteres'
 import { LIMITES, estadoRango, RANGO_CLS } from '../constants'
 import { SERVICIOS } from '../utils/servicios'
 import useTiposVivienda, { TIPOS_FALLBACK } from '../hooks/useTiposVivienda'
+import useFocusTrap from '../hooks/useFocusTrap'
 
 // Fallback local (mismo contrato slug). El hook lo reemplaza por /config-publica.
 const TIPOS = TIPOS_FALLBACK.map((t) => t.slug)
@@ -235,8 +236,12 @@ export default function EditarPublicacionModal({ pub, token, onClose, onSaved })
     setError('')
   }
 
+  // Bloque 3: Tab cicla dentro + foco vuelve al disparador al cerrar.
+  const cajaRef = useRef(null)
+  useFocusTrap(cajaRef, true)
+
   return (
-    <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={`Editar ${pub.titulo}`}>
+    <div ref={cajaRef} className="fixed inset-0 z-[2000] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={`Editar ${pub.titulo}`}>
       <div aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-navy-900/50" />
       <form onSubmit={guardar} className="relative bg-white rounded-xl shadow-xl w-full max-w-lg p-5 sm:p-6 max-h-[90vh] overflow-y-auto">
         <div className="flex items-start justify-between gap-3 mb-4">

@@ -11,18 +11,15 @@ import { useAuth } from '../contexts/AuthContext'
 import SmartImage from '../components/SmartImage'
 import { formatDistancia } from '../utils/formatters'
 import { portadaUrl } from '../utils/portada'
-
-const TIPO_LABEL = {
-  HABITACION_INDEPENDIENTE: 'Habitación independiente',
-  HABITACION_FAMILIAR: 'Habitación familiar',
-  APARTAESTUDIO: 'Apartaestudio',
-  COMPARTIDO: 'Compartido',
-}
+import { getEtiquetaTipo } from '../utils/tiposVivienda'
+import useTiposVivienda from '../hooks/useTiposVivienda'
 
 export default function Favoritos() {
   const { ids, remove, clear, count } = useFavoritos()
   // v14.1: con sesión, el dueño ve sus PENDIENTE en vez de "No vigente".
   const { token: authToken } = useAuth()
+  // Bloque 3: etiquetas desde la fuente única (dinámico + fallback central).
+  const { tipos: tiposCatalogo } = useTiposVivienda()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
   // FASE 2: confirmación explícita en 2 pasos (sin window.confirm nativo).
@@ -184,7 +181,7 @@ export default function Favoritos() {
             {items.map((pub) => {
               // BUG#1: portada = orden=1 (helper central; sobrevive a refetch).
               const cover = portadaUrl(pub)
-              const tipo = TIPO_LABEL[pub.tipo_inmueble] || pub.tipo_inmueble || 'Vivienda'
+              const tipo = getEtiquetaTipo(pub.tipo_inmueble, tiposCatalogo, 'Vivienda')
               const zona = pub.zona_nombre || 'Zona no informada'
 
               return (

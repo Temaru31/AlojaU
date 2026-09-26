@@ -9,7 +9,7 @@
 //    nunca duplica; revive cuentas en período de gracia) y devuelve el
 //    JWT propio de AlojaU.
 // 3. Se guarda el token y se redirige al inicio.
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../services/api'
 import { parseAuthCallbackHash, getCallbackCode, exchangeCodeForSession, leerRedirectPostLogin } from '../services/supabaseClient'
@@ -30,6 +30,11 @@ export default function AuthCallback() {
   const [estado, setEstado] = useState('procesando') // procesando|ok|error
   const [detalle, setDetalle] = useState('')
   const [esNuevo, setEsNuevo] = useState(false)
+
+  // Bloque 3: el redirect diferido se cancela al desmontar (el flag `vivo`
+  // ya protege los setState, pero el navigate huérfano también se evita).
+  const navTimer = useRef(null)
+  useEffect(() => () => window.clearTimeout(navTimer.current), [])
 
   useEffect(() => {
     let vivo = true
@@ -100,7 +105,7 @@ export default function AuthCallback() {
           setEstado('ok')
           // M5: vuelve a donde estaba (ej. /publicar) o al inicio.
           const destino = leerRedirectPostLogin()
-          setTimeout(() => navigate(destino), 900)
+          navTimer.current = window.setTimeout(() => { if (vivo) navigate(destino) }, 900)
         }
       } catch (e) {
         if (vivo) {

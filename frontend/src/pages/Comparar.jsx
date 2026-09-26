@@ -7,22 +7,19 @@ import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
 import SmartImage from '../components/SmartImage'
 import BadgeConfianza from '../components/BadgeConfianza'
 import { portadaUrl } from '../utils/portada'
+import { getEtiquetaTipo } from '../utils/tiposVivienda'
 import useTiposVivienda from '../hooks/useTiposVivienda'
 
 function NoInformado() {
   return <span className="text-neutral-400 italic text-xs">No informado</span>
 }
 
-// ENUM técnico -> texto legible (incluye APARTAMENTO legacy).
-export function humanizarTipoComparar(tipo) {
-  const map = {
-    HABITACION_FAMILIAR: 'Habitación familiar',
-    HABITACION_INDEPENDIENTE: 'Habitación independiente',
-    APARTAESTUDIO: 'Apartaestudio',
-    COMPARTIDO: 'Compartido',
-    APARTAMENTO: 'Apartamento',
-  }
-  return map[tipo] || tipo || null
+// Compat: antes mapa local; ahora delega a la fuente única (Bloque 3).
+// APARTAMENTO legacy (pre-catálogo) se conserva explícito: nunca existió
+// en housing_types, así que la fuente única devolvería el slug crudo.
+export function humanizarTipoComparar(tipo, tipos = null) {
+  if (tipo === 'APARTAMENTO') return 'Apartamento'
+  return getEtiquetaTipo(tipo, tipos, null)
 }
 
 export default function Comparar() {
@@ -30,7 +27,7 @@ export default function Comparar() {
   // v14.1: con sesión, el dueño ve sus PENDIENTE en vez de "no disponible".
   const { token: authToken } = useAuth()
   // M2: catálogo dinámico con fallback (misma etiqueta que el resto).
-  const { nombreDe } = useTiposVivienda()
+  const { tipos: tiposCatalogo } = useTiposVivienda()
   const [pubs, setPubs] = useState([])
   const [loading, setLoading] = useState(false)
 
@@ -59,7 +56,7 @@ export default function Comparar() {
         return `$${Number(dep).toLocaleString('es-CO')}`
       }
     },
-    { label: 'Tipo', key: 'tipo', render: (p) => (nombreDe(p.tipo_inmueble, humanizarTipoComparar(p.tipo_inmueble)) || <NoInformado />) },
+    { label: 'Tipo', key: 'tipo', render: (p) => (humanizarTipoComparar(p.tipo_inmueble, tiposCatalogo) || <NoInformado />) },
     { label: 'Zona', key: 'zona', render: (p) => p.zona_nombre || p.zona || <NoInformado /> },
     {
       label: 'Distancia al campus', key: 'dist', render: (p) => {

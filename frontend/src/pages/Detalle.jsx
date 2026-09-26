@@ -14,19 +14,16 @@ import { useAuth } from '../contexts/AuthContext'
 import EditarPublicacionModal from '../components/EditarPublicacionModal'
 import { haceRelativo, estaDesactualizada, fetchConfigPublica, diasDesactualizadaEfectiva } from '../constants'
 import { fotosOrdenadas } from '../utils/portada'
+import { getEtiquetaTipo } from '../utils/tiposVivienda'
 import { formatearSesionFecha } from '../utils/sesion'
 import { etiquetaEvento } from '../utils/historial'
 import { api as _apiDetalle } from '../services/api'
 import useTiposVivienda from '../hooks/useTiposVivienda'
 
-export function humanizarTipo(tipo) {
-  const map = {
-    HABITACION_FAMILIAR: 'Habitación familiar',
-    HABITACION_INDEPENDIENTE: 'Habitación independiente',
-    APARTAESTUDIO: 'Apartaestudio',
-    COMPARTIDO: 'Compartido',
-  }
-  return map[tipo] || tipo || 'No informado'
+export function humanizarTipo(tipo, tipos = null) {
+  // Compat: antes mapa local; ahora delega a la fuente única (Bloque 3).
+  // Sin `tipos` equivale al mapa histórico (tests intactos).
+  return getEtiquetaTipo(tipo, tipos)
 }
 
 function leerContactos() {
@@ -74,7 +71,7 @@ export default function Detalle() {
   // ANTES de los early-returns (hooks siempre en el mismo orden).
   const [diasDesact, setDiasDesact] = useState(() => diasDesactualizadaEfectiva())
   // M2: nombre dinámico del tipo con fallback estático.
-  const { nombreDe: nombreTipo } = useTiposVivienda()
+  const { tipos: tiposCatalogo } = useTiposVivienda()
   const vistaEnviada = useRef(null)
   const compHook = useComparar()
 
@@ -86,6 +83,10 @@ export default function Detalle() {
     window.clearTimeout(mostrarToast._t)
     mostrarToast._t = window.setTimeout(() => setToast(''), 3500)
   }
+
+  // Bloque 3: el toast local no debe aparecer en otra pantalla si se navega
+  // antes de los 3.5s (el global de Toaster sí sobrevive, es su trabajo).
+  useEffect(() => () => window.clearTimeout(mostrarToast._t), [])
 
   useEffect(() => {
     let cancelled = false
@@ -283,7 +284,7 @@ export default function Detalle() {
   const servicios = pub.servicios || []
   const descripcion = (pub.descripcion || '').trim()
   // M2: catálogo dinámico primero, estático como fallback (mismo texto).
-  const tipoHumano = nombreTipo(pub.tipo_inmueble, humanizarTipo(pub.tipo_inmueble))
+  const tipoHumano = humanizarTipo(pub.tipo_inmueble, tiposCatalogo)
   const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? 0)
   const isFav = favHook.isFav(pub.id)
   const isComp = compHook.isSelected(pub.id)

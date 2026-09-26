@@ -7,7 +7,8 @@
 // Uso: {abierto && <ConfirmDialog titulo="..." descripcion="..."
 //   cancelar="Cancelar" confirmar="Sí, eliminar" peligro
 //   onCancelar={...} onConfirmar={...} ocupado={bool} />} (+ children opcional).
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
+import useFocusTrap from '../hooks/useFocusTrap'
 
 export default function ConfirmDialog({
   titulo,
@@ -28,8 +29,12 @@ export default function ConfirmDialog({
     return () => window.removeEventListener('keydown', onKey)
   }, [onCancelar, ocupado])
 
+  // Bloque 3: Tab cicla dentro del diálogo y al cerrar vuelve al disparador.
+  const cajaRef = useRef(null)
+  useFocusTrap(cajaRef, true)
+
   return (
-    <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center p-0 sm:p-4" role="dialog" aria-modal="true" aria-label={titulo}>
+    <div ref={cajaRef} className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center p-0 sm:p-4" role="dialog" aria-modal="true" aria-label={titulo}>
       <div aria-hidden="true" onClick={() => { if (!ocupado) onCancelar?.() }} className="absolute inset-0 bg-navy-950/60 backdrop-blur-[2px]" />
       <div className="relative w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl p-5 sm:p-6 space-y-4 animar-subir max-h-[90vh] overflow-y-auto">
         <div aria-hidden="true" className="mx-auto h-1.5 w-12 rounded-full bg-neutral-200 sm:hidden" />

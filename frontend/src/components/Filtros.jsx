@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import InfoTooltip from './InfoTooltip'
 import useTiposVivienda, { TIPOS_FALLBACK } from '../hooks/useTiposVivienda'
+import useFocusTrap from '../hooks/useFocusTrap'
 
 export const SERVICIOS_OPCIONES = [
   { id: 1, label: "WiFi Fibra" },
@@ -148,6 +149,9 @@ export function PanelPrimario({ filtros, setFiltros }) {
 // M4 modal "Más Filtros" desktop: secundarios en drawer/modal (reutiliza contarAvanzados).
 export function MasFiltrosModal({ filtros, setFiltros }) {
   const [abierto, setAbierto] = useState(false)
+  // Bloque 3: Tab cicla dentro del drawer + foco vuelve al botón.
+  const cajaRef = useRef(null)
+  useFocusTrap(cajaRef, abierto)
   const total = contarAvanzados(filtros)
   const secundarios = parseServicios(filtros.servicios).filter((s) =>
     SERVICIOS_SECUNDARIOS.includes(Number(s)))
@@ -172,7 +176,7 @@ export function MasFiltrosModal({ filtros, setFiltros }) {
         )}
       </button>
       {abierto && (
-        <div className="fixed inset-0 z-50 hidden md:block" role="dialog" aria-modal="true" aria-label="Más filtros">
+        <div ref={cajaRef} className="fixed inset-0 z-50 hidden md:block" role="dialog" aria-modal="true" aria-label="Más filtros">
           <div aria-hidden="true" onClick={cerrar} className="absolute inset-0 bg-navy-950/60" />
           <div className="absolute right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl flex flex-col">
             <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-neutral-100">

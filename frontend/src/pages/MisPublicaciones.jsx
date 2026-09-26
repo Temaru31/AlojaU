@@ -13,6 +13,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import EditarPublicacionModal from '../components/EditarPublicacionModal'
 import RenovarModal from '../components/RenovarModal'
 import { portadaUrl } from '../utils/portada'
+import { getEtiquetaTipo } from '../utils/tiposVivienda'
 import useTiposVivienda from '../hooks/useTiposVivienda'
 
 /**
@@ -116,13 +117,6 @@ const ESTADO_STYLE = {
   RECHAZADO: 'bg-rose-50 text-rose-700 border-rose-200',
 }
 
-const TIPO_LABEL = {
-  HABITACION_INDEPENDIENTE: 'Habitación independiente',
-  HABITACION_FAMILIAR: 'Habitación familiar',
-  APARTAESTUDIO: 'Apartaestudio',
-  COMPARTIDO: 'Compartido',
-}
-
 const FILTROS = [
   { value: '', label: 'Todas' },
   { value: 'ACTIVO', label: 'Publicadas' },
@@ -136,7 +130,7 @@ const PAGE_SIZE = 12
 export default function MisPublicaciones() {
   const { token, refresh } = useAuth()
   // M2: catálogo dinámico con fallback estático.
-  const { nombreDe } = useTiposVivienda()
+  const { tipos: tiposCatalogo } = useTiposVivienda()
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [pages, setPages] = useState(1)
@@ -369,8 +363,8 @@ export default function MisPublicaciones() {
               // BUG#1: portada = orden=1 vía helper central.
               const cover = portadaUrl(p)
               const zonaTexto = p.zona_nombre || p.zona || 'Zona no informada'
-              // M2: dinámico primero, estático como fallback.
-              const tipoTexto = nombreDe(p.tipo_inmueble, TIPO_LABEL[p.tipo_inmueble] || p.tipo_inmueble) || 'Vivienda'
+              // Bloque 3: fuente única (dinámico + fallback central).
+              const tipoTexto = getEtiquetaTipo(p.tipo_inmueble, tiposCatalogo, 'Vivienda')
               const canonValor = p.canon_mensual ?? p.canon
 
               return (

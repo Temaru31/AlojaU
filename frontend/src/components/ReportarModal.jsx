@@ -1,7 +1,8 @@
 // ReportarModal - denuncia anónima de avisos (HU-011).
 // Uso: <ReportarModal publicacionId titulo onClose /> en Detalle. Ej: <ReportarModal publicacionId={1} titulo="Apto" onClose={...} />.
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { api } from '../services/api'
+import useFocusTrap from '../hooks/useFocusTrap'
 
 const MOTIVOS = [
   { value: 'POSIBLE_ESTAFA', label: 'Posible estafa' },
@@ -52,8 +53,12 @@ export default function ReportarModal({ publicacionId, titulo = '', onClose }) {
     }
   }
 
+  // Bloque 3: Tab cicla dentro + foco vuelve al disparador al cerrar.
+  const cajaRef = useRef(null)
+  useFocusTrap(cajaRef, true)
+
   return (
-    <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Reportar aviso">
+    <div ref={cajaRef} className="fixed inset-0 z-[2000] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Reportar aviso">
       {/* Backdrop solo-ratón (teclado usa Esc o el botón Cerrar) */}
       <div aria-hidden="true" onClick={onClose} className="absolute inset-0 bg-navy-900/50" />
       <form onSubmit={enviar} className="relative bg-white rounded-xl shadow-xl w-full max-w-md p-5 sm:p-6">

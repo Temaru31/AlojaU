@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import Favoritos from './Favoritos'
 import { FavoritosProvider } from '../contexts/FavoritosContext'
 import { api } from '../services/api'
+import { limpiarConfigCache } from '../constants'
 
 vi.mock('../services/api', () => ({
   api: {
@@ -15,6 +16,9 @@ afterEach(() => cleanup())
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  // El hook useTiposVivienda cachea config en memoria del módulo: sin esto,
+  // el primer test envenena a los siguientes (piden /config-publica una vez).
+  limpiarConfigCache()
 })
 
 const renderWithProvider = (initialFavorites = []) => {
@@ -41,6 +45,7 @@ describe('Página de Favoritos (HU Estudiante)', () => {
     const ahora = new Date()
     const fechaFutura = new Date(ahora.getTime() + 15 * 86_400_000).toISOString()
 
+    api.get.mockResolvedValueOnce({ data: {} })
     api.get.mockResolvedValueOnce({
       data: {
         id: 10,
@@ -75,6 +80,7 @@ describe('Página de Favoritos (HU Estudiante)', () => {
     const ahora = new Date()
     const fechaPasada = new Date(ahora.getTime() - 3 * 86_400_000).toISOString()
 
+    api.get.mockResolvedValueOnce({ data: {} })
     api.get.mockResolvedValueOnce({
       data: {
         id: 20,
@@ -155,6 +161,7 @@ describe('Página de Favoritos (HU Estudiante)', () => {
   it('limpiar favoritos exige confirmación explícita en 2 pasos (sin window.confirm)', async () => {
     const confirmSpy = vi.spyOn(window, 'confirm')
 
+    api.get.mockResolvedValueOnce({ data: {} })
     api.get.mockResolvedValueOnce({
       data: { id: 5, titulo: 'Casa Estudiantil 5', estado: 'ACTIVO' },
     })

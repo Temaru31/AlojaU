@@ -10,6 +10,7 @@ const Casa3D = lazy(() => import('../components/Casa3D'))
 import CercanoA, { etiquetaLugar } from '../components/CercanoA'
 import CiudadSelector, { CIUDADES_FALLBACK, etiquetaCiudad } from '../components/CiudadSelector'
 import Filtros, { contarAvanzados, PanelPrimario, MasFiltrosModal } from '../components/Filtros'
+import useFocusTrap from '../hooks/useFocusTrap'
 import Paginacion from '../components/Paginacion'
 import SearchBar from '../components/SearchBar'
 
@@ -62,6 +63,9 @@ export default function Buscar() {
   const [avanzadosAbiertos, setAvanzadosAbiertos] = useState(false)
   // Bottom sheet de filtros solo en móvil (<768px).
   const [sheetAbierto, setSheetAbierto] = useState(false)
+  // Bloque 3: Tab cicla dentro del sheet + foco vuelve al botón Filtros.
+  const sheetRef = useRef(null)
+  useFocusTrap(sheetRef, sheetAbierto)
   const numAvanzados = contarAvanzados(filtros)
 
   // Cierra el sheet con Escape y bloquea el scroll del fondo mientras abre.
@@ -342,7 +346,7 @@ export default function Buscar() {
       </div>
 
       {sheetAbierto && (
-        <div className="md:hidden fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Filtros de búsqueda">
+        <div ref={sheetRef} className="md:hidden fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Filtros de búsqueda">
           <div aria-hidden="true" onClick={() => setSheetAbierto(false)} className="absolute inset-0 bg-navy-950/60 backdrop-blur-[2px] transition-opacity duration-150" />
           <div className="absolute inset-x-0 bottom-0 max-h-[85vh] flex flex-col rounded-t-3xl bg-white shadow-2xl animar-subir">
             <div aria-hidden="true" className="mx-auto mt-2.5 h-1.5 w-12 rounded-full bg-neutral-300" />

@@ -7,6 +7,7 @@
 import { useRef, useState } from 'react'
 import { api } from '../services/api'
 import { inicialesDe } from '../contexts/AuthContext'
+import useFocusTrap from '../hooks/useFocusTrap'
 
 // `tamano="lg"` (w-20) para la tarjeta de identidad del sidebar; el
 // default conserva el tamaño compacto usado en el resto de la app.
@@ -19,6 +20,9 @@ export default function AvatarPerfil({ perfil, token, onCambio, tamano }) {
   const [subiendo, setSubiendo] = useState(false)
   const [error, setError] = useState('')
   const fileRef = useRef(null)
+  // Bloque 3: trap solo en el sheet abierto (el visor tiene un único botón).
+  const sheetRef = useRef(null)
+  useFocusTrap(sheetRef, sheet)
   const foto = perfil?.foto_perfil_url || null
 
   const authHead = token ? { headers: { Authorization: `Bearer ${token}` } } : {}
@@ -106,7 +110,7 @@ export default function AvatarPerfil({ perfil, token, onCambio, tamano }) {
 
       {/* Action Sheet móvil + modal desktop (mismo diálogo) */}
       {sheet && (
-        <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Opciones de foto de perfil">
+        <div ref={sheetRef} className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Opciones de foto de perfil">
           <div aria-hidden="true" onClick={() => setSheet(false)} className="absolute inset-0 bg-navy-950/60" />
           <div className="absolute inset-x-0 bottom-0 sm:inset-0 sm:m-auto sm:max-w-sm sm:h-fit rounded-t-3xl sm:rounded-2xl bg-white shadow-2xl p-4 space-y-2">
             <div aria-hidden="true" className="mx-auto h-1 w-10 rounded-full bg-neutral-200 sm:hidden" />

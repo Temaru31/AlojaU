@@ -3,7 +3,8 @@
 // - TERMINOS_RESUMEN / POLITICA_RESUMEN: versiones cortas para el registro.
 // - LegalModal: <dialog>-like accesible (role=dialog, Esc cierra, foco ok).
 // - Las rutas públicas /terminos y /privacidad usan el mismo contenido.
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
+import useFocusTrap from '../hooks/useFocusTrap'
 
 export const POLITICA_VERSION = 'v1.0-ley1581-2026'
 
@@ -69,6 +70,10 @@ tras un cambio implica aceptación.
 `.trim()
 
 export function LegalModal({ titulo, contenido, abierto, onCerrar }) {
+  // Bloque 3: el trap solo vive mientras el modal está abierto (el hook
+  // no hace nada con activo=false, así que el early return es seguro).
+  const cajaRef = useRef(null)
+  useFocusTrap(cajaRef, abierto)
   useEffect(() => {
     if (!abierto) return
     const onKey = (e) => { if (e.key === 'Escape') onCerrar?.() }
@@ -79,6 +84,7 @@ export function LegalModal({ titulo, contenido, abierto, onCerrar }) {
   if (!abierto) return null
   return (
     <div
+      ref={cajaRef}
       className="fixed inset-0 z-[60] flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
