@@ -283,8 +283,8 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
       </BrowserRouter>
     )
     await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
-    // Clic en tag (M3 solo filtros.*): sin PATCH, con aviso de sin guardar.
-    await user.click(screen.getByRole('button', { name: /Tengo mascota/ }))
+    // Clic en tag (F1 chips ilustrados, filtros.*): sin PATCH, con aviso de sin guardar.
+    await user.click(screen.getByRole('button', { name: /Acepto mascotas/ }))
     expect(patchSpy).not.toHaveBeenCalled()
     expect(screen.getByText(/sin guardar/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Guardar cambios/i }))

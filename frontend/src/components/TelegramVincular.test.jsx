@@ -20,4 +20,15 @@ describe('TelegramVincular (M5 bot_url directo)', () => {
     expect(screen.getByText(/Vinculado/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Abrir Bot/ })).not.toBeInTheDocument()
   })
+
+  it('F5 503 abre modo local simulado que jamás vincula de verdad', async () => {
+    vi.spyOn(api, 'post').mockRejectedValue({ response: { status: 503, data: { detail: 'Telegram no configurado' } } })
+    render(<TelegramVincular token="t" vinculado={false} />)
+    fireEvent.click(screen.getByRole('button', { name: /Abrir Bot de Telegram/ }))
+    expect(await screen.findByText(/Modo de pruebas local detectado/)).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Código simulado de 6 dígitos'), { target: { value: '123456' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Probar' }))
+    expect(await screen.findByText(/Flujo simulado correcto/)).toBeInTheDocument()
+    expect(screen.queryByText(/Vinculado/)).not.toBeInTheDocument()
+  })
 })

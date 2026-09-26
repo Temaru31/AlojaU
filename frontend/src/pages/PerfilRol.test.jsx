@@ -62,4 +62,17 @@ describe('TAGS_DISPONIBLES (M3 solo filtros.*, Ley 1581)', () => {
     expect(keys).not.toContain('estudiante')
     expect(JSON.stringify(keys).toLowerCase()).not.toMatch(/nacimiento|genero|género/)
   })
+
+  it('F1 matriz de 8 dimensiones con icono y sin emojis en etiqueta', () => {
+    expect(TAGS_DISPONIBLES).toHaveLength(8)
+    for (const t of TAGS_DISPONIBLES) {
+      expect(t.icono).toBeTruthy()
+      expect(t.label).not.toMatch(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u)
+    }
+    expect(TAGS_DISPONIBLES.map((t) => t.key)).toEqual([
+      'filtros.mascotas', 'filtros.tranquilo', 'filtros.no_fumador',
+      'filtros.misma_facultad', 'filtros.cocina_equipada', 'filtros.lavadora',
+      'filtros.sin_horario', 'filtros.parqueadero',
+    ])
+  })
 })

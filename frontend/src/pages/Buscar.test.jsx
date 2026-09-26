@@ -96,15 +96,38 @@ describe('Buscar Fase 4 Hero + multiciudad', () => {
     })
   })
 
-  it('abre bottom sheet móvil con Cercano/Ciudad/avanzados y Ver resultados', async () => {
+  it('abre bottom sheet móvil con atajos COP, tipo y CTA honesto en cero', async () => {
     renderBuscar('/')
     await waitFor(() => expect(screen.getByText(/Encuentra tu espacio ideal/)).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: /Abrir filtros/ }))
     expect(screen.getByRole('dialog', { name: /Filtros de búsqueda/ })).toBeInTheDocument()
     // Desktop + sheet montan doble control: basta que el sheet aporte el suyo.
     expect(screen.getAllByLabelText('Cercano a…').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getByRole('button', { name: /Ver \d+ resultados/ })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Ver \d+ resultados/ }))
+    // F4: atajos de presupuesto (COP) y tipo escriben el mismo estado `filtros`.
+    fireEvent.click(screen.getByRole('button', { name: '< $400 mil' }))
+    expect(screen.getByRole('button', { name: '< $400 mil' })).toHaveAttribute('aria-pressed', 'true')
+    // Toggle-off: pulsar el activo limpia el rango.
+    fireEvent.click(screen.getByRole('button', { name: '< $400 mil' }))
+    expect(screen.getByRole('button', { name: '< $400 mil' })).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(screen.getByRole('button', { name: 'Compartida' }))
+    expect(screen.getByRole('button', { name: 'Compartida' })).toHaveAttribute('aria-pressed', 'true')
+    // Mock con total 0: CTA honesto + salida Limpiar.
+    expect(screen.getByRole('button', { name: 'Cerrar y ajustar' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Limpiar todos los filtros' }))
+    expect(screen.getByRole('button', { name: '< $400 mil' })).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(screen.getByRole('button', { name: 'Cerrar y ajustar' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /Filtros de búsqueda/ })).not.toBeInTheDocument())
+  })
+
+  it('CTA muestra conteo en vivo cuando hay resultados', async () => {
+    api.get.mockImplementation((url) => {
+      if (url === '/api/campus') return Promise.resolve({ data: CAMPUS })
+      if (url === '/api/ciudades') return Promise.resolve({ data: [{ id: 1, nombre: 'Popayán', departamento: 'Cauca', slug: 'popayan' }] })
+      return Promise.resolve({ data: { items: [], total: 5, pages: 1 } })
+    })
+    renderBuscar('/')
+    await waitFor(() => expect(screen.getByText(/Encuentra tu espacio ideal/)).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /Abrir filtros/ }))
+    expect(screen.getByRole('button', { name: 'Mostrar 5 alojamientos' })).toBeInTheDocument()
   })
 })

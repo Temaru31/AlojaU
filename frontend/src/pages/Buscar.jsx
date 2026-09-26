@@ -326,9 +326,9 @@ export default function Buscar() {
 
       {sheetAbierto && (
         <div className="md:hidden fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Filtros de búsqueda">
-          <div aria-hidden="true" onClick={() => setSheetAbierto(false)} className="absolute inset-0 bg-navy-950/60" />
-          <div className="absolute inset-x-0 bottom-0 max-h-[85vh] flex flex-col rounded-t-3xl bg-white shadow-2xl">
-            <div aria-hidden="true" className="mx-auto mt-2.5 h-1 w-10 rounded-full bg-neutral-200" />
+          <div aria-hidden="true" onClick={() => setSheetAbierto(false)} className="absolute inset-0 bg-navy-950/60 backdrop-blur-[2px] transition-opacity duration-150" />
+          <div className="absolute inset-x-0 bottom-0 max-h-[85vh] flex flex-col rounded-t-3xl bg-white shadow-2xl animar-subir">
+            <div aria-hidden="true" className="mx-auto mt-2.5 h-1.5 w-12 rounded-full bg-neutral-300" />
             <div className="flex items-center justify-between px-4 pt-2 pb-3 border-b border-neutral-100">
               <p className="text-sm font-bold text-navy-900">
                 Filtros
@@ -338,12 +338,71 @@ export default function Buscar() {
                 type="button"
                 onClick={() => setSheetAbierto(false)}
                 aria-label="Cerrar filtros"
-                className="w-8 h-8 rounded-full text-neutral-500 hover:bg-neutral-100 flex items-center justify-center text-lg"
+                className="w-11 h-11 rounded-full text-neutral-500 hover:bg-neutral-100 active:bg-neutral-100 flex items-center justify-center text-xl"
               >
                 ×
               </button>
             </div>
-            <div className="overflow-y-auto px-4 py-4 space-y-4">
+            <div className="overflow-y-auto px-4 py-4 space-y-5">
+              {/* F4 presupuesto universitario (COP): atajos que escriben
+                  precio_min/max (misma fuente `filtros`). Pulsar el activo
+                  lo limpia (toggle-off). */}
+              <div>
+                <p className="text-xs font-semibold text-navy-800 mb-2" id="presupuesto-m">Presupuesto universitario (COP)</p>
+                <div className="flex gap-2" role="group" aria-labelledby="presupuesto-m">
+                  {[
+                    { etiqueta: '< $400 mil', min: '0', max: '400000' },
+                    { etiqueta: '$400 – $700 mil', min: '400000', max: '700000' },
+                    { etiqueta: '> $700 mil', min: '700000', max: '' },
+                  ].map((b) => {
+                    const activo = (filtros.min || '') === b.min && (filtros.max || '') === b.max
+                    return (
+                      <button
+                        key={b.etiqueta}
+                        type="button"
+                        onClick={() => setFiltros(activo
+                          ? { ...filtros, min: '', max: '' }
+                          : { ...filtros, min: b.min, max: b.max })}
+                        aria-pressed={activo}
+                        className={`flex-1 min-h-[44px] px-2 py-2 rounded-xl border text-xs font-bold transition active:scale-[0.97] ${activo
+                          ? 'border-navy-800 ring-2 ring-navy-800/25 bg-navy-50 text-navy-900'
+                          : 'border-neutral-200 bg-white text-neutral-600 active:bg-neutral-50'
+                          }`}
+                      >
+                        {b.etiqueta}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+              {/* F4 tipo de habitación: atajos al `tipo` del catálogo dinámico. */}
+              <div>
+                <p className="text-xs font-semibold text-navy-800 mb-2" id="tipo-rapido-m">Tipo de habitación</p>
+                <div className="flex gap-2 overflow-x-auto no-scrollbar fade-x pb-1" role="group" aria-labelledby="tipo-rapido-m">
+                  {[
+                    { etiqueta: 'Todas', valor: '' },
+                    { etiqueta: 'Privada', valor: 'HABITACION_INDEPENDIENTE' },
+                    { etiqueta: 'Compartida', valor: 'COMPARTIDO' },
+                    { etiqueta: 'Apartaestudio', valor: 'APARTAESTUDIO' },
+                  ].map((t) => {
+                    const activo = (filtros.tipo || '') === t.valor
+                    return (
+                      <button
+                        key={t.etiqueta}
+                        type="button"
+                        onClick={() => setFiltros({ ...filtros, tipo: t.valor })}
+                        aria-pressed={activo}
+                        className={`shrink-0 min-h-[44px] px-3.5 py-2 rounded-full border text-xs font-bold transition active:scale-[0.97] ${activo
+                          ? 'border-navy-800 ring-2 ring-navy-800/25 bg-navy-800 text-white'
+                          : 'border-neutral-200 bg-white text-neutral-600 active:bg-neutral-50'
+                          }`}
+                      >
+                        {t.etiqueta}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
               <div>
                 <label className="block text-xs font-medium text-neutral-500 mb-1.5" htmlFor="cercano-a-m">Cercano a…</label>
                 <CercanoA lugares={campus} value={campusId} onChange={setCampusId} inputId="cercano-a-m" />
@@ -354,13 +413,23 @@ export default function Buscar() {
               </div>
               <Filtros filtros={filtros} setFiltros={setFiltros} soloPanel />
             </div>
-            <div className="p-4 border-t border-neutral-100 bg-white">
+            {/* F4 barra de acción flotante con conteo en vivo (con salida
+                explícita para limpiar y copy honesto en cero). */}
+            <div className="p-4 pt-3 border-t border-neutral-100 bg-white/95 backdrop-blur rounded-b-3xl shadow-[0_-8px_24px_rgba(12,20,38,0.08)] flex gap-2">
+              <button
+                type="button"
+                onClick={() => setFiltros({ min: '', max: '', tipo: '', servicios: '' })}
+                aria-label="Limpiar todos los filtros"
+                className="shrink-0 min-h-[52px] px-4 rounded-2xl border border-neutral-200 text-xs font-bold text-neutral-600 active:bg-neutral-50 transition"
+              >
+                Limpiar
+              </button>
               <button
                 type="button"
                 onClick={() => setSheetAbierto(false)}
-                className="btn-accent w-full justify-center !py-3"
+                className="btn-accent flex-1 justify-center !py-3.5 !rounded-2xl !text-sm active:scale-[0.99] transition"
               >
-                Ver {total} resultado{total === 1 ? '' : 's'}
+                {total === 0 ? 'Cerrar y ajustar' : `Mostrar ${total} alojamiento${total === 1 ? '' : 's'}`}
               </button>
             </div>
           </div>

@@ -7,14 +7,18 @@ import GoogleButton from '../components/GoogleButton'
 import RegistroForm from '../components/RegistroForm'
 import OtpForm from '../components/OtpForm'
 import AvatarPerfil from '../components/AvatarPerfil'
+import Icono from '../components/Icono'
+import NivelConfianza from '../components/NivelConfianza'
+import PreferenceChip from '../components/PreferenceChip'
 import TelegramVincular from '../components/TelegramVincular'
 import { signInWithGoogle } from '../services/supabaseClient'
 
+// Iconos del set propio (aria-hidden): misma gramática que PreferenceChip.
 const TABS = [
-  { id: 'datos', label: 'Datos y Verificación', icon: '👤' },
-  { id: 'seguridad', label: 'Seguridad y Sesiones', icon: '🔒' },
-  { id: 'confianza', label: 'Nivel de Confianza', icon: '⭐' },
-  { id: 'avisos', label: 'Mis Publicaciones', icon: '🏠' },
+  { id: 'datos', label: 'Datos y Verificación', icon: 'usuario' },
+  { id: 'seguridad', label: 'Seguridad y Sesiones', icon: 'candado' },
+  { id: 'confianza', label: 'Nivel de Confianza', icon: 'estrella' },
+  { id: 'avisos', label: 'Mis Publicaciones', icon: 'casa' },
 ]
 
 function tabDesdeHash() {
@@ -44,14 +48,22 @@ export const ROL_LABEL = {
   AUDITOR_LEGAL: 'Auditor',
 }
 
-// M3 "Tus Preferencias": SOLO namespace filtros.* (Ley 1581: nada sensible,
-// sin "Estudiante" ni demográficos como Fecha Nacimiento/Género).
-// El backend sigue aceptando roomie.*/notis.* por retrocompatibilidad,
-// pero la UI solo ofrece filtros.*.
+// F1 "Tus Preferencias": 8 dimensiones universitarias, SOLO namespace
+// filtros.* (válido por el backend: solo chequea prefijo, máx 30 claves).
+// Ley 1581: nada sensible, sin "Estudiante" ni demográficos.
+// roomie.*/notis.* siguen aceptados por el backend (retrocompatibilidad),
+// pero la UI solo ofrece filtros.*. Iconos del set propio estilo Lucide.
+// Etiquetas con sujeto explícito (soy/acepto vs busco/necesito): evitan el
+// match ambiguo entre lo que el usuario ES y lo que BUSCA en un aviso.
 export const TAGS_DISPONIBLES = [
-  { key: 'filtros.mascotas', label: '🐾 Tengo mascota', hint: 'Prioriza avisos que aceptan mascotas' },
-  { key: 'filtros.tranquilo', label: '🌙 Ambiente tranquilo', hint: 'Prioriza zonas y reglas tranquilas' },
-  { key: 'filtros.no_fumador', label: '🚬 No fumador', hint: 'Prioriza ambientes libres de humo' },
+  { key: 'filtros.mascotas', label: 'Acepto mascotas', hint: 'Convivo con mascotas (pet friendly)', icono: 'mascotas' },
+  { key: 'filtros.tranquilo', label: 'Busco tranquilidad', hint: 'Prioridad estudio y descanso', icono: 'silencio' },
+  { key: 'filtros.no_fumador', label: 'Soy no fumador', hint: 'Ambientes libres de humo', icono: 'humo' },
+  { key: 'filtros.misma_facultad', label: 'Busco misma facultad', hint: 'Compartir con compañeros del campus', icono: 'facultad' },
+  { key: 'filtros.cocina_equipada', label: 'Necesito cocina equipada', hint: 'Uso libre de cocina', icono: 'cocina' },
+  { key: 'filtros.lavadora', label: 'Necesito zona de lavado', hint: 'Acceso a lavadora o lavandería', icono: 'lavado' },
+  { key: 'filtros.sin_horario', label: 'Entrada libre 24/7', hint: 'Llave y acceso sin horario de cierre', icono: 'horario' },
+  { key: 'filtros.parqueadero', label: 'Parqueadero moto/bici', hint: 'Espacio seguro para moto o bicicleta', icono: 'movilidad' },
 ]
 
 // M3 barra gamificada con pesos explícitos (suma 100% exacto).
@@ -536,7 +548,7 @@ export default function Perfil() {
         )}
 
         {/* Pestañas con hash (#datos, #seguridad, #confianza, #avisos). */}
-        <div className="flex gap-1 overflow-x-auto border-b border-neutral-150" role="tablist" aria-label="Secciones del perfil">
+        <div className="flex gap-1 overflow-x-auto no-scrollbar fade-x border-b border-neutral-150" role="tablist" aria-label="Secciones del perfil">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -551,7 +563,7 @@ export default function Perfil() {
                 : 'border-transparent text-neutral-400 hover:text-navy-700'
                 }`}
             >
-              <span aria-hidden="true">{t.icon}</span> {t.label}
+              <span aria-hidden="true" className="inline-flex"><Icono nombre={t.icon} className="w-4 h-4" /></span> {t.label}
             </button>
           ))}
         </div>
@@ -626,36 +638,39 @@ export default function Perfil() {
               </div>
             </section>
 
-            {/* Tarjeta contacto: correo + teléfono */}
-            <section aria-label="Contacto" className="card p-4 sm:p-6 space-y-4">
+            {/* F3 Contacto en tarjetas de estado independientes (verde/ámbar claro). */}
+            <section aria-label="Contacto" className="card p-4 sm:p-6 space-y-3">
               <h3 className="text-sm font-bold text-navy-900">📱 Contacto</h3>
-              <p className="text-[11px] text-neutral-400 -mt-2">Cómo te contactan los interesados. El teléfono verificado suma +20 de confianza.</p>
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label htmlFor="perfil-correo" className="block text-sm font-semibold text-navy-800">Correo</label>
+              <p className="text-xs text-neutral-500 -mt-2">Cómo te contactan los interesados. El teléfono verificado suma +20 de confianza.</p>
+              {/* Correo */}
+              <div className={`rounded-xl border p-4 space-y-2 ${perfil?.email_verificado ? 'border-emerald-200 bg-emerald-50/40' : 'border-amber-200 bg-amber-50/40'}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-navy-800">✉️ Correo electrónico</p>
                   {perfil?.email_verificado ? (
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
                       ✓ Correo verificado
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-300">
-                      Sin verificar
+                      Pendiente
                     </span>
                   )}
                 </div>
+                <label htmlFor="perfil-correo" className="sr-only">Correo</label>
                 <input id="perfil-correo" type="email" value={perfil?.email || ''} disabled className="input-field opacity-60" aria-describedby="correo-ayuda" />
-                <p id="correo-ayuda" className="text-[11px] text-neutral-400 mt-1">El correo identifica tu cuenta y no se puede cambiar.</p>
+                <p id="correo-ayuda" className="text-xs text-neutral-500">El correo identifica tu cuenta y no se puede cambiar.</p>
                 {/* R1: verificación de correo centralizada aquí (antes en Avisos). */}
                 {perfil && !perfil.email_verificado && (
-                  <div className="mt-3">
+                  <div className="pt-1">
                     <OtpForm email={perfil.email} proposito="email_verify"
                       onVerificado={() => token && cargarPerfil(token)} />
                   </div>
                 )}
               </div>
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label htmlFor="perfil-telefono" className="block text-sm font-semibold text-navy-800">Teléfono WhatsApp</label>
+              {/* Teléfono + Telegram */}
+              <div className={`rounded-xl border p-4 space-y-2 ${estaVerificado ? 'border-emerald-200 bg-emerald-50/40' : 'border-amber-200 bg-amber-50/40'}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <label htmlFor="perfil-telefono" className="text-sm font-semibold text-navy-800">Teléfono WhatsApp</label>
                   <span className="inline-flex items-center gap-2">
                     {estaVerificado ? (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
@@ -673,14 +688,14 @@ export default function Perfil() {
                         onClick={() => setTelefonoEditando(true)}
                         aria-label="Editar número de teléfono"
                         title="Editar número (pierde la verificación)"
-                        className="inline-flex items-center justify-center w-9 h-9 min-w-[36px] rounded-full border border-navy-200 text-navy-700 hover:bg-navy-50 transition"
+                        className="inline-flex items-center justify-center w-11 h-11 min-w-[44px] rounded-full border border-navy-200 text-navy-700 hover:bg-navy-50 active:bg-navy-100 transition"
                       >
                         <span aria-hidden="true">✏️</span>
                       </button>
                     )}
                   </span>
                 </div>
-                <div className="flex" role="group" aria-label="Teléfono WhatsApp con indicativo Colombia">
+                <div className="flex">
                   <span aria-hidden="true" className="inline-flex items-center gap-1 px-3 rounded-l-lg border border-r-0 border-neutral-200 bg-neutral-100 text-sm font-bold text-neutral-600 shrink-0">
                     +57 🇨🇴
                   </span>
@@ -696,13 +711,13 @@ export default function Perfil() {
                     className="input-field !rounded-l-none disabled:opacity-60"
                   />
                 </div>
-                <p id="telefono-ayuda" className="text-[11px] text-neutral-400 mt-1">
+                <p id="telefono-ayuda" className="text-xs text-neutral-500">
                   {estaVerificado && !telefonoEditando
                     ? 'Número verificado y bloqueado. Pulsa ✏️ para cambiarlo (volverá a "Sin verificar").'
                     : 'Solo los 10 dígitos de tu línea (el +57 ya va incluido). Vacío = sin vincular (no podrás publicar hasta vincularlo).'}
                 </p>
                 {/* R1: verificación vía Telegram unificada junto al teléfono. */}
-                <div className="mt-3">
+                <div className="pt-1">
                   <TelegramVincular token={token} vinculado={!!perfil?.telegram_vinculado} />
                 </div>
               </div>
@@ -711,7 +726,7 @@ export default function Perfil() {
             {/* Tarjeta presentación: bio (la foto vive en el avatar superior, sin URL expuesta) */}
             <section aria-label="Presentación" className="card p-4 sm:p-6 space-y-4">
               <h3 className="text-sm font-bold text-navy-900">✨ Presentación</h3>
-              <p className="text-[11px] text-neutral-400 -mt-2">Opcional. Cuéntales a otros quién eres y qué buscas.</p>
+              <p className="text-xs text-neutral-500 -mt-2">Opcional. Cuéntales a otros quién eres y qué buscas.</p>
               <div>
                 <label htmlFor="perfil-bio" className="block text-sm font-semibold text-navy-800 mb-1.5">Presentación <span className="text-neutral-400 font-normal">(opcional, máx 500)</span></label>
                 <textarea
@@ -735,33 +750,25 @@ export default function Perfil() {
                 Opcionales y revocables: solo hábitos de convivencia (filtros.*). Nada sensible ni demográfico.
               </p>
               <div className="flex flex-wrap gap-2">
-                {TAGS_DISPONIBLES.map(t => {
-                  const activa = !!tags[t.key]
-                  return (
-                    <button
-                      key={t.key}
-                      type="button"
-                      onClick={() => toggleTag(t.key)}
-                      aria-pressed={activa}
-                      title={t.hint}
-                      className={`text-xs px-3 py-1.5 rounded-full border transition ${activa
-                        ? 'bg-navy-800 text-white border-navy-800'
-                        : 'bg-white border-neutral-200 text-neutral-600 hover:border-navy-300'
-                        }`}
-                    >
-                      {t.label}
-                    </button>
-                  )
-                })}
+                {TAGS_DISPONIBLES.map(t => (
+                  <PreferenceChip
+                    key={t.key}
+                    icono={t.icono}
+                    titulo={t.label}
+                    hint={t.hint}
+                    activa={!!tags[t.key]}
+                    onToggle={() => toggleTag(t.key)}
+                  />
+                ))}
               </div>
             </div>
 
             <button
               type="submit"
               disabled={saving}
-              className="px-4 py-2 bg-neutral-800 text-white text-xs font-semibold rounded-md hover:bg-navy-900 transition disabled:opacity-50"
+              className="btn-accent w-full sm:w-auto justify-center !py-3.5 !rounded-2xl !text-sm"
             >
-              {saving ? 'Guardando...' : 'Guardar cambios'}
+              {saving ? 'Guardando…' : 'Guardar cambios'}
             </button>
             </form>
           </div>
@@ -945,10 +952,15 @@ export default function Perfil() {
 
         {tab === 'confianza' && (
           <div id="panel-confianza" role="tabpanel" aria-labelledby="tab-confianza" aria-label="Índice de confianza" tabIndex={0} className="card p-4 sm:p-6 space-y-4">
+            {/* F3 tarjeta de nivel radial (el desglose por factor sigue debajo intacto). */}
+            {(() => {
+              const checkRadial = checklistPerfil(perfil, { tieneAviso: (misStats?.total ?? 0) > 0 })
+              return <NivelConfianza pct={checkRadial.pct} />
+            })()}
             <h2 className="text-base font-semibold text-navy-900">Tu confianza (0–100)</h2>
             <p className="text-xs text-neutral-500 leading-relaxed">
-              Cada aviso publicado hereda estos puntos. En verde lo ya ganado, en ámbar lo pendiente con su acción.
-              Pesos configurables por el administrador desde Ajustes del Sistema (40+20+15+15+10).
+              El anillo de arriba es la <b>completitud de tu perfil</b>. El desglose de abajo es el
+              <b> puntaje que hereda cada aviso publicado</b> (pesos del administrador: 40+20+15+15+10).
             </p>
             <div className="space-y-2 text-xs">
               <div className="flex justify-between items-center gap-2 py-1.5 border-b border-neutral-100">
@@ -1020,7 +1032,7 @@ export default function Perfil() {
                 </div>
               )
             })()}
-            <p className="text-[11px] text-neutral-400 leading-relaxed">
+            <p className="text-xs text-neutral-500 leading-relaxed">
               Informativo, no garantiza seguridad. Verificar antes de pagar. Cada publicación muestra su propio puntaje con este mismo desglose.
             </p>
           </div>

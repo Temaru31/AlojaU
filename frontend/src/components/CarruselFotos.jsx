@@ -45,14 +45,14 @@ export default function CarruselFotos({ fotos = [], titulo = '', acciones = null
       <div
         ref={trackRef}
         onScroll={alScroll}
-        className="flex overflow-x-auto snap-x snap-mandatory rounded-xl bg-neutral-100 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex overflow-x-auto snap-x snap-mandatory rounded-xl bg-neutral-100 no-scrollbar"
         role="region"
         aria-roledescription="carrusel"
         aria-label={`${titulo}: ${total} fotos, desliza para ver más`}
       >
         {fotos.map((url, i) => (
           <button
-            key={url || i}
+            key={`${url || 'foto'}-${i}`}
             type="button"
             onClick={() => abrir(i)}
             aria-label={`Abrir foto ${i + 1} de ${total}`}
@@ -70,11 +70,11 @@ export default function CarruselFotos({ fotos = [], titulo = '', acciones = null
         </div>
       )}
 
-      {/* Contador numérico inferior-derecha */}
+      {/* Contador numérico inferior-derecha (sin live-region: evita spam
+          al deslizar rápido; el lector lo lee al enfocarlo). */}
       <span
         className="absolute bottom-2 right-2 bg-black/70 text-white text-xs font-semibold px-2.5 py-1 rounded-full backdrop-blur-sm border border-white/20"
         aria-label={`Foto ${idx + 1} de ${total}`}
-        aria-live="polite"
       >
         {idx + 1}/{total}
       </span>
