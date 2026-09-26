@@ -923,6 +923,8 @@ async def solicitar_verificacion(
 # PROHIBIDO reutilizar /upload/una (ese exige ARRENDADOR y daría 403 a
 # estudiantes). Valida MIME imagen + 5MB, guarda vía storage y actualiza
 # foto_perfil_url en la MISMA transacción.
+# Bloque 1: throttle anti-abuso (memoria en dev + PG persistente en prod,
+# mismo patrón que OTP) y limpieza de archivos huérfanos del disco local.
 # ---------------------------------------------------------------------------
 _AVATAR_MIME = {
     "image/jpeg": ".jpg",
@@ -931,6 +933,12 @@ _AVATAR_MIME = {
     "image/gif": ".gif",
 }
 _AVATAR_MAX = 5 * 1024 * 1024
+_AVATAR_MEM: dict[str, list[float]] = {}
+AVATAR_LIMIT = 10
+AVATAR_WINDOW_S = 3600.0
+_TG_MEM: dict[str, list[float]] = {}
+TG_LIMIT = 5
+TG_WINDOW_S = 900.0
 
 
 @router.post("/avatar", summary="M3: subir avatar (cualquier rol autenticado, 5MB, imagen)")
@@ -965,6 +973,11 @@ async def _avatar_guardar(
     ext = _os.path.splitext(getattr(file, "filename", "") or "")[1].lower()
     if ext != _AVATAR_MIME[mime]:
         raise HTTPException(status_code=400, detail=f"Extensión {ext or '(sin extensión)'} no coincide con {mime}")
+    # Bloque 1: throttle tras validar forma (los 400 no queman cuota ni
+    # disco) y antes de leer bytes/guardar. 10/hora por usuario.
+    _check_otp_mem(_AVATAR_MEM, f"avatar:{uid}", AVATAR_LIMIT, AVATAR_WINDOW_S,
+                   "Demasiadas subidas de avatar, espera 1 hora")
+    await _db_rate_check(db, f"avatar:{uid}", limite=AVATAR_LIMIT, ventana_s=int(AVATAR_WINDOW_S))
     size = 0
     chunks: list[bytes] = []
     first = True
@@ -1015,11 +1028,28 @@ async def _avatar_guardar(
         u = await db.get(Usuario, uid)
         if not u:
             if not _mock_enabled():
+                # Bloque 1: sin usuario no hay dueño para el archivo recién
+                # guardado -> se borra para no dejar huérfanos en disco.
+                try:
+                    from ..services.storage import borrar_local_si_huerfano as _del
+                    _del(url)
+                except Exception:
+                    pass
                 raise HTTPException(status_code=404, detail="Usuario no encontrado")
         else:
+            anterior = u.foto_perfil_url
             u.foto_perfil_url = url[:500]
             await db.commit()
             await db.refresh(u)
+            # Bloque 1: registra el intento (cuota) y borra el avatar previo
+            # si era archivo local (el reemplazo lo deja huérfano).
+            await _db_rate_record(db, f"avatar:{uid}", False)
+            try:
+                from ..services.storage import borrar_local_si_huerfano as _del
+                if anterior and anterior != u.foto_perfil_url:
+                    _del(anterior)
+            except Exception:
+                pass
             return {"foto_perfil_url": u.foto_perfil_url, "mensaje": "Foto de perfil actualizada."}
     except HTTPException:
         raise
@@ -1030,11 +1060,24 @@ async def _avatar_guardar(
             pass
         logger.error(f"[avatar db] falló: {e!r}", exc_info=True)
         if not _mock_enabled():
+            # Bloque 1: el archivo ya se guardó pero la BD falló -> huérfano.
+            try:
+                from ..services.storage import borrar_local_si_huerfano as _del
+                _del(url)
+            except Exception:
+                pass
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     # Mock dev: actualiza MOCK_USERS.
     for _em, _m in MOCK_USERS.items():
         if _m.get("id") == uid:
+            anterior = _m.get("foto_perfil_url")
             _m["foto_perfil_url"] = url[:500]
+            try:
+                from ..services.storage import borrar_local_si_huerfano as _del
+                if anterior and anterior != url[:500]:
+                    _del(anterior)
+            except Exception:
+                pass
             break
     return {"foto_perfil_url": url[:500], "mensaje": "Foto de perfil actualizada (mock).", "mock": True}
 
@@ -1044,16 +1087,26 @@ async def quitar_avatar(
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
-    """Setea foto_perfil_url=null (el frontend muestra iniciales)."""
+    """Setea foto_perfil_url=null (el frontend muestra iniciales).
+
+    Bloque 1: también borra el archivo local anterior (quitar dejaba el
+    archivo huérfano ocupando disco para siempre).
+    """
     uid = user.get("id")
     if not isinstance(uid, int):
         raise HTTPException(status_code=401, detail="Token sin propietario válido")
     try:
         from ..models import Usuario
+        from ..services.storage import borrar_local_si_huerfano as _del
         u = await db.get(Usuario, uid)
         if u:
+            anterior = u.foto_perfil_url
             u.foto_perfil_url = None
             await db.commit()
+            try:
+                _del(anterior)
+            except Exception:
+                pass
             return {"foto_perfil_url": None, "mensaje": "Foto eliminada."}
         if not _mock_enabled():
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -1069,7 +1122,13 @@ async def quitar_avatar(
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     for _em, _m in MOCK_USERS.items():
         if _m.get("id") == uid:
+            anterior = _m.get("foto_perfil_url")
             _m["foto_perfil_url"] = None
+            try:
+                from ..services.storage import borrar_local_si_huerfano as _del
+                _del(anterior)
+            except Exception:
+                pass
             break
     return {"foto_perfil_url": None, "mensaje": "Foto eliminada (mock).", "mock": True}
 
@@ -1356,6 +1415,10 @@ async def telegram_vincular_inicio(
     uid = user.get("id")
     if not isinstance(uid, int):
         raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    # Bloque 1: throttle 5/15min por usuario (memoria en dev + PG en prod).
+    _check_otp_mem(_TG_MEM, f"tg:{uid}", TG_LIMIT, TG_WINDOW_S,
+                   "Demasiadas vinculaciones de Telegram, espera 15 minutos")
+    await _db_rate_check(db, f"tg:{uid}", limite=TG_LIMIT, ventana_s=int(TG_WINDOW_S))
     username = (settings.TELEGRAM_BOT_USERNAME or "").strip().lstrip("@")
     if not username:
         raise HTTPException(status_code=503, detail="Telegram no configurado (TELEGRAM_BOT_USERNAME). Vincula por correo.")
@@ -1363,6 +1426,7 @@ async def telegram_vincular_inicio(
     nonce = secrets.token_hex(8)
     token = _firmar_vinculo(uid, exp, nonce)
     _TELEGRAM_VINCULOS[nonce] = {"user_id": uid, "exp": exp, "usado": False}
+    await _db_rate_record(db, f"tg:{uid}", False)
     # Limpieza best-effort de expirados (memoria acotada).
     try:
         ahora = time.time()

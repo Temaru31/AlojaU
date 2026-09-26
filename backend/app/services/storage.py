@@ -133,6 +133,38 @@ def es_persistente() -> bool:
     return bool(settings.cloudinary_configured)
 
 
+def borrar_local_si_huerfano(url: str | None, prefijo: str = "avatar-") -> bool:
+    """Borrado best-effort de un archivo huérfano del storage local.
+
+    Solo actúa si `url` apunta al storage local (`/uploads/<prefijo>*`);
+    URLs Cloudinary/externas se ignoran siempre. Incluye defensa
+    anti-traversal (el destino debe quedar dentro de `backend/uploads/`).
+    Retorna True si borró algo. Nunca lanza.
+    """
+    try:
+        if not url:
+            return False
+        from urllib.parse import urlparse as _up
+        path = _up(str(url)).path or ""
+        if not path.startswith("/uploads/"):
+            return False
+        nombre = os.path.basename(path)
+        if not nombre or not nombre.startswith(prefijo):
+            return False
+        base = get_storage_backend(base_url="http://localhost")
+        upload_dir = getattr(base, "upload_dir", None)
+        if not upload_dir:
+            return False  # Backend persistente (Cloudinary): nada que borrar.
+        upload_dir = os.path.abspath(upload_dir)
+        dest = os.path.abspath(os.path.join(upload_dir, nombre))
+        if not dest.startswith(upload_dir) or not os.path.isfile(dest):
+            return False
+        os.remove(dest)
+        return True
+    except Exception:
+        return False
+
+
 def get_storage_backend(base_url: str = "", upload_dir: str = "") -> StorageBackend:
     """Factory: Cloudinary si `settings.cloudinary_configured`, si no Local.
 

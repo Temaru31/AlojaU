@@ -1,8 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, isCancelError } from '../services/api'
 import Card from '../components/Card'
-import Casa3D from '../components/Casa3D'
+import useMediaQuery from '../hooks/useMediaQuery'
+// Bloque 1: three.js (~736 kB) solo se descarga en desktop. El import
+// estático anterior metía el 3D en el bundle inicial y el efecto de Casa3D
+// lo ejecutaba incluso oculto con `hidden` (también en móvil).
+const Casa3D = lazy(() => import('../components/Casa3D'))
 import CercanoA, { etiquetaLugar } from '../components/CercanoA'
 import CiudadSelector, { CIUDADES_FALLBACK, etiquetaCiudad } from '../components/CiudadSelector'
 import Filtros, { contarAvanzados, PanelPrimario, MasFiltrosModal } from '../components/Filtros'
@@ -14,6 +18,17 @@ function parseCiudadId(searchParams) {
   if (raw == null || raw === '') return null
   const n = Number(raw)
   return Number.isInteger(n) && n >= 1 ? n : null
+}
+
+// Gate del hero 3D: fuera de desktop no se monta nada (cero bytes de three).
+function Casa3DGate() {
+  const esDesktop = useMediaQuery('(min-width: 1024px)')
+  if (!esDesktop) return null
+  return (
+    <Suspense fallback={<div className="min-h-[220px]" aria-hidden="true" />}>
+      <Casa3D compact />
+    </Suspense>
+  )
 }
 
 export default function Buscar() {
@@ -288,7 +303,9 @@ export default function Buscar() {
               </p>
             </div>
             <div className="hidden lg:block">
-              <Casa3D compact />
+              {/* Gate: sin desktop no se monta (ni descarga) el 3D. El
+                  fallback reserva alto para evitar CLS al hidratar. */}
+              <Casa3DGate />
             </div>
           </div>
         </div>
