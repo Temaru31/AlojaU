@@ -6,7 +6,11 @@ import { api } from '../services/api'
 import { AuthProvider } from '../contexts/AuthContext'
 import { signInWithGoogle, POST_LOGIN_REDIRECT_KEY } from '../services/supabaseClient'
 
-vi.mock('../services/api', () => ({ api: { get: vi.fn(), post: vi.fn() } }))
+vi.mock('../services/api', () => ({
+  api: { get: vi.fn(), post: vi.fn() },
+  // Passthrough honesto: conserva headers e inyecta clave determinista.
+  conIdempotencia: (c = {}) => ({ ...c, headers: { ...((c && c.headers) || {}), 'Idempotency-Key': 'test-key-bloque2' } }),
+}))
 vi.mock('../services/supabaseClient', async (importOriginal) => {
   const mod = await importOriginal()
   return { ...mod, signInWithGoogle: vi.fn() }
@@ -137,6 +141,18 @@ describe('Publicar (HU-005: solo ARRENDADOR, nace PENDIENTE)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Enviar a revision' }))
     expect(await screen.findByText(/Tu cuenta ahora es/)).toBeInTheDocument()
     expect(reloadSpy).not.toHaveBeenCalled()
+  })
+
+  it('Bloque 2: el POST lleva Idempotency-Key única por envío', async () => {
+    localStorage.setItem('alojau_token', TOKEN)
+    api.post.mockResolvedValue(CREATED)
+    renderPage()
+    fillValid()
+    fireEvent.click(screen.getByRole('button', { name: 'Enviar a revision' }))
+    await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1))
+    const headers = api.post.mock.calls[0][2].headers
+    expect(headers['Idempotency-Key']).toMatch(/^[A-Za-z0-9-]{8,}$/)
+    expect(headers.Authorization).toBe(`Bearer ${TOKEN}`)
   })
 
   it('sin servicios seleccionados exige al menos 1', () => {

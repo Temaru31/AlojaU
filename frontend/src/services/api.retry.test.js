@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { isRetryableError, retryDelayMs, API_MAX_RETRIES, API_TIMEOUT_MS, isCancelError, API_SLOW_THRESHOLD_MS, __resetApiTrackerForTests, api } from './api'
+import { isRetryableError, retryDelayMs, API_MAX_RETRIES, API_TIMEOUT_MS, isCancelError, API_SLOW_THRESHOLD_MS, __resetApiTrackerForTests, api, conIdempotencia, tieneClaveIdempotencia } from './api'
 
 describe('api retry cold-start', () => {
   it('timeout amplio para Render (30-50s)', () => {
@@ -62,6 +62,34 @@ describe('api retry cold-start', () => {
       __resetApiTrackerForTests()
       vi.useRealTimers()
     }
+  })
+
+  it('Bloque 2: escrituras sin clave jamás se reintentan (aunque sean 503)', () => {
+    expect(isRetryableError({ config: { method: 'post' }, response: { status: 503 } })).toBe(false)
+    expect(isRetryableError({ config: { method: 'PATCH' }, response: { status: 503 } })).toBe(false)
+    expect(isRetryableError({ config: { method: 'delete' } })).toBe(false)
+    expect(isRetryableError({ config: { method: 'GET' }, response: { status: 503 } })).toBe(true)
+    expect(isRetryableError({ config: { method: 'head' }, response: { status: 504 } })).toBe(true)
+  })
+
+  it('Bloque 2: con Idempotency-Key la escritura sí reintenta (replay seguro)', () => {
+    const cfg = { method: 'post', headers: { 'Idempotency-Key': 'abc12345' } }
+    expect(tieneClaveIdempotencia({ config: cfg })).toBe(true)
+    expect(isRetryableError({ config: cfg, response: { status: 503 } })).toBe(true)
+    expect(isRetryableError({ config: cfg, response: { status: 400 } })).toBe(false)
+    // AxiosHeaders con .get también vale.
+    const axiosCfg = { method: 'post', headers: { get: (k) => (k === 'Idempotency-Key' ? 'x' : undefined) } }
+    expect(tieneClaveIdempotencia({ config: axiosCfg })).toBe(true)
+    expect(tieneClaveIdempotencia({ config: { method: 'post', headers: {} } })).toBe(false)
+    expect(tieneClaveIdempotencia({})).toBe(false)
+  })
+
+  it('Bloque 2: conIdempotencia inyecta clave única y conserva headers', () => {
+    const a = conIdempotencia({ headers: { Authorization: 'Bearer t' } })
+    const b = conIdempotencia({ headers: { Authorization: 'Bearer t' } })
+    expect(a.headers['Idempotency-Key']).toMatch(/^[A-Za-z0-9-]{8,}$/)
+    expect(a.headers.Authorization).toBe('Bearer t')
+    expect(a.headers['Idempotency-Key']).not.toBe(b.headers['Idempotency-Key'])
   })
 
   it('OLA4: abort (ERR_CANCELED) nunca se reintenta', () => {

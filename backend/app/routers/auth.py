@@ -1368,11 +1368,11 @@ def _firmar_vinculo(user_id: int, exp: int, nonce: str) -> str:
     return f"{payload}.{sig}"
 
 
-def validar_token_vinculo(token: str) -> int | None:
-    """Valida y consume (un solo uso) un token de vinculación.
+def _desarmar_token_vinculo(token: str) -> tuple[int, int, str] | None:
+    """Parse + HMAC + expiración de un token (sin tocar stores).
 
-    Retorna user_id si es válido y no expirado/usado; lo marca usado.
-    Pensado para el webhook del bot (fuera de este sprint) y tests.
+    Fuente única para las dos variantes de validación. Retorna
+    (uid, exp, nonce) o None si el formato/firma/expiración fallan.
     """
     import hashlib as _hl
     import hmac as _hm
@@ -1385,12 +1385,29 @@ def validar_token_vinculo(token: str) -> int | None:
         exp = int(exp_s)
         if time.time() > exp:
             return None
-        if nonce in _TELEGRAM_USADOS:
-            return None
         esperado = _hm.new(
             settings.SECRET_KEY.encode(), f"{uid}.{exp}.{nonce}".encode(), _hl.sha256
         ).hexdigest()[:32]
         if not secrets.compare_digest(esperado, sig):
+            return None
+        return uid, exp, nonce
+    except Exception:
+        return None
+
+
+def validar_token_vinculo(token: str) -> int | None:
+    """Valida y consume (un solo uso) un token de vinculación (vía memoria).
+
+    Retorna user_id si es válido y no expirado/usado; lo marca usado.
+    Camino rápido en-proceso (dev/tests de HMAC); el webhook productivo
+    debe usar `validar_token_vinculo_db` (fuente PG, sobrevive redeploys).
+    """
+    try:
+        parsed = _desarmar_token_vinculo(token)
+        if not parsed:
+            return None
+        uid, exp, nonce = parsed
+        if nonce in _TELEGRAM_USADOS:
             return None
         rec = _TELEGRAM_VINCULOS.get(nonce)
         if not rec or rec.get("user_id") != uid or rec.get("exp") != exp:
@@ -1402,6 +1419,49 @@ def validar_token_vinculo(token: str) -> int | None:
         return uid
     except Exception:
         return None
+
+
+async def validar_token_vinculo_db(db: AsyncSession, token: str) -> int | None:
+    """Variante persistente para el webhook del bot (Bloque 2).
+
+    Misma semántica que `validar_token_vinculo` pero contra PG con
+    `SELECT FOR UPDATE` (cierra la carrera de doble-consumo entre workers).
+    Si PG no responde, cae al camino en memoria (resiliencia dev).
+    """
+    parsed = _desarmar_token_vinculo(token)
+    if not parsed:
+        return None
+    uid, exp, nonce = parsed
+    try:
+        from ..models import TelegramVinculo
+        res = await db.execute(
+            select(TelegramVinculo).where(TelegramVinculo.nonce == nonce).with_for_update()
+        )
+        row = res.scalars().first()
+        if not row or int(row.usuario_id) != uid:
+            return None
+        exp_db = row.expira_en
+        if getattr(exp_db, "tzinfo", None) is None:
+            exp_db = exp_db.replace(tzinfo=timezone.utc)
+        if exp_db <= datetime.now(timezone.utc) or row.usado:
+            return None
+        row.usado = True
+        await db.commit()
+        try:
+            _TELEGRAM_USADOS.add(nonce)
+            _TELEGRAM_VINCULOS.pop(nonce, None)
+        except Exception:
+            pass
+        return uid
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.warning(f"[telegram validar] PG no disponible, fallback memoria: {e!r}")
+        if not _mock_enabled():
+            return None
+        return validar_token_vinculo(token)
 
 
 @router.post("/telegram/vincular-inicio", summary="M5: iniciar vinculación Telegram (bot_url HMAC 5min)")
@@ -1426,14 +1486,42 @@ async def telegram_vincular_inicio(
     nonce = secrets.token_hex(8)
     token = _firmar_vinculo(uid, exp, nonce)
     _TELEGRAM_VINCULOS[nonce] = {"user_id": uid, "exp": exp, "usado": False}
+    # Bloque 2: espejo persistente (fuente de verdad ante redeploys).
+    # Best-effort en dev sin PG: la memoria sigue cubriendo.
+    try:
+        from ..models import TelegramVinculo
+        db.add(TelegramVinculo(
+            nonce=nonce, usuario_id=uid,
+            expira_en=datetime.fromtimestamp(exp, tz=timezone.utc),
+            usado=False,
+        ))
+        await db.commit()
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.warning(f"[telegram inicio] PG no disponible, solo memoria: {e!r}")
     await _db_rate_record(db, f"tg:{uid}", False)
-    # Limpieza best-effort de expirados (memoria acotada).
+    # Limpieza best-effort de expirados (memoria acotada + PG).
     try:
         ahora = time.time()
         for k in [k for k, v in _TELEGRAM_VINCULOS.items() if v.get("exp", 0) < ahora - 60]:
             _TELEGRAM_VINCULOS.pop(k, None)
     except Exception:
         pass
+    try:
+        from ..models import TelegramVinculo
+        await db.execute(
+            TelegramVinculo.__table__.delete().where(
+                TelegramVinculo.expira_en < datetime.now(timezone.utc) - timedelta(seconds=60))
+        )
+        await db.commit()
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
     return {"bot_url": f"https://t.me/{username}?start={token}", "expira_segundos": 300}
 
 

@@ -3,7 +3,7 @@
 -- Fotos Unsplash estables con coherencia semántica (?auto=format&fit=crop&w=800&q=80):
 --   Habitación -> dormitorio/escritorio · Apartaestudio -> ambiente integrado/cocina ·
 --   Compartido -> sala/áreas comunes.
-TRUNCATE publicaciones_audit, reportes_publicacion, imagenes_publicacion, publicacion_campus, publicacion_servicios, publicaciones, housing_types, servicios_catalogo, campus_universitarios, zonas_barrios, ciudades, usuarios, sesiones, password_resets, otp_codes, rate_limit_attempts, vistas_dedup, system_settings RESTART IDENTITY CASCADE;
+TRUNCATE publicaciones_audit, reportes_publicacion, imagenes_publicacion, publicacion_campus, publicacion_servicios, publicaciones, housing_types, servicios_catalogo, campus_universitarios, zonas_barrios, ciudades, usuarios, sesiones, password_resets, otp_codes, rate_limit_attempts, vistas_dedup, telegram_vinculos, idempotency_keys, system_settings RESTART IDENTITY CASCADE;
 
 -- M2 tipos dinámicos (mig 013): catálogo base, nunca renombrar/eliminar slugs.
 INSERT INTO housing_types (slug, nombre_visible, descripcion_tooltip, icono, esta_activo) VALUES

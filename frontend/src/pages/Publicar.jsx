@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api } from '../services/api'
+import { api, conIdempotencia } from '../services/api'
 import GoogleButton from '../components/GoogleButton'
 import { signInWithGoogle, guardarRedirectPostLogin } from '../services/supabaseClient'
 import UploadFotos from '../components/UploadFotos'
@@ -173,7 +173,9 @@ export default function Publicar() {
       fotos: fotosValid,
     }
     try {
-      const r = await api.post('/api/publicaciones', payload, { headers: { Authorization: `Bearer ${token}` } })
+      // Bloque 2: clave única por clic; si el POST cae en timeout y axios
+      // reintenta, el backend devuelve el replay (sin duplicar el aviso).
+      const r = await api.post('/api/publicaciones', payload, conIdempotencia({ headers: { Authorization: `Bearer ${token}` } }))
       setSubmitOk(r.data)
       // v13.2 reactividad de rol: si hubo promoción, re-sincroniza el perfil.
       if (r.data?.rol_actualizado) {

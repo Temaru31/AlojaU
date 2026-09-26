@@ -35,6 +35,14 @@ POST_011 = ["idx_vistas_dedup_dia"]
 MIG_011 = REPO / "alembic" / "versions" / "011_metrica_vistas.py"
 SQL_011 = REPO / "db" / "migrations" / "011_metrica_vistas.sql"
 
+# Bloque 2: índices nacidos en la 015/016 (cobertura propia abajo).
+POST_015 = ["idx_telegram_vinculos_expira"]
+MIG_015 = REPO / "alembic" / "versions" / "015_telegram_vinculos.py"
+SQL_015 = REPO / "db" / "migrations" / "015_telegram_vinculos.sql"
+POST_016 = ["idx_idempotency_expira"]
+MIG_016 = REPO / "alembic" / "versions" / "016_idempotency_keys.py"
+SQL_016 = REPO / "db" / "migrations" / "016_idempotency_keys.sql"
+
 
 def _model_index_names() -> list[str]:
     return re.findall(r'Index\("([^"]+)"', MODELS.read_text(encoding="utf-8"))
@@ -56,7 +64,8 @@ def test_migracion_002_cubre_drift_y_fk_nuevas():
                  "idx_reportes_pub_estado", "idx_audit_pub"):
             continue
         # ...y salvo los nacidos en migraciones posteriores (tienen su propia cobertura).
-        if n in POST_002 or n in POST_007 or n in POST_008 or n in POST_011:
+        if n in POST_002 or n in POST_007 or n in POST_008 or n in POST_011 \
+                or n in POST_015 or n in POST_016:
             continue
         assert n in mig, f"{n} falta en 002_alineacion_indices.py"
     # ...y las FK nuevas en ambos lados.
@@ -117,4 +126,28 @@ def test_migracion_011_cubre_indice_vistas():
     for n in POST_011:
         assert n in mig, f"{n} falta en 011_metrica_vistas.py"
         assert n in sql, f"{n} falta en 011_metrica_vistas.sql"
+        assert n in schema, f"{n} falta en schema.sql"
+
+
+def test_migracion_015_cubre_indice_telegram():
+    """Bloque 2: idx_telegram_vinculos_expira vive en la 015."""
+    mig = MIG_015.read_text(encoding="utf-8")
+    sql = SQL_015.read_text(encoding="utf-8")
+    schema = SCHEMA.read_text(encoding="utf-8")
+    assert "down_revision" in mig and "014_telegram_chat_id" in mig
+    for n in POST_015:
+        assert n in mig, f"{n} falta en 015_telegram_vinculos.py"
+        assert n in sql, f"{n} falta en 015_telegram_vinculos.sql"
+        assert n in schema, f"{n} falta en schema.sql"
+
+
+def test_migracion_016_cubre_indice_idempotencia():
+    """Bloque 2: idx_idempotency_expira vive en la 016."""
+    mig = MIG_016.read_text(encoding="utf-8")
+    sql = SQL_016.read_text(encoding="utf-8")
+    schema = SCHEMA.read_text(encoding="utf-8")
+    assert "down_revision" in mig and "015_telegram_vinculos" in mig
+    for n in POST_016:
+        assert n in mig, f"{n} falta en 016_idempotency_keys.py"
+        assert n in sql, f"{n} falta en 016_idempotency_keys.sql"
         assert n in schema, f"{n} falta en schema.sql"

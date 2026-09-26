@@ -22,8 +22,46 @@ export function getApiBase(env = import.meta.env) {
   return url || LOCAL_API_FALLBACK
 }
 
+// Bloque 2: reintentos seguros. Solo lecturas (GET/HEAD/OPTIONS) se
+// reintentan siempre; las escrituras (POST/PATCH/PUT/DELETE) NUNCA, salvo
+// que lleven `Idempotency-Key` (el backend devuelve el replay guardado).
+// Sin `config` (errores sintéticos de tests) se conserva la semántica
+// legacy (reintentable): en producción axios siempre adjunta config.
+const METODOS_LECTURA = new Set(['get', 'head', 'options'])
+
+export function tieneClaveIdempotencia(err) {
+  const h = err?.config?.headers
+  if (!h) return false
+  try {
+    if (typeof h.get === 'function') return !!h.get('Idempotency-Key')
+  } catch { /* cae a objeto plano */ }
+  return !!(h['Idempotency-Key'] || h['idempotency-key'])
+}
+
+export function conIdempotencia(config = {}) {
+  // Clave única por intento lógico de formulario: los reintentos del
+  // interceptor reenvían el MISMO config (misma clave); un clic nuevo
+  // genera otra (nuevo objeto). Sin crypto (SSR/tests viejos): fallback.
+  let clave = ''
+  try {
+    clave = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  } catch {
+    clave = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  }
+  return { ...config, headers: { ...(config.headers || {}), 'Idempotency-Key': clave } }
+}
+
 export function isRetryableError(err) {
   if (isCancelError(err)) return false // OLA4: un abort nunca se reintenta
+  if (tieneClaveIdempotencia(err)) {
+    const status = err?.response?.status
+    if (status != null) return RETRYABLE_STATUS.has(status)
+    return true
+  }
+  const metodo = String(err?.config?.method || '').toLowerCase()
+  if (metodo && !METODOS_LECTURA.has(metodo)) return false
   const status = err?.response?.status
   if (status != null) return RETRYABLE_STATUS.has(status)
   // Sin respuesta: timeout, red caída, cold start Render.

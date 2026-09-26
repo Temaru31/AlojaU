@@ -378,3 +378,39 @@ class VistaDedup(Base):
     marca: Mapped[str] = mapped_column(String(64), nullable=False)
     dia: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TelegramVinculo(Base):
+    """Bloque 2: nonces HMAC de vinculación persistentes (mig 015).
+
+    La memoria (_TELEGRAM_VINCULOS) queda como L1/dev; PG es la fuente de
+    verdad que sobrevive redeploys e instancias múltiples.
+    """
+    __tablename__ = "telegram_vinculos"
+    __table_args__ = (
+        Index("idx_telegram_vinculos_expira", "expira_en"),
+    )
+    nonce: Mapped[str] = mapped_column(String(32), primary_key=True)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
+    expira_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    usado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class IdempotencyKey(Base):
+    """Bloque 2: respuestas guardadas para reintentos seguros (mig 016).
+
+    PK compuesta (clave, usuario_id, ruta): cierra la carrera entre lookup
+    e insert (UNIQUE -> replay) y evita fugas entre usuarios.
+    """
+    __tablename__ = "idempotency_keys"
+    __table_args__ = (
+        Index("idx_idempotency_expira", "expira_en"),
+    )
+    clave: Mapped[str] = mapped_column(String(64), primary_key=True)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), primary_key=True)
+    ruta: Mapped[str] = mapped_column(String(120), primary_key=True)
+    codigo: Mapped[int] = mapped_column(Integer, default=201, nullable=False)
+    cuerpo: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    expira_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

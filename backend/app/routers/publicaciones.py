@@ -34,8 +34,109 @@ from app.schemas.publicacion import (
 )
 from app.core.pagination import paginate_params, build_paginated
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 import logging
+import re
 logger = logging.getLogger("alojau.publicaciones")
+
+# Bloque 2: idempotencia de POST /api/publicaciones (solo este endpoint;
+# el resto de escrituras sigue sin reintento por defecto en el cliente).
+IDEM_RUTA_CREAR = "POST /api/publicaciones"
+IDEM_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
+IDEM_TTL_HORAS = 24
+_IDEMPOTENCY_MOCK: dict[tuple[str, int, str], dict] = {}
+
+
+def _idem_validar(clave: str | None) -> str | None:
+    """Normaliza el header o None si ausente. 422 si malformada.
+
+    En invocación directa (tests/CI) el default de FastAPI llega como
+    objeto `Header`, no como None: todo lo no-str se trata como ausente.
+    """
+    if clave is None or not isinstance(clave, str):
+        return None
+    clave = clave.strip()
+    if not clave:
+        return None
+    if not IDEM_RE.match(clave):
+        raise HTTPException(status_code=422, detail="Idempotency-Key inválida (8-64 [A-Za-z0-9_-])")
+    return clave
+
+
+async def _idem_replay(db: AsyncSession, clave: str, uid: int) -> dict | None:
+    """Respuesta guardada vigente o None. Sin PG (dev mock): espejo en memoria."""
+    try:
+        from app.models import IdempotencyKey
+        row = await db.get(IdempotencyKey, (clave, uid, IDEM_RUTA_CREAR))
+        if row is None:
+            return None
+        exp = row.expira_en
+        if getattr(exp, "tzinfo", None) is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp <= datetime.now(timezone.utc):
+            return None
+        return {"codigo": int(row.codigo), "cuerpo": dict(row.cuerpo)}
+    except HTTPException:
+        raise
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            return None
+    hit = _IDEMPOTENCY_MOCK.get((clave, uid, IDEM_RUTA_CREAR))
+    if not hit:
+        return None
+    if hit["expira_en"] <= datetime.now(timezone.utc):
+        return None
+    return {"codigo": hit["codigo"], "cuerpo": dict(hit["cuerpo"])}
+
+
+async def _idem_guardar(db: AsyncSession, clave: str, uid: int, cuerpo: dict) -> dict | None:
+    """Guarda la respuesta; ante carrera (UNIQUE) devuelve el replay ganador.
+
+    `cuerpo` se sanea a JSON puro (default=str) para no romper el JSONB.
+    Retorna el replay en caso de colisión o None si guardó limpio.
+    """
+    import json as _json
+    limpio = _json.loads(_json.dumps(cuerpo, default=str))
+    expira = datetime.now(timezone.utc) + timedelta(hours=IDEM_TTL_HORAS)
+    try:
+        from app.models import IdempotencyKey
+        # Limpieza best-effort de vencidas (tabla acotada).
+        try:
+            await db.execute(
+                IdempotencyKey.__table__.delete().where(
+                    IdempotencyKey.expira_en < datetime.now(timezone.utc))
+            )
+        except Exception:
+            pass
+        db.add(IdempotencyKey(
+            clave=clave, usuario_id=uid, ruta=IDEM_RUTA_CREAR,
+            codigo=201, cuerpo=limpio, expira_en=expira,
+        ))
+        await db.commit()
+        return None
+    except IntegrityError:
+        # Carrera perdida: otro worker guardó primero -> replay ganador.
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        return await _idem_replay(db, clave, uid)
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.warning(f"[idempotencia] no se pudo guardar (se responde igual): {e!r}")
+        if not _mock_enabled():
+            return None
+    _IDEMPOTENCY_MOCK[(clave, uid, IDEM_RUTA_CREAR)] = {
+        "codigo": 201, "cuerpo": limpio, "expira_en": expira,
+    }
+    return None
 
 router = APIRouter(prefix="/api/publicaciones", tags=["publicaciones"])
 
@@ -1209,6 +1310,9 @@ async def crear_publicacion(
     payload: PublicacionCreate,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
+    # Bloque 2: reintento seguro. Sin header no hay replay (el cliente ya
+    # no reintenta escrituras salvo con clave).
+    idempotency_key: Optional[str] = Header(None),
 ):
     """
     HU-005 Criterios:
@@ -1247,6 +1351,12 @@ async def crear_publicacion(
         raise HTTPException(status_code=401, detail="Token sin propietario válido")
     # Gate v13/v13.2/v14.1 (rol real + email + teléfono + promoción).
     user, rol_actualizado = await _gate_escritura(db, user)
+    # Bloque 2: replay idempotente (tras el gate: ya hay uid real).
+    clave_idem = _idem_validar(idempotency_key)
+    if clave_idem:
+        previo = await _idem_replay(db, clave_idem, user["id"])
+        if previo is not None:
+            return previo["cuerpo"]
     # M2: valida tipo contra housing_types (esta_activo=true, caché 5min).
     try:
         from app.services import housing_types as _ht
@@ -1280,7 +1390,13 @@ async def crear_publicacion(
                 mod_info = _res.to_dict()
         except Exception as _e:
             logger.warning(f"[automod] no aplicada, sigue flujo manual: {_e!r}")
-        return {"id": nueva.id, "estado": nueva.estado, "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "mensaje": "Publicación en PENDIENTE, pendiente de moderación" if nueva.estado == "PENDIENTE" else "Publicación aprobada automáticamente", "rol": user.get("rol"), "rol_actualizado": rol_actualizado, "moderacion": mod_info}
+        resp = {"id": nueva.id, "estado": nueva.estado, "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "mensaje": "Publicación en PENDIENTE, pendiente de moderación" if nueva.estado == "PENDIENTE" else "Publicación aprobada automáticamente", "rol": user.get("rol"), "rol_actualizado": rol_actualizado, "moderacion": mod_info}
+        # Bloque 2: guarda la respuesta para replays (carrera -> replay ganador).
+        if clave_idem:
+            ganador = await _idem_guardar(db, clave_idem, user["id"], resp)
+            if ganador is not None:
+                return ganador["cuerpo"]
+        return resp
 
     except HTTPException:
         try:
@@ -1311,4 +1427,11 @@ async def crear_publicacion(
             "campus_ids": list(dict.fromkeys(payload.campus_ids)), "usuario_id": user["id"],
             "telefono_verificado": bool(user.get("telefono_verificado", False)), "reportes_activos": 0,
         })
-        return {"id": mock_id, "estado": "PENDIENTE (MOCK - sin PG)", "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "detalle_mock": f"DB no disponible ({e}), se usó mock en memoria", "rol": user.get("rol"), "rol_actualizado": rol_actualizado}
+        resp_mock = {"id": mock_id, "estado": "PENDIENTE (MOCK - sin PG)", "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "detalle_mock": f"DB no disponible ({e}), se usó mock en memoria", "rol": user.get("rol"), "rol_actualizado": rol_actualizado}
+        # Bloque 2: espejo mock del replay (el lookup superior ya lo cubre).
+        if clave_idem:
+            _IDEMPOTENCY_MOCK[(clave_idem, user["id"], IDEM_RUTA_CREAR)] = {
+                "codigo": 201, "cuerpo": dict(resp_mock),
+                "expira_en": datetime.now(timezone.utc) + timedelta(hours=IDEM_TTL_HORAS),
+            }
+        return resp_mock
