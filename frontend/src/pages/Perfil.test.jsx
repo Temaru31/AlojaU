@@ -222,7 +222,9 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: /Seguridad/ }))
     fireEvent.click(screen.getByRole('button', { name: /Eliminar mi cuenta/ }))
-    const confirmar = screen.getByRole('button', { name: /eliminar mi cuenta/i })
+    // El modal es independiente: el botón que lo abrió no muta su texto.
+    expect(screen.getByRole('dialog', { name: '¿Desactivar y eliminar tu cuenta?' })).toBeInTheDocument()
+    const confirmar = screen.getByRole('button', { name: 'Sí, eliminar mi cuenta' })
     expect(confirmar).toBeDisabled()
     fireEvent.change(screen.getByLabelText(/Correo de confirmación/i), { target: { value: 'otro@x.co' } })
     expect(confirmar).toBeDisabled()
@@ -286,7 +288,7 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
     // Clic en tag (F1 chips ilustrados, filtros.*): sin PATCH, con aviso de sin guardar.
     await user.click(screen.getByRole('button', { name: /Acepto mascotas/ }))
     expect(patchSpy).not.toHaveBeenCalled()
-    expect(screen.getByText(/sin guardar/)).toBeInTheDocument()
+    expect(screen.getByText('Tienes cambios pendientes sin guardar')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Guardar cambios/i }))
     await waitFor(() => expect(patchSpy).toHaveBeenCalledOnce())
     expect(patchSpy.mock.calls[0][1]).toMatchObject({ preferencias: { 'filtros.mascotas': true } })
@@ -373,6 +375,81 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
     fireEvent.click(screen.getByRole('tab', { name: /Confianza y Reputación/ }))
     expect(screen.getByText(/Súbela al 100%/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Verificar mi correo/ })).toBeInTheDocument()
+  })
+
+  it('guardar confirma con toast flotante (sin banner fijo)', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem('alojau_token', 'mock-token-test')
+    mockPerfil()
+    const patchSpy = vi.spyOn(api, 'patch').mockResolvedValueOnce({ data: PERFIL_BASE })
+    const eventos = []
+    const oyente = (e) => eventos.push(e.detail)
+    window.addEventListener('alojau:toast', oyente)
+    render(
+      <BrowserRouter>
+        <Perfil />
+      </BrowserRouter>
+    )
+    await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: /Guardar cambios/i }))
+    await waitFor(() => expect(patchSpy).toHaveBeenCalledOnce())
+    expect(eventos).toEqual([{ message: '✓ Cambios guardados en tu perfil', href: undefined }])
+    window.removeEventListener('alojau:toast', oyente)
+  })
+
+  it('badge de cambios pendientes y guardián al cambiar de pestaña', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem('alojau_token', 'mock-token-test')
+    mockPerfil()
+    render(
+      <BrowserRouter>
+        <Perfil />
+      </BrowserRouter>
+    )
+    await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: /Acepto mascotas/ }))
+    expect(screen.getByText(/Tienes cambios pendientes sin guardar/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: /Seguridad/ }))
+    expect(screen.getByRole('dialog', { name: '¿Salir sin guardar?' })).toBeInTheDocument()
+    // El borrador se conserva decida lo que decida.
+    fireEvent.click(screen.getByRole('button', { name: 'Quedarme y guardar' }))
+    expect(screen.queryByRole('dialog', { name: '¿Salir sin guardar?' })).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Datos/ })).toHaveAttribute('aria-selected', 'true')
+    fireEvent.click(screen.getByRole('tab', { name: /Seguridad/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Salir sin guardar' }))
+    expect(screen.getByRole('tab', { name: /Seguridad/ })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('eliminar cuenta abre modal explicativo independiente', async () => {
+    localStorage.setItem('alojau_token', 'mock-token-test')
+    mockPerfil({ ...PERFIL_BASE, auth_provider: 'password' })
+    render(
+      <BrowserRouter>
+        <Perfil />
+      </BrowserRouter>
+    )
+    await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('tab', { name: /Seguridad/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Eliminar mi cuenta/ }))
+    expect(screen.getByRole('dialog', { name: '¿Desactivar y eliminar tu cuenta?' })).toBeInTheDocument()
+    expect(screen.getByText(/se borrará definitivamente en 30 días/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    expect(screen.queryByRole('dialog', { name: '¿Desactivar y eliminar tu cuenta?' })).not.toBeInTheDocument()
+  })
+
+  it('confianza refleja teléfono verificado real (+20, sin pendiente)', async () => {
+    localStorage.setItem('alojau_token', 'mock-token-test')
+    mockPerfil({ ...PERFIL_BASE, telefono_verificado: true, email_verificado: true })
+    render(
+      <BrowserRouter>
+        <Perfil />
+      </BrowserRouter>
+    )
+    await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('tab', { name: /Confianza y Reputación/ }))
+    expect(screen.getByText('+20 pts ✓')).toBeInTheDocument()
+    expect(screen.queryByText('0 pts')).not.toBeInTheDocument()
+    expect(screen.getByText(/se evalúan individualmente en cada inmueble/)).toBeInTheDocument()
   })
 
   it('helpers de teléfono CO', () => {

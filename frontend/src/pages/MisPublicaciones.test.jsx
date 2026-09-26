@@ -263,10 +263,10 @@ describe('MisPublicaciones v13.2 (borrado dueño + reactividad de rol)', () => {
     expect(await screen.findByText('Habitación Tulcán')).toBeInTheDocument()
     api.delete.mockResolvedValue({ data: { id: 3, eliminada: true, rol: 'ARRENDADOR', rol_actualizado: false } })
     fireEvent.click(screen.getByRole('button', { name: 'Eliminar Habitación Tulcán' }))
-    // Primer clic: pide confirmar, aún no borra.
+    // El botón no muta: se abre un modal independiente, aún no borra.
     expect(api.delete).not.toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: /Confirmar eliminación/ })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Confirmar eliminación/ }))
+    expect(screen.getByRole('dialog', { name: '¿Eliminar esta publicación?' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Sí, eliminar' }))
     await waitFor(() => expect(api.delete).toHaveBeenCalledWith('/api/publicaciones/3', expect.anything()))
     // Sin democión: no refresca el perfil.
     expect(refresh).not.toHaveBeenCalled()
@@ -284,7 +284,7 @@ describe('MisPublicaciones v13.2 (borrado dueño + reactividad de rol)', () => {
     expect(await screen.findByText('Habitación Tulcán')).toBeInTheDocument()
     api.delete.mockResolvedValue({ data: { id: 3, eliminada: true, rol: 'ESTUDIANTE', rol_actualizado: true } })
     fireEvent.click(screen.getByRole('button', { name: 'Eliminar Habitación Tulcán' }))
-    fireEvent.click(screen.getByRole('button', { name: /Confirmar eliminación/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Sí, eliminar' }))
     await waitFor(() => expect(refresh).toHaveBeenCalled())
   })
 })

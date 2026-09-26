@@ -4,6 +4,7 @@ import { api } from '../services/api'
 import Indice from '../components/IndiceConfianza'
 import MapaZona from '../components/MapaZona'
 import GaleriaFotos from '../components/GaleriaFotos'
+import BotonCompartir from '../components/BotonCompartir'
 import CarruselFotos from '../components/CarruselFotos'
 import ReportarModal from '../components/ReportarModal'
 import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
@@ -419,6 +420,13 @@ export default function Detalle() {
             >
               {isComp ? '✓ En comparar' : '+ Comparar (máx 3)'}
             </button>
+            <span className="hidden sm:inline-block">
+              <BotonCompartir
+                titulo={`${pub.titulo} en AlojaU`}
+                url={typeof window !== 'undefined' ? window.location.href : `/publicacion/${pub.id}`}
+                etiqueta="Compartir aviso"
+              />
+            </span>
             {/* UX: reportar visible en cabecera (secundario discreto, no escondido bajo el mapa) */}
             <button type="button"
               onClick={() => setReportOpen(true)}
@@ -624,7 +632,7 @@ export default function Detalle() {
                 <a
                   href={wa}
                   target="_blank"
-                  rel="noopener"
+                  rel="noopener noreferrer"
                   onClick={handleWhatsAppClick}
                   className="flex w-full items-center justify-center gap-2.5 px-6 py-3.5 min-h-[52px] bg-emerald-700 text-white font-semibold text-base rounded-xl shadow-sm hover:bg-emerald-800 hover:shadow active:bg-emerald-800 active:scale-[0.99] transition"
                 >

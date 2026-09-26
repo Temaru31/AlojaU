@@ -7,8 +7,11 @@ import GoogleButton from '../components/GoogleButton'
 import RegistroForm from '../components/RegistroForm'
 import OtpForm from '../components/OtpForm'
 import AvatarPerfil from '../components/AvatarPerfil'
+import BotonCompartir from '../components/BotonCompartir'
+import ConfirmDialog from '../components/ConfirmDialog'
 import Icono from '../components/Icono'
 import NivelConfianza from '../components/NivelConfianza'
+import { notifyToast } from '../components/Toast'
 import PreferenceChip from '../components/PreferenceChip'
 import TelegramVincular from '../components/TelegramVincular'
 import { signInWithGoogle } from '../services/supabaseClient'
@@ -102,7 +105,6 @@ export default function Perfil() {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [successMsg, setSuccessMsg] = useState('')
   const [tab, setTab] = useState(() => tabDesdeHash())
 
   // R9: parchea el contexto global (Nav) además del estado local.
@@ -160,7 +162,6 @@ export default function Perfil() {
         data: { confirm_email: delEmail, password: delPass || undefined },
         headers: { Authorization: `Bearer ${token}` },
       })
-      setSuccessMsg(r.data?.mensaje || 'Cuenta marcada para eliminación.')
       // M1: limpieza total compartida (no solo el token).
       limpiarSesionLocal()
       setToken('')
@@ -196,7 +197,6 @@ export default function Perfil() {
       const r = await api.post('/api/auth/sesiones/revocar-todas', {}, {
         headers: { Authorization: `Bearer ${token}` },
       })
-      setSuccessMsg(r.data?.mensaje || 'Sesiones revocadas.')
       // M2: este token también murió -> limpieza total + raíz (sin fantasma).
       setARevocar(false)
       limpiarSesionLocal()
@@ -229,6 +229,9 @@ export default function Perfil() {
       if ((window.location.hash || '') !== `#${id}`) window.location.hash = id
     } catch { /* noop */ }
   }
+
+  // Guard de pestaña (definido tras tagsDirty para evitar TDZ): con
+  // borrador sucio se abre ConfirmDialog y el draft se conserva.
 
   const cargarPerfil = async (authToken) => {
     setLoading(true)
@@ -263,7 +266,6 @@ export default function Perfil() {
     setSesiones(null)
     setMisStats(null)
     setError('')
-    setSuccessMsg('')
   }, [token])
 
   // Stats livianas: 3 totales (size=1) en paralelo; cualquier fallo -> sin stats.
@@ -342,7 +344,6 @@ export default function Perfil() {
     e?.preventDefault()
     setSaving(true)
     setError('')
-    setSuccessMsg('')
     try {
       const body = {
         nombre_completo: nombre,
@@ -357,10 +358,12 @@ export default function Perfil() {
       )
       setPerfil(res.data)
       setTelefono(telefonoALocal(res.data.telefono_whatsapp))
+      setTelefonoEditando(false)
       setBio(res.data.bio || '')
       setTags(res.data.preferencias || {})
       setTagsDirty(false)
-      setSuccessMsg('Datos de contacto actualizados con éxito.')
+      // Toast flotante (visible sin importar el scroll) en vez de banner fijo.
+      notifyToast('✓ Cambios guardados en tu perfil')
     } catch (err) {
       setError(err?.response?.data?.detail || 'Error al actualizar el perfil')
     } finally {
@@ -382,17 +385,34 @@ export default function Perfil() {
     setError('')
   }
 
+  // Borrador sucio: nombre, teléfono, bio o etiquetas difieren de lo guardado.
+  // Sin window.confirm (vetado en el repo): al cambiar de pestaña con draft
+  // se abre ConfirmDialog y el borrador se conserva decida lo que decida.
+  const borradorSucio = !!perfil && (
+    nombre !== (perfil.nombre_completo || '')
+    || telefono !== telefonoALocal(perfil.telefono_whatsapp)
+    || bio !== (perfil.bio || '')
+    || tagsDirty
+  )
+  const [tabPendiente, setTabPendiente] = useState(null)
+  const irTabGuard = (id) => {
+    if (id !== tab && borradorSucio) {
+      setTabPendiente(id)
+      return
+    }
+    irTab(id)
+  }
+
   const handleCambiarPassword = async (e) => {
     e?.preventDefault()
     setPwSaving(true)
     setError('')
-    setSuccessMsg('')
     try {
       const r = await api.patch('/api/auth/perfil/password',
         { actual: pwActual, nueva: pwNueva },
         { headers: { Authorization: `Bearer ${token}` } }
       )
-      setSuccessMsg(r.data?.mensaje || 'Contraseña actualizada con éxito.')
+      notifyToast('✓ Contraseña actualizada con éxito')
       setPwActual('')
       setPwNueva('')
     } catch (err) {
@@ -538,15 +558,8 @@ export default function Perfil() {
             <span>{error}</span>
           </div>
         )}
-        {successMsg && (
-          <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm rounded-md flex items-center gap-2" role="status">
-            <svg className="w-4 h-4 text-emerald-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span>{successMsg}</span>
-          </div>
-        )}
-
+        {/* El éxito se confirma con toast flotante (notifyToast), visible en
+            cualquier scroll; aquí solo quedan los errores (role=alert). */}
         {/* Layout desktop en 2 columnas (sidebar + contenido); en móvil se apila. */}
         <div className="md:grid md:grid-cols-12 md:gap-8 md:items-start space-y-6 md:space-y-0">
           <aside className="md:col-span-4" aria-label="Resumen de cuenta">
@@ -568,9 +581,16 @@ export default function Perfil() {
                 {perfil?.bio && (
                   <p className="text-xs text-neutral-600 leading-relaxed line-clamp-2" title={perfil.bio}>{perfil.bio}</p>
                 )}
-                <span className="inline-flex badge bg-navy-50 text-navy-700 border border-navy-100 font-semibold text-xs" title={perfil?.rol === 'ARRENDADOR' ? 'Publica y gestiona avisos' : 'Busca, guarda favoritos y contacta'}>
-                  {perfil?.rol === 'ADMIN' ? 'Administrador' : perfil?.rol === 'ARRENDADOR' ? 'Arrendador' : 'Estudiante'}
-                </span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="inline-flex badge bg-navy-50 text-navy-700 border border-navy-100 font-semibold text-xs" title={perfil?.rol === 'ARRENDADOR' ? 'Publica y gestiona avisos' : 'Busca, guarda favoritos y contacta'}>
+                    {perfil?.rol === 'ADMIN' ? 'Administrador' : perfil?.rol === 'ARRENDADOR' ? 'Arrendador' : 'Estudiante'}
+                  </span>
+                  <BotonCompartir
+                    titulo={`Perfil de ${perfil?.nombre_completo || 'usuario'} en AlojaU`}
+                    url={typeof window !== 'undefined' ? `${window.location.origin}/perfil` : '/perfil'}
+                    etiqueta="Compartir perfil"
+                  />
+                </div>
               </section>
               {/* Widget radial: la ÚNICA métrica visible (sin barra plana duplicada). */}
               <section aria-label="Nivel de confianza" className="card rounded-2xl p-5 sm:p-6 space-y-3 shadow-sm">
@@ -594,7 +614,7 @@ export default function Perfil() {
                               ) : (
                                 <button
                                   type="button"
-                                  onClick={() => irTab('datos')}
+                                  onClick={() => irTabGuard('datos')}
                                   className="text-xs font-semibold text-navy-700 hover:text-navy-900 hover:underline"
                                 >
                                   → {{
@@ -627,7 +647,7 @@ export default function Perfil() {
               role="tab"
               aria-selected={tab === t.id}
               aria-controls={`panel-${t.id}`}
-              onClick={() => irTab(t.id)}
+              onClick={() => irTabGuard(t.id)}
               className={`shrink-0 inline-flex items-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-[44px] text-xs sm:text-sm font-semibold border-b-2 -mb-px transition ${tab === t.id
                 ? 'border-gold-400 text-navy-900'
                 : 'border-transparent text-neutral-400 hover:text-navy-700'
@@ -745,7 +765,7 @@ export default function Perfil() {
                     vinculado={!!perfil?.telegram_vinculado}
                     onVinculado={() => {
                       setPerfil((p) => (p ? { ...p, telegram_vinculado: true } : p))
-                      setSuccessMsg('Telegram vinculado: recibirás los códigos en tu chat.')
+                      notifyToast('✓ Telegram vinculado: recibirás los códigos en tu chat')
                     }}
                   />
                 </div>
@@ -793,7 +813,13 @@ export default function Perfil() {
             </div>
 
             {/* Acciones alineadas abajo-derecha con acento y focus visible. */}
-            <div className="flex justify-end">
+            <div className="flex flex-col sm:flex-row sm:justify-end sm:items-center gap-2">
+              {borradorSucio && !saving && (
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-800 bg-amber-100 border border-amber-300 rounded-full px-2.5 py-1 self-start sm:self-auto" role="status">
+                  <span aria-hidden="true" className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                  Tienes cambios pendientes sin guardar
+                </span>
+              )}
               <button
                 type="submit"
                 disabled={saving}
@@ -913,70 +939,62 @@ export default function Perfil() {
                 {revocando ? 'Cerrando…' : aRevocar ? '¿Cerrar todas? Incluye este dispositivo' : 'Cerrar sesión en todos los dispositivos'}
               </button>
             </div>
-            {/* v13.1 zona de peligro: eliminar cuenta (gracia 30 días recuperable) */}
+            {/* v13.1 zona de peligro: modal explicativo (nunca cambia el texto del botón). */}
             <div className="border-t border-red-100 pt-4 space-y-3">
               <h3 className="text-sm font-semibold text-red-700">Zona de peligro</h3>
-              {!mostrarEliminar ? (
-                <button
-                  type="button"
-                  onClick={() => setMostrarEliminar(true)}
-                  className="px-4 py-2 text-xs font-semibold text-red-600 border border-red-200 rounded-md hover:bg-red-50 transition"
+              <button
+                type="button"
+                onClick={() => { setDelEmail(''); setDelPass(''); setMostrarEliminar(true) }}
+                className="px-4 py-2 min-h-[44px] text-xs font-semibold text-red-600 border border-red-200 rounded-xl hover:bg-red-50 active:bg-red-100 transition"
+              >
+                Eliminar mi cuenta…
+              </button>
+              {mostrarEliminar && (
+                <ConfirmDialog
+                  titulo="¿Desactivar y eliminar tu cuenta?"
+                  descripcion="Tu cuenta se desactivará inmediatamente y se borrará definitivamente en 30 días. Durante este plazo puedes recuperarla iniciando sesión de nuevo."
+                  cancelar="Cancelar"
+                  confirmar="Sí, eliminar mi cuenta"
+                  peligro
+                  ocupado={eliminando}
+                  confirmarDeshabilitado={delEmail.trim() !== (perfil?.email || '').trim()}
+                  onCancelar={() => { if (!eliminando) { setMostrarEliminar(false); setDelEmail(''); setDelPass('') } }}
+                  onConfirmar={() => handleEliminarCuenta()}
                 >
-                  Eliminar mi cuenta…
-                </button>
-              ) : (
-                <form onSubmit={handleEliminarCuenta} className="space-y-3 rounded-lg border border-red-200 bg-red-50/50 p-4">
-                  <p className="text-xs text-neutral-600 leading-relaxed">
-                    Tu cuenta se desactiva de inmediato y se <b>borra definitivamente en 30 días</b>.
-                    Dentro de ese plazo puedes recuperarla iniciando sesión con Google o en
-                    {' '}<Link to="/recuperar" className="underline">recuperación de cuenta</Link>.
-                    Para confirmar, escribe tu correo
-                    {perfil?.auth_provider === 'password' ? ' y tu contraseña actual' : ''}:
-                  </p>
-                  <input
-                    type="email"
-                    value={delEmail}
-                    onChange={(e) => setDelEmail(e.target.value)}
-                    placeholder={perfil?.email || 'tu@correo.com'}
-                    aria-label="Correo de confirmación para eliminar la cuenta"
-                    aria-describedby="delEmail-ayuda"
-                    className="input-field"
-                    required
-                  />
-                  <p id="delEmail-ayuda" className="text-[11px] text-neutral-500" aria-live="polite">
-                    {delEmail.trim() === (perfil?.email || '').trim()
-                      ? '✓ El correo coincide.'
-                      : 'Escríbelo letra por letra, igual que tu correo de cuenta.'}
-                  </p>
-                  {perfil?.auth_provider === 'password' && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-neutral-600 leading-relaxed">
+                      Para confirmar, escribe tu correo
+                      {perfil?.auth_provider === 'password' ? ' y tu contraseña actual' : ''}:
+                    </p>
                     <input
-                      type="password"
-                      value={delPass}
-                      onChange={(e) => setDelPass(e.target.value)}
-                      placeholder="Contraseña actual"
-                      aria-label="Contraseña actual para eliminar la cuenta"
+                      type="email"
+                      value={delEmail}
+                      onChange={(e) => setDelEmail(e.target.value)}
+                      placeholder={perfil?.email || 'tu@correo.com'}
+                      aria-label="Correo de confirmación para eliminar la cuenta"
+                      aria-describedby="delEmail-ayuda"
                       className="input-field"
-                      required
                     />
-                  )}
-                  <div className="flex gap-2">
-                    <button
-                      type="submit"
-                      disabled={eliminando || delEmail.trim() !== (perfil?.email || '').trim()}
-                      title={delEmail.trim() !== (perfil?.email || '').trim() ? 'El correo debe coincidir letra por letra' : undefined}
-                      className="px-4 py-2 text-xs font-bold text-white bg-red-600 rounded-md hover:bg-red-700 transition disabled:opacity-50"
-                    >
-                      {eliminando ? 'Eliminando…' : 'Sí, eliminar mi cuenta'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setMostrarEliminar(false); setDelEmail(''); setDelPass('') }}
-                      className="px-4 py-2 text-xs font-semibold text-neutral-600 border border-neutral-200 rounded-md hover:bg-neutral-100 transition"
-                    >
-                      Cancelar
-                    </button>
+                    <p id="delEmail-ayuda" className="text-xs text-neutral-500" aria-live="polite">
+                      {delEmail.trim() === (perfil?.email || '').trim()
+                        ? '✓ El correo coincide.'
+                        : 'Escríbelo letra por letra, igual que tu correo de cuenta.'}
+                    </p>
+                    {perfil?.auth_provider === 'password' && (
+                      <input
+                        type="password"
+                        value={delPass}
+                        onChange={(e) => setDelPass(e.target.value)}
+                        placeholder="Contraseña actual"
+                        aria-label="Contraseña actual para eliminar la cuenta"
+                        className="input-field"
+                      />
+                    )}
+                    <p className="text-[11px] text-neutral-500">
+                      ¿Cambiaste de idea? <Link to="/recuperar" className="underline">Recupera tu cuenta aquí</Link>.
+                    </p>
                   </div>
-                </form>
+                </ConfirmDialog>
               )}
             </div>
           </div>
@@ -1008,7 +1026,7 @@ export default function Perfil() {
               {!estaVerificado && (
                 <button
                   type="button"
-                  onClick={() => irTab('datos')}
+                  onClick={() => irTabGuard('datos')}
                   className="text-[11px] font-semibold text-navy-700 underline hover:text-navy-900"
                 >
                   → Vincula tu teléfono en Datos y contacto
@@ -1054,7 +1072,7 @@ export default function Perfil() {
                         ) : (
                           <button
                             type="button"
-                            onClick={() => irTab('datos')}
+                            onClick={() => irTabGuard('datos')}
                             className="inline-flex items-center gap-1.5 text-xs font-semibold text-navy-700 underline hover:text-navy-900"
                           >
                             → {{
@@ -1110,6 +1128,17 @@ export default function Perfil() {
             </div>
           </div>
         )}
+      {/* Guard de pestaña: avisa con cambios sin guardar (el borrador se conserva). */}
+      {tabPendiente && (
+        <ConfirmDialog
+          titulo="¿Salir sin guardar?"
+          descripcion="Tienes cambios pendientes sin guardar en Datos y Verificación. Puedes volver y guardarlos, o salir y seguir editando después (no se pierde nada)."
+          cancelar="Quedarme y guardar"
+          confirmar="Salir sin guardar"
+          onCancelar={() => setTabPendiente(null)}
+          onConfirmar={() => { const destino = tabPendiente; setTabPendiente(null); irTab(destino) }}
+        />
+      )}
           </div>
         </div>
       </div>

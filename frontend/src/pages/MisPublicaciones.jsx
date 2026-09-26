@@ -9,6 +9,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { formatDistancia } from '../utils/formatters'
 import SmartImage from '../components/SmartImage'
 import Paginacion from '../components/Paginacion'
+import ConfirmDialog from '../components/ConfirmDialog'
 import EditarPublicacionModal from '../components/EditarPublicacionModal'
 import RenovarModal from '../components/RenovarModal'
 import { portadaUrl } from '../utils/portada'
@@ -146,7 +147,7 @@ export default function MisPublicaciones() {
   const [reloadKey, setReloadKey] = useState(0)
   const [editando, setEditando] = useState(null)
   const [renovando, setRenovando] = useState(null)
-  // v13.2: borrado del dueño en dos pasos (elimina -> confirma).
+  // Borrado con modal independiente (nunca cambia el texto del botón).
   const [aEliminar, setAEliminar] = useState(null)
   const [eliminando, setEliminando] = useState(false)
   // v15.2: switch ACTIVA/PAUSADA del dueño.
@@ -182,10 +183,6 @@ export default function MisPublicaciones() {
   }
 
   const handleEliminar = async (p) => {
-    if (aEliminar !== p.id) {
-      setAEliminar(p.id)
-      return
-    }
     setEliminando(true)
     setError('')
     try {
@@ -504,17 +501,11 @@ export default function MisPublicaciones() {
                       </button>
 
                       <button
-                        onClick={() => handleEliminar(p)}
-                        disabled={eliminando && aEliminar === p.id}
-                        aria-label={aEliminar === p.id ? `Confirmar eliminación de ${p.titulo}` : `Eliminar ${p.titulo}`}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${aEliminar === p.id
-                          ? 'bg-red-600 border-red-600 text-white hover:bg-red-700'
-                          : 'border-neutral-200 text-neutral-400 hover:border-red-300 hover:text-red-600'
-                          }`}
+                        onClick={() => setAEliminar(p)}
+                        aria-label={`Eliminar ${p.titulo}`}
+                        className="px-3 py-1.5 min-h-[44px] rounded-lg text-xs font-medium border border-neutral-200 text-neutral-400 hover:border-red-300 hover:text-red-600 active:bg-red-50 transition"
                       >
-                        {aEliminar === p.id
-                          ? (eliminando ? 'Eliminando…' : '¿Confirmar?')
-                          : 'Eliminar'}
+                        Eliminar
                       </button>
 
                       <Link
@@ -556,6 +547,20 @@ export default function MisPublicaciones() {
               : x
             ))
           }}
+        />
+      )}
+
+      {/* Modal independiente de eliminar (nunca muta el botón de la tarjeta). */}
+      {aEliminar && (
+        <ConfirmDialog
+          titulo="¿Eliminar esta publicación?"
+          descripcion={`"${aEliminar.titulo}" dejará de ser visible de inmediato y no se puede deshacer. Si solo quieres ocultarla por un tiempo, considera pausarla.`}
+          cancelar="Cancelar"
+          confirmar="Sí, eliminar"
+          peligro
+          ocupado={eliminando}
+          onCancelar={() => { if (!eliminando) setAEliminar(null) }}
+          onConfirmar={() => handleEliminar(aEliminar)}
         />
       )}
     </div>
