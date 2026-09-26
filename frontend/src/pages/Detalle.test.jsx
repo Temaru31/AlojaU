@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
-import { MemoryRouter, Routes, Route } from 'react-router-dom'
+import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom'
 import Detalle, { humanizarTipo } from './Detalle'
 import { api } from '../services/api'
 
@@ -351,6 +351,51 @@ describe('Detalle ramas sin cubrir (contacto, errores, fallbacks)', () => {
     await waitFor(() => expect(screen.getAllByText('LOFT').length).toBe(3))
     expect(screen.getAllByText('WiFi Fibra').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('Amoblado').length).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('Detalle sticky: precio reactivo sin staleness entre avisos', () => {
+  it('al navegar 1→2 no muestra el precio viejo mientras carga el nuevo', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    const pub2 = { ...pub, id: 2, titulo: 'Apartaestudio segundo aviso', canon_mensual: 900000 }
+    let resolverSegundo = null
+    api.get.mockImplementation((url) => {
+      if (url === '/api/publicaciones/1') return Promise.resolve({ data: pub })
+      if (url === '/api/publicaciones/2') {
+        return new Promise((res) => { resolverSegundo = () => res({ data: pub2 }) })
+      }
+      if (url.includes('/similares')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: null })
+    })
+    const IrAlSegundo = () => {
+      const navegar = useNavigate()
+      return <button type="button" onClick={() => navegar('/publicacion/2')}>ir al 2</button>
+    }
+    render(
+      <MemoryRouter initialEntries={['/publicacion/1']}>
+        <Routes>
+          <Route path="/publicacion/:id" element={<><IrAlSegundo /><Detalle /></>} />
+        </Routes>
+      </MemoryRouter>
+    )
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Contacto rápido' })).toBeInTheDocument())
+    expect(screen.getByRole('region', { name: 'Contacto rápido' })).toHaveTextContent('$450.000')
+    // Navega al segundo aviso (fetch pendiente): ni rastro del anterior.
+    fireEvent.click(screen.getByRole('button', { name: 'ir al 2' }))
+    await waitFor(() => expect(screen.queryByText('Habitación cerca Tulcán')).not.toBeInTheDocument())
+    expect(screen.queryByText('$450.000')).not.toBeInTheDocument()
+    resolverSegundo()
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Contacto rápido' })).toHaveTextContent('$900.000'))
+  })
+
+  it('sticky indica depósito aparte para etiqueta inequívoca', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Contacto rápido' })).toBeInTheDocument())
+    expect(screen.getByRole('region', { name: 'Contacto rápido' })).toHaveTextContent('+depósito $200.000')
   })
 })
 
