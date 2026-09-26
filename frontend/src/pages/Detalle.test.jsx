@@ -328,7 +328,9 @@ describe('Detalle ramas sin cubrir (contacto, errores, fallbacks)', () => {
     })
     renderDetalle()
     await waitFor(() => expect(screen.getByText('Descripción')).toBeInTheDocument())
-    expect(screen.getAllByText('No informado').length).toBe(3)
+    // R7: +1 por la variante móvil (sticky bar refleja el mismo estado; en
+    // CSS solo una variante es visible, en jsdom conviven ambas).
+    expect(screen.getAllByText('No informado').length).toBe(4)
     expect(screen.queryByText(/Total primer mes/)).not.toBeInTheDocument()
   })
 
@@ -345,9 +347,37 @@ describe('Detalle ramas sin cubrir (contacto, errores, fallbacks)', () => {
     localStorage.clear()
     api.get.mockResolvedValue({ data: { ...pub, tipo_inmueble: 'LOFT', servicios: ['WiFi Fibra', 'Amoblado'] } })
     renderDetalle()
-    await waitFor(() => expect(screen.getAllByText('LOFT').length).toBe(2))
-    expect(screen.getByText('WiFi Fibra')).toBeInTheDocument()
-    expect(screen.getByText('Amoblado')).toBeInTheDocument()
+    // R7: +1 por los chips deslizables móviles (misma razón que arriba).
+    await waitFor(() => expect(screen.getAllByText('LOFT').length).toBe(3))
+    expect(screen.getAllByText('WiFi Fibra').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('Amoblado').length).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('Detalle R7 (móvil: carrusel, flotantes, sticky bar)', () => {
+  it('sticky bar con precio y WhatsApp sin tapar contenido (pb-24)', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    const { container } = renderDetalle()
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Contacto rápido' })).toBeInTheDocument())
+    expect(screen.getByRole('link', { name: 'Abrir chat de WhatsApp' })).toHaveAttribute('href', expect.stringContaining('wa.me/573001234567'))
+    expect(container.firstChild.className).toMatch(/pb-24/)
+  })
+
+  it('botones flotantes usan los mismos handlers que desktop (nombres propios)', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText('Descripción')).toBeInTheDocument())
+    // Nombres distintos a los pills de desktop (sin duplicar roles).
+    expect(screen.getByRole('button', { name: 'Guardar en favoritos' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Agregar a comparar' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar en favoritos' }))
+    expect(await screen.findByText(/Guardado en favoritos/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Agregar a comparar' }))
+    expect(screen.queryByText(/Añadido a comparar/)).not.toBeInTheDocument()
   })
 })
 

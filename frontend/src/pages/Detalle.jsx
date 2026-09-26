@@ -4,6 +4,7 @@ import { api } from '../services/api'
 import Indice from '../components/IndiceConfianza'
 import MapaZona from '../components/MapaZona'
 import GaleriaFotos from '../components/GaleriaFotos'
+import CarruselFotos from '../components/CarruselFotos'
 import ReportarModal from '../components/ReportarModal'
 import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
 import { useFavoritos } from '../contexts/FavoritosContext'
@@ -321,7 +322,7 @@ export default function Detalle() {
   }
 
   return (
-    <div className="container-main py-6 md:py-8">
+    <div className="container-main py-6 md:py-8 pb-24 sm:pb-8">
       <nav className="flex items-center gap-2 text-xs text-neutral-400 mb-6">
         <Link to="/" className="hover:text-navy-600 transition-colors">Buscar</Link>
         <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -359,18 +360,61 @@ export default function Detalle() {
             </div>
           )}
 
+          {/* R7 móvil: título + carrusel táctil + chips deslizables (desktop abajo intacto). */}
+          <div className="sm:hidden space-y-3 mb-4">
+            <div>
+              <h1 className="font-display text-xl font-bold text-navy-900 tracking-tight leading-snug">
+                {pub.titulo}
+              </h1>
+              <p className="text-xs text-neutral-500 mt-1 truncate">{zona} · {tipoHumano}</p>
+            </div>
+            <CarruselFotos
+              fotos={fotosOrdenadas(pub)}
+              titulo={pub.titulo}
+              acciones={
+                <>
+                  <button
+                    type="button"
+                    onClick={handleToggleFav}
+                    aria-pressed={isFav}
+                    aria-label={isFav ? 'Quitar de favoritos' : 'Guardar en favoritos'}
+                    className={`w-11 h-11 rounded-full text-lg flex items-center justify-center backdrop-blur-sm active:scale-95 transition ${isFav ? 'bg-red-500 text-white' : 'bg-black/50 text-white'}`}
+                  >
+                    <span aria-hidden="true">{isFav ? '♥' : '♡'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleToggleComp}
+                    aria-pressed={isComp}
+                    aria-label={isComp ? 'Quitar de comparar' : 'Agregar a comparar'}
+                    className={`w-11 h-11 rounded-full text-lg font-bold flex items-center justify-center backdrop-blur-sm active:scale-95 transition ${isComp ? 'bg-indigo-600 text-white' : 'bg-black/50 text-white'}`}
+                  >
+                    <span aria-hidden="true">{isComp ? '✓' : '+'}</span>
+                  </button>
+                </>
+              }
+            />
+            <div className="flex gap-2 overflow-x-auto whitespace-nowrap pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="list" aria-label="Características">
+              {[tipoHumano, zona, ...servicios].map((c, i) => (
+                <span key={`${c}-${i}`} role="listitem" className="shrink-0 text-[11px] font-medium px-2.5 py-1 rounded-full bg-neutral-100 text-neutral-600 border border-neutral-200">
+                  {c}
+                </span>
+              ))}
+            </div>
+          </div>
+
           <div className="flex flex-wrap gap-2">
             <button type="button"
               onClick={handleToggleFav}
               aria-pressed={isFav}
-              className={`px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition active:scale-95 ${isFav ? 'bg-red-500 text-white border-red-500' : 'bg-white border-neutral-200 hover:bg-neutral-50'}`}
+              className={`hidden sm:inline-block px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition active:scale-95 ${isFav ? 'bg-red-500 text-white border-red-500' : 'bg-white border-neutral-200 hover:bg-neutral-50'}`}
             >
               {isFav ? '♥ En favoritos' : '♡ Añadir a favoritos'}
             </button>
             <button type="button"
               onClick={handleToggleComp}
               aria-pressed={isComp}
-              className={`px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition active:scale-95 ${isComp ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-neutral-200 hover:bg-neutral-50'}`}
+              className={`hidden sm:inline-block px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition active:scale-95 ${isComp ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-neutral-200 hover:bg-neutral-50'}`}
             >
               {isComp ? '✓ En comparar' : '+ Comparar (máx 3)'}
             </button>
@@ -403,7 +447,8 @@ export default function Detalle() {
             </div>
           )}
 
-          <div>
+          {/* R7: en móvil el título/precio viven en el bloque superior + sticky bar. */}
+          <div className="hidden sm:block">
             <h1 className="font-display text-2xl md:text-3xl font-bold text-navy-900 tracking-tight mb-2">
               {pub.titulo}
             </h1>
@@ -443,7 +488,7 @@ export default function Detalle() {
             )}
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="hidden sm:flex flex-wrap gap-2">
             <span className="badge bg-navy-50 text-navy-700 border border-navy-100">
               {tipoHumano}
             </span>
@@ -462,7 +507,9 @@ export default function Detalle() {
           </div>
 
           {/* BUG#1: galería en orden de portada (imagenes por orden si existen). */}
-          <GaleriaFotos fotos={fotosOrdenadas(pub)} titulo={pub.titulo} />
+          <div className="hidden sm:block">
+            <GaleriaFotos fotos={fotosOrdenadas(pub)} titulo={pub.titulo} />
+          </div>
 
           {/* P-01: la descripción existía en BD/API pero nunca se renderizaba. */}
           <div className="card p-5">
@@ -716,6 +763,35 @@ export default function Detalle() {
           onSaved={(upd) => { setPub(prev => ({ ...prev, ...upd })); setEditando(false) }}
         />
       )}
+
+      {/* R7 sticky bottom bar móvil: precio + contacto (el contenedor lleva pb-24 para no tapar nada). */}
+      <div className="sm:hidden fixed bottom-0 inset-x-0 z-40 border-t border-neutral-150 bg-white/95 backdrop-blur px-4 py-3" role="region" aria-label="Contacto rápido">
+        <div className="flex items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-lg font-extrabold text-navy-900 leading-tight truncate">
+              {canon != null ? `$${Number(canon).toLocaleString('es-CO')}` : 'No informado'}
+              <span className="text-[11px] font-normal text-neutral-400"> COP/mes</span>
+            </p>
+            <p className="text-[11px] text-neutral-400 truncate">{zona}</p>
+          </div>
+          {wa ? (
+            <a
+              href={wa}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={handleWhatsAppClick}
+              aria-label="Abrir chat de WhatsApp"
+              className="shrink-0 inline-flex items-center gap-1.5 px-5 py-3 min-h-[48px] rounded-xl bg-emerald-600 text-white text-sm font-bold shadow-lg active:bg-emerald-700 transition"
+            >
+              <span aria-hidden="true">💬</span> WhatsApp
+            </a>
+          ) : (
+            <span className="shrink-0 inline-flex items-center px-4 py-3 min-h-[48px] rounded-xl bg-neutral-100 text-neutral-400 text-xs font-semibold">
+              Sin contacto
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

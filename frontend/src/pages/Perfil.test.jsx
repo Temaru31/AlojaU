@@ -58,9 +58,10 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
     // El correo vive una sola vez (campo del formulario, sin duplicar en el resumen).
     expect(screen.queryByText('arrendador@alojau.com')).not.toBeInTheDocument()
     expect(screen.getByText(/Sin verificar \(0 pts\)/i)).toBeInTheDocument()
-    // OLA2-M4: sin botón de auto-verificación; la verificación la otorga un administrador
+    // R1: sin botón de auto-verificación ni bloque huérfano de admin; la vía es Telegram
     expect(screen.queryByRole('button', { name: /Verificar teléfono/i })).not.toBeInTheDocument()
-    expect(screen.getByText(/Un administrador debe verificar tu línea/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Un administrador debe verificar tu línea/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Abrir Bot de Telegram/ })).toBeInTheDocument()
   })
 
   it('al guardar NO envía telefono_verificado al backend (solo-lectura OLA2-M4)', async () => {
@@ -149,7 +150,7 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
     )
     await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
 
-    fireEvent.click(screen.getByRole('tab', { name: /Avisos/ }))
+    fireEvent.click(screen.getByRole('tab', { name: /Mis Publicaciones/ }))
     expect(screen.getByRole('link', { name: /Mis publicaciones/ })).toHaveAttribute('href', '/mis-publicaciones')
     expect(screen.getByRole('link', { name: /Favoritos/ })).toHaveAttribute('href', '/favoritos')
   })
@@ -325,6 +326,49 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
     )
     await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
     expect(screen.getByText(/Completa tu perfil \(100%\)/)).toBeInTheDocument()
+  })
+
+  it('R1 teléfono verificado bloqueado con ✏️; editar lo habilita', async () => {
+    localStorage.setItem('alojau_token', 'mock-token-test')
+    mockPerfil({ ...PERFIL_BASE, telefono_verificado: true })
+    render(
+      <BrowserRouter>
+        <Perfil />
+      </BrowserRouter>
+    )
+    await waitFor(() => expect(screen.getByDisplayValue('3001234567')).toBeInTheDocument())
+    const input = screen.getByLabelText(/Teléfono WhatsApp/i, { selector: 'input' })
+    expect(input).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: /Editar número de teléfono/ }))
+    expect(input).not.toBeDisabled()
+  })
+
+  it('R1 correo sin verificar muestra OTP en Datos (no en Mis Publicaciones)', async () => {
+    localStorage.setItem('alojau_token', 'mock-token-test')
+    mockPerfil({ ...PERFIL_BASE, email_verificado: false })
+    render(
+      <BrowserRouter>
+        <Perfil />
+      </BrowserRouter>
+    )
+    await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: /Enviar código/ })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: /Mis Publicaciones/ }))
+    expect(screen.queryByRole('button', { name: /Enviar código/ })).not.toBeInTheDocument()
+  })
+
+  it('R3 confianza pendiente muestra accesos directos accionables', async () => {
+    localStorage.setItem('alojau_token', 'mock-token-test')
+    mockPerfil({ ...PERFIL_BASE, email_verificado: false })
+    render(
+      <BrowserRouter>
+        <Perfil />
+      </BrowserRouter>
+    )
+    await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('tab', { name: /Nivel de Confianza/ }))
+    expect(screen.getByText(/Súbela al 100%/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Verificar mi correo/ })).toBeInTheDocument()
   })
 
   it('helpers de teléfono CO', () => {

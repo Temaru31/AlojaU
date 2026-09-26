@@ -128,11 +128,19 @@ export function AuthProvider({ children }) {
 
   const refresh = useCallback(() => sync(readToken()), [sync])
 
+  // R9: parche local del usuario (ej. avatar recién subido) sin refetch.
+  // Fusiona sobre el usuario actual para que Nav/Perfil se actualicen al
+  // instante; el próximo refresh() revalida contra el backend.
+  const actualizarUsuario = useCallback((parche) => {
+    if (!parche || typeof parche !== 'object') return
+    setUser((prev) => (prev ? { ...prev, ...parche } : prev))
+  }, [])
+
   // v14.1: value memoizado — sin esto cada setLoading crea objeto nuevo y
   // re-renderiza a todos los consumidores (Nav, Perfil, MisPublicaciones…).
   const value = useMemo(
-    () => ({ token, user, loading, login, logout, refresh }),
-    [token, user, loading, login, logout, refresh],
+    () => ({ token, user, loading, login, logout, refresh, actualizarUsuario }),
+    [token, user, loading, login, logout, refresh, actualizarUsuario],
   )
 
   return (
@@ -146,7 +154,7 @@ export function useAuth() {
   const ctx = useContext(AuthContext)
   if (!ctx) {
     // Fallback seguro para tests o rendering sin provider (sesión anónima).
-    return { token: '', user: null, loading: false, login: () => {}, logout: () => {}, refresh: () => {} }
+    return { token: '', user: null, loading: false, login: () => {}, logout: () => {}, refresh: () => {}, actualizarUsuario: () => {} }
   }
   return ctx
 }

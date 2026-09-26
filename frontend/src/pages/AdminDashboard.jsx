@@ -507,6 +507,9 @@ export default function AdminDashboard() {
                 </span>
               )}
             </Link>
+            <Link to="/admin/tipos-vivienda" className="btn-ghost text-xs">
+              🏠 Tipos de vivienda
+            </Link>
             <button type="button" onClick={cargar} className="btn-ghost text-xs">Recargar</button>
           </div>
 

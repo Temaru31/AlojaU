@@ -11,6 +11,7 @@ const Comparar = lazy(() => import('./pages/Comparar'))
 const Favoritos = lazy(() => import('./pages/Favoritos'))
 const AdminReportes = lazy(() => import('./pages/AdminReportes'))
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'))
+const AdminTipos = lazy(() => import('./pages/AdminTipos'))
 // v13 Enterprise Auth: OAuth callback, recovery y legal (Ley 1581).
 const AuthCallback = lazy(() => import('./pages/AuthCallback'))
 const Recuperar = lazy(() => import('./pages/Recuperar'))
@@ -130,8 +131,11 @@ function Nav() {
                   aria-haspopup="menu"
                   className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-full border border-neutral-200 hover:border-navy-300 hover:bg-neutral-50 transition"
                 >
-                  <span aria-hidden="true" className="w-8 h-8 rounded-full bg-navy-800 text-white text-xs font-bold flex items-center justify-center">
+                  <span aria-hidden="true" className="relative w-8 h-8 rounded-full bg-navy-800 text-white text-xs font-bold flex items-center justify-center shrink-0">
                     {inicialesDe(user)}
+                    {user?.foto_perfil_url && (
+                      <img src={user.foto_perfil_url} alt="" referrerPolicy="no-referrer" className="absolute inset-0 w-8 h-8 rounded-full object-cover border border-neutral-200 bg-navy-800" onError={(e) => { e.currentTarget.style.display = 'none' }} />
+                    )}
                   </span>
                   <span className="text-sm font-medium text-navy-800 max-w-28 truncate">{displayName}</span>
                   <span aria-hidden="true" className={`text-[10px] text-neutral-400 transition-transform ${userOpen ? 'rotate-180' : ''}`}>▼</span>
@@ -152,7 +156,7 @@ function Nav() {
                       <Link to="/favoritos" onClick={closeUser} role="menuitem" className="block px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-100">
                         Favoritos{favCount > 0 ? ` (${favCount})` : ''}
                       </Link>
-                      {user?.rol === 'ADMIN' && (
+                      {(user?.rol || '').toUpperCase() === 'ADMIN' && (
                         <Link to="/admin/dashboard" onClick={closeUser} role="menuitem" className="block px-3 py-2 text-sm font-bold rounded-md text-navy-800 bg-navy-50 hover:bg-navy-100">
                           🛡️ Panel admin
                         </Link>
@@ -201,38 +205,45 @@ function Nav() {
             id="mobile-menu"
             className="md:hidden absolute inset-x-3 top-[68px] rounded-xl border border-neutral-150 shadow-xl bg-white p-2 z-50 transition-all duration-200"
           >
+            {/* R5 tarjeta destacada de sesión: avatar+nombre+correo+rol → /perfil */}
+            {sesionActiva ? (
+              <Link
+                to="/perfil"
+                onClick={closeMenu}
+                aria-label="Abrir mi perfil"
+                className="flex items-center gap-3 px-3 py-3 mb-1 rounded-xl bg-navy-50 border border-navy-100 active:bg-navy-100 transition"
+              >
+                <span aria-hidden="true" className="relative w-11 h-11 rounded-full bg-navy-800 text-white text-sm font-bold flex items-center justify-center shrink-0">
+                  {inicialesDe(user)}
+                  {user?.foto_perfil_url && (
+                    <img src={user.foto_perfil_url} alt="" referrerPolicy="no-referrer" className="absolute inset-0 w-11 h-11 rounded-full object-cover border border-navy-100 bg-navy-800" onError={(e) => { e.currentTarget.style.display = 'none' }} />
+                  )}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-bold text-navy-900 truncate">{displayName}</span>
+                  <span className="block text-[11px] text-neutral-500 truncate">{user?.email || ''}</span>
+                  <span className="inline-block mt-0.5 text-[10px] font-bold px-1.5 py-px rounded bg-white text-navy-700 border border-navy-100">
+                    {user?.rol === 'ADMIN' ? 'Administrador' : user?.rol === 'ARRENDADOR' ? 'Arrendador' : 'Usuario Base'}
+                  </span>
+                </span>
+                <span aria-hidden="true" className="text-neutral-400">›</span>
+              </Link>
+            ) : (
+              <Link
+                to="/perfil"
+                onClick={closeMenu}
+                className="block w-full px-3 py-3 mb-1 text-sm font-bold text-center text-white bg-navy-800 rounded-xl active:bg-navy-900 transition"
+              >
+                Iniciar sesión / Registrarse
+              </Link>
+            )}
             <Link
               to="/"
               onClick={closeMenu}
               aria-current={isActive('/') ? 'page' : undefined}
               className={mobileLinkCls(isActive('/'))}
             >
-              Buscar vivienda
-            </Link>
-            <Link
-              to="/comparar"
-              onClick={closeMenu}
-              aria-current={isActive('/comparar') ? 'page' : undefined}
-              className={mobileLinkCls(isActive('/comparar'))}
-            >
-              <span>Comparar</span>
-              <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${compCount} de ${compMax} para comparar`}>{compCount}/{compMax}</span>
-            </Link>
-            {/* Drawer móvil con la misma regla de sesión verificada que desktop. */}
-            <Link
-              to="/perfil"
-              onClick={closeMenu}
-              aria-current={isActive('/perfil') ? 'page' : undefined}
-              className={mobileLinkCls(isActive('/perfil'))}
-            >
-              {sesionActiva ? (
-                <span className="flex items-center gap-2">
-                  <span aria-hidden="true" className="w-6 h-6 rounded-full bg-navy-800 text-white text-[10px] font-bold flex items-center justify-center">
-                    {inicialesDe(user)}
-                  </span>
-                  <span className="truncate max-w-40">{displayName}</span>
-                </span>
-              ) : 'Iniciar Sesión'}
+              🔍 Buscar vivienda
             </Link>
             <Link
               to="/favoritos"
@@ -240,45 +251,52 @@ function Nav() {
               aria-current={isActive('/favoritos') ? 'page' : undefined}
               className={mobileLinkCls(isActive('/favoritos'))}
             >
-              <span>Favoritos</span>
-              {favCount > 0 && <span className="bg-red-100 text-red-700 text-[11px] px-1.5 py-0.5 rounded-full">{favCount}</span>}
+              <span>🧡 Favoritos</span>
+              {favCount > 0 && <span className="bg-red-100 text-red-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${favCount} favoritos`}>{favCount}</span>}
             </Link>
-            {sesionActiva && (
-              <>
-                <Link
-                  to="/mis-publicaciones"
-                  onClick={closeMenu}
-                  aria-current={isActive('/mis-publicaciones') ? 'page' : undefined}
-                  className={mobileLinkCls(isActive('/mis-publicaciones'))}
-                >
-                  Mis Publicaciones
-                </Link>
-                {user?.rol === 'ADMIN' && (
-                  <Link
-                    to="/admin/dashboard"
-                    onClick={closeMenu}
-                    aria-current={isActive('/admin/dashboard') ? 'page' : undefined}
-                    className={mobileLinkCls(isActive('/admin/dashboard'))}
-                  >
-                    🛡️ Panel admin
-                  </Link>
-                )}
-                <button type="button"
-                  onClick={() => { logout(); closeMenu() }}
-                  className="w-full text-left px-3 py-2.5 text-sm font-semibold rounded-md text-red-600 hover:bg-red-50 transition-colors"
-                >
-                  Cerrar sesión
-                </button>
-              </>
+            <Link
+              to="/comparar"
+              onClick={closeMenu}
+              aria-current={isActive('/comparar') ? 'page' : undefined}
+              className={mobileLinkCls(isActive('/comparar'))}
+            >
+              <span>⚖️ Comparar</span>
+              <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${compCount} de ${compMax} para comparar`}>{compCount}/{compMax}</span>
+            </Link>
+            <Link
+              to="/mis-publicaciones"
+              onClick={closeMenu}
+              aria-current={isActive('/mis-publicaciones') ? 'page' : undefined}
+              className={mobileLinkCls(isActive('/mis-publicaciones'))}
+            >
+              📢 Mis Publicaciones
+            </Link>
+            {(user?.rol || '').toUpperCase() === 'ADMIN' && (
+              <Link
+                to="/admin/dashboard"
+                onClick={closeMenu}
+                aria-current={isActive('/admin/dashboard') ? 'page' : undefined}
+                className={mobileLinkCls(isActive('/admin/dashboard'))}
+              >
+                🛡️ Panel Admin
+              </Link>
             )}
             <Link
               to="/publicar"
               onClick={closeMenu}
               aria-current={isActive('/publicar') ? 'page' : undefined}
-              className="block w-full px-3 py-2.5 text-sm font-semibold text-navy-900 bg-gold-400 rounded-md text-center mt-1 transition-colors duration-200 hover:bg-gold-500"
+              className="block w-full px-3 py-3 text-sm font-bold text-navy-900 bg-gold-400 rounded-xl text-center mt-1 min-h-[44px] transition-colors duration-200 hover:bg-gold-500 active:bg-gold-500"
             >
-              Publicar vivienda
+              + Publicar vivienda
             </Link>
+            {sesionActiva && (
+              <button type="button"
+                onClick={() => { logout(); closeMenu() }}
+                className="w-full px-3 py-3 mt-1 min-h-[44px] text-sm font-bold rounded-xl text-red-600 hover:bg-red-50 active:bg-red-100 transition-colors"
+              >
+                🚪 Cerrar sesión
+              </button>
+            )}
 
           </div>
         </>
@@ -366,6 +384,7 @@ function App() {
                     <Route path="/privacidad" element={<Privacidad />} />                    <Route path="/mis-publicaciones" element={<MisPublicaciones />} />
                     <Route path="/admin/dashboard" element={<ProtectedAdminRoute><AdminDashboard /></ProtectedAdminRoute>} />
                     <Route path="/admin/reportes" element={<ProtectedAdminRoute><AdminReportes /></ProtectedAdminRoute>} />
+                    <Route path="/admin/tipos-vivienda" element={<ProtectedAdminRoute><AdminTipos /></ProtectedAdminRoute>} />
                   </Routes>
                 </Suspense>
                 <Toaster />

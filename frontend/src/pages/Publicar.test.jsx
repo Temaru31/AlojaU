@@ -125,6 +125,20 @@ describe('Publicar (HU-005: solo ARRENDADOR, nace PENDIENTE)', () => {
     expect(await screen.findByText(/¡Publicación creada! Estado: PENDIENTE/)).toBeInTheDocument()
   })
 
+  it('R8 promoción a Arrendador: banner sin recargar la página', async () => {
+    localStorage.setItem('alojau_token', TOKEN)
+    api.post.mockResolvedValue({
+      data: { ...CREATED.data, rol: 'ARRENDADOR', rol_actualizado: true },
+    })
+    const reloadSpy = vi.fn()
+    Object.defineProperty(window, 'location', { value: { ...window.location, reload: reloadSpy }, writable: true })
+    renderPage()
+    fillValid()
+    fireEvent.click(screen.getByRole('button', { name: 'Enviar a revision' }))
+    expect(await screen.findByText(/Tu cuenta ahora es/)).toBeInTheDocument()
+    expect(reloadSpy).not.toHaveBeenCalled()
+  })
+
   it('sin servicios seleccionados exige al menos 1', () => {
     localStorage.setItem('alojau_token', TOKEN)
     renderPage()

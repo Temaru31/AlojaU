@@ -120,6 +120,38 @@ describe('AuthContext M1 (cierre total anti-fantasma)', () => {
   })
 })
 
+describe('AuthContext R9 (actualizarUsuario sin refetch)', () => {
+  it('fusiona el parche (avatar) y lo refleja al instante', async () => {
+    localStorage.setItem('alojau_token', 'tok-foto')
+    api.get.mockResolvedValue({ data: { email: 'a@b.co', nombre_completo: 'Ana', rol: 'ESTUDIANTE', foto_perfil_url: null } })
+    const Probe2 = () => {
+      const { user, actualizarUsuario } = useAuth()
+      return (
+        <>
+          <span data-testid="foto">{user?.foto_perfil_url || 'sin-foto'}</span>
+          <button type="button" onClick={() => actualizarUsuario({ foto_perfil_url: 'https://x/f.jpg' })}>parchar</button>
+        </>
+      )
+    }
+    render(<AuthProvider><Probe2 /></AuthProvider>)
+    await screen.findByText('sin-foto')
+    const llamadas = api.get.mock.calls.length
+    fireEvent.click(screen.getByText('parchar'))
+    expect(await screen.findByTestId('foto')).toHaveTextContent('https://x/f.jpg')
+    expect(api.get.mock.calls.length).toBe(llamadas)
+  })
+
+  it('parche inválido o sin usuario no rompe', async () => {
+    const Probe3 = () => {
+      const { actualizarUsuario } = useAuth()
+      return <button type="button" onClick={() => { actualizarUsuario(null); actualizarUsuario('x') }}>noop</button>
+    }
+    render(<AuthProvider><Probe3 /></AuthProvider>)
+    fireEvent.click(screen.getByText('noop'))
+    expect(screen.getByText('noop')).toBeInTheDocument()
+  })
+})
+
 describe('AuthContext v14.1 (memoización)', () => {
   it('value y refresh estables entre renders sin cambio de estado', async () => {
     let first = null

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
-import { emitAuthChange, limpiarSesionLocal } from '../contexts/AuthContext'
+import { emitAuthChange, limpiarSesionLocal, useAuth } from '../contexts/AuthContext'
 import { formatearSesionFecha, etiquetaDispositivo } from '../utils/sesion'
 import GoogleButton from '../components/GoogleButton'
 import RegistroForm from '../components/RegistroForm'
@@ -11,10 +11,10 @@ import TelegramVincular from '../components/TelegramVincular'
 import { signInWithGoogle } from '../services/supabaseClient'
 
 const TABS = [
-  { id: 'datos', label: 'Datos y contacto', icon: '👤' },
-  { id: 'seguridad', label: 'Seguridad', icon: '🔒' },
-  { id: 'confianza', label: 'Confianza', icon: '⭐' },
-  { id: 'avisos', label: 'Avisos y favoritos', icon: '🏠' },
+  { id: 'datos', label: 'Datos y Verificación', icon: '👤' },
+  { id: 'seguridad', label: 'Seguridad y Sesiones', icon: '🔒' },
+  { id: 'confianza', label: 'Nivel de Confianza', icon: '⭐' },
+  { id: 'avisos', label: 'Mis Publicaciones', icon: '🏠' },
 ]
 
 function tabDesdeHash() {
@@ -93,8 +93,17 @@ export default function Perfil() {
   const [successMsg, setSuccessMsg] = useState('')
   const [tab, setTab] = useState(() => tabDesdeHash())
 
+  // R9: parchea el contexto global (Nav) además del estado local.
+  const { actualizarUsuario } = useAuth()
+  const aplicarFoto = (url) => {
+    setPerfil((p) => (p ? { ...p, foto_perfil_url: url } : p))
+    actualizarUsuario({ foto_perfil_url: url })
+  }
+
   // Formulario de edición (M3: la foto va por POST /avatar, no en este form).
   const [telefono, setTelefono] = useState('')
+  // R1: el teléfono verificado se bloquea hasta pulsar ✏️ (editar resetea a sin verificar al guardar).
+  const [telefonoEditando, setTelefonoEditando] = useState(false)
   const [nombre, setNombre] = useState('')
   // v13.2 marketplace flexible: bio y etiquetas (la foto vive en AvatarPerfil).
   const [bio, setBio] = useState('')
@@ -112,8 +121,8 @@ export default function Perfil() {
   const [pwNueva, setPwNueva] = useState('')
   const [pwSaving, setPwSaving] = useState(false)
 
-  // Solicitud de verificación
-  const [solSaving, setSolSaving] = useState(false)
+  // R1: la verificación de teléfono es vía Telegram (bloque unificado en Datos).
+  // El bloque huérfano "por administrador" se eliminó (verificación self-service).
 
   // v13: sesiones activas + revocación global.
   const [sesiones, setSesiones] = useState(null)
@@ -218,6 +227,7 @@ export default function Perfil() {
       })
       setPerfil(res.data)
       setTelefono(telefonoALocal(res.data.telefono_whatsapp))
+      setTelefonoEditando(false)
       setNombre(res.data.nombre_completo || '')
       setBio(res.data.bio || '')
       setTags(res.data.preferencias || {})
@@ -360,22 +370,6 @@ export default function Perfil() {
     setError('')
   }
 
-  const handleSolicitarVerificacion = async () => {
-    setSolSaving(true)
-    setError('')
-    setSuccessMsg('')
-    try {
-      const r = await api.post('/api/auth/perfil/solicitud-verificacion', {}, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      setSuccessMsg(r.data?.mensaje || 'Solicitud registrada. Un administrador verificará tu línea.')
-    } catch (err) {
-      setError(err?.response?.data?.detail || 'No se pudo registrar la solicitud.')
-    } finally {
-      setSolSaving(false)
-    }
-  }
-
   const handleCambiarPassword = async (e) => {
     e?.preventDefault()
     setPwSaving(true)
@@ -403,7 +397,7 @@ export default function Perfil() {
     return (
       <div className="container-main py-8 md:py-12">
         <div className="max-w-xl mx-auto">
-          <nav className="flex items-center gap-2 text-xs text-neutral-400 mb-4">
+          <nav aria-label="Migas de pan" className="hidden md:flex items-center gap-2 text-xs text-neutral-400 mb-4">
             <Link to="/" className="hover:text-navy-600 transition-colors">Buscar</Link>
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
@@ -511,7 +505,7 @@ export default function Perfil() {
       <div className="max-w-3xl mx-auto space-y-6">
         {/* Cabecera (el acceso admin vive unificado en el Navbar: Admin AlojaU ▾). */}
         <div>
-          <nav className="flex items-center gap-2 text-xs text-neutral-400 mb-1">
+          <nav aria-label="Migas de pan" className="hidden md:flex items-center gap-2 text-xs text-neutral-400 mb-1">
             <Link to="/" className="hover:text-navy-600 transition-colors">Buscar</Link>
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
@@ -570,7 +564,7 @@ export default function Perfil() {
               <AvatarPerfil
                 perfil={perfil}
                 token={token}
-                onCambio={(url) => setPerfil((p) => (p ? { ...p, foto_perfil_url: url } : p))}
+                onCambio={aplicarFoto}
               />
               <div className="min-w-0 flex-1">
                 <h2 className="text-base font-semibold text-navy-900 truncate" title={perfil?.nombre_completo || ''}>{perfil?.nombre_completo || 'Usuario AlojaU'}</h2>
@@ -651,19 +645,40 @@ export default function Perfil() {
                 </div>
                 <input id="perfil-correo" type="email" value={perfil?.email || ''} disabled className="input-field opacity-60" aria-describedby="correo-ayuda" />
                 <p id="correo-ayuda" className="text-[11px] text-neutral-400 mt-1">El correo identifica tu cuenta y no se puede cambiar.</p>
+                {/* R1: verificación de correo centralizada aquí (antes en Avisos). */}
+                {perfil && !perfil.email_verificado && (
+                  <div className="mt-3">
+                    <OtpForm email={perfil.email} proposito="email_verify"
+                      onVerificado={() => token && cargarPerfil(token)} />
+                  </div>
+                )}
               </div>
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label htmlFor="perfil-telefono" className="block text-sm font-semibold text-navy-800">Teléfono WhatsApp</label>
-                  {estaVerificado ? (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                      ✓ Verificado (+20 pts)
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-300">
-                      Sin verificar (0 pts)
-                    </span>
-                  )}
+                  <span className="inline-flex items-center gap-2">
+                    {estaVerificado ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                        ✓ Verificado (+20 pts)
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-300">
+                        Sin verificar (0 pts)
+                      </span>
+                    )}
+                    {/* R1: número verificado bloqueado; ✏️ lo habilita (guardar resetea a sin verificar). */}
+                    {estaVerificado && !telefonoEditando && (
+                      <button
+                        type="button"
+                        onClick={() => setTelefonoEditando(true)}
+                        aria-label="Editar número de teléfono"
+                        title="Editar número (pierde la verificación)"
+                        className="inline-flex items-center justify-center w-9 h-9 min-w-[36px] rounded-full border border-navy-200 text-navy-700 hover:bg-navy-50 transition"
+                      >
+                        <span aria-hidden="true">✏️</span>
+                      </button>
+                    )}
+                  </span>
                 </div>
                 <div className="flex" role="group" aria-label="Teléfono WhatsApp con indicativo Colombia">
                   <span aria-hidden="true" className="inline-flex items-center gap-1 px-3 rounded-l-lg border border-r-0 border-neutral-200 bg-neutral-100 text-sm font-bold text-neutral-600 shrink-0">
@@ -674,15 +689,22 @@ export default function Perfil() {
                     type="tel"
                     inputMode="numeric"
                     value={telefono}
+                    disabled={estaVerificado && !telefonoEditando}
                     onChange={e => setTelefono(e.target.value.replace(/\D/g, '').slice(0, 10))}
                     placeholder="300 123 4567"
                     aria-describedby="telefono-ayuda"
-                    className="input-field !rounded-l-none"
+                    className="input-field !rounded-l-none disabled:opacity-60"
                   />
                 </div>
                 <p id="telefono-ayuda" className="text-[11px] text-neutral-400 mt-1">
-                  Solo los 10 dígitos de tu línea (el +57 ya va incluido). Vacío = sin vincular (no podrás publicar hasta vincularlo).
+                  {estaVerificado && !telefonoEditando
+                    ? 'Número verificado y bloqueado. Pulsa ✏️ para cambiarlo (volverá a "Sin verificar").'
+                    : 'Solo los 10 dígitos de tu línea (el +57 ya va incluido). Vacío = sin vincular (no podrás publicar hasta vincularlo).'}
                 </p>
+                {/* R1: verificación vía Telegram unificada junto al teléfono. */}
+                <div className="mt-3">
+                  <TelegramVincular token={token} vinculado={!!perfil?.telegram_vinculado} />
+                </div>
               </div>
             </section>
 
@@ -742,26 +764,6 @@ export default function Perfil() {
               {saving ? 'Guardando...' : 'Guardar cambios'}
             </button>
             </form>
-
-            {/* Verificación solo-lectura (la otorga un administrador) */}
-            <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-4 space-y-3">
-              <h3 className="text-xs sm:text-sm font-semibold text-navy-900">Verificación de teléfono</h3>
-              <p className="text-xs text-neutral-500">
-                {estaVerificado
-                  ? 'Tu línea está verificada: +20 puntos al índice de confianza y contacto directo habilitado.'
-                  : 'Un administrador debe verificar tu línea para otorgar +20 puntos y habilitar el contacto directo.'}
-              </p>
-              {!estaVerificado && (
-                <button
-                  type="button"
-                  onClick={handleSolicitarVerificacion}
-                  disabled={solSaving}
-                  className="px-4 py-2 text-xs font-semibold text-navy-700 border border-navy-200 rounded-md hover:bg-navy-50 transition disabled:opacity-50"
-                >
-                  {solSaving ? 'Enviando...' : 'Solicitar verificación'}
-                </button>
-              )}
-            </div>
           </div>
         )}
 
@@ -831,9 +833,7 @@ export default function Perfil() {
             </p>
             </>
             )}
-            {/* M5 Telegram $0: vinculación DM (sin OTP a grupos) */}
-            <TelegramVincular token={token} vinculado={!!perfil?.telegram_vinculado} />
-            {/* v13: sesiones activas + revocación global */}
+            {/* v13: sesiones activas + revocación global (Telegram vive en Datos y Verificación) */}
             <div className="border-t border-neutral-150 pt-4 space-y-3">
               <h3 className="text-sm font-semibold text-navy-900">Sesiones activas</h3>
               {sesiones == null ? (
@@ -981,6 +981,45 @@ export default function Perfil() {
                 <span className="font-semibold text-navy-800 shrink-0">10 pts</span>
               </div>
             </div>
+            {/* R3: cada pendiente con su acceso directo (la tarjeta deja de ser solo lectura). */}
+            {(() => {
+              const check = checklistPerfil(perfil, { tieneAviso: (misStats?.total ?? 0) > 0 })
+              const pendientes = check.items.filter(i => !i.ok)
+              if (pendientes.length === 0) return null
+              const destino = (id) => (id === 'aviso' ? '/publicar' : null)
+              return (
+                <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-4 space-y-2" aria-label="Acciones para ganar confianza">
+                  <h3 className="text-xs sm:text-sm font-semibold text-navy-900">
+                    Súbela al 100% ({check.pct}% actual)
+                  </h3>
+                  <ul className="space-y-1.5">
+                    {pendientes.map(i => (
+                      <li key={i.id}>
+                        {destino(i.id) ? (
+                          <Link to={destino(i.id)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-navy-700 underline hover:text-navy-900">
+                            → {i.id === 'aviso' ? 'Publicar mi primer aviso' : i.label} <span className="text-neutral-400 font-normal">(+{i.peso} pts)</span>
+                          </Link>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => irTab('datos')}
+                            className="inline-flex items-center gap-1.5 text-xs font-semibold text-navy-700 underline hover:text-navy-900"
+                          >
+                            → {{
+                              email: 'Verificar mi correo',
+                              telefono: 'Vincular mi teléfono',
+                              foto: 'Subir mi foto',
+                              bio: 'Escribir mi presentación',
+                              tags: 'Elegir mis preferencias',
+                            }[i.id] || i.label} <span className="text-neutral-400 font-normal no-underline">(+{i.peso} pts)</span>
+                          </button>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )
+            })()}
             <p className="text-[11px] text-neutral-400 leading-relaxed">
               Informativo, no garantiza seguridad. Verificar antes de pagar. Cada publicación muestra su propio puntaje con este mismo desglose.
             </p>
@@ -1001,14 +1040,8 @@ export default function Perfil() {
                 </div>
                 <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-center">
                   <p className="text-xl font-bold text-amber-700">{misStats.pendientes}</p>
-                  <p className="text-[11px] text-neutral-500">En revisión</p>
+                    <p className="text-[11px] text-neutral-500">En revisión</p>
             </div>
-
-            {/* v13: verificación de email obligatoria para publicar */}
-            {perfil && !perfil.email_verificado && (
-              <OtpForm email={perfil.email} proposito="email_verify"
-                onVerificado={() => token && cargarPerfil(token)} />
-            )}
           </div>
         )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
