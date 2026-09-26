@@ -85,6 +85,18 @@ const TRAZOS = {
       <path d="M12 3v3m0 12v3M5.6 5.6l2.2 2.2m8.4 8.4 2.2 2.2M3 12h3m12 0h3M5.6 18.4l2.2-2.2m8.4-8.4 2.2-2.2" />
     </>
   ),
+  // lucide/share-2 (compartir en galería móvil).
+  compartir: (
+    <>
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <line x1="8.59" x2="15.42" y1="13.51" y2="17.49" />
+      <line x1="15.41" x2="8.59" y1="6.51" y2="10.49" />
+    </>
+  ),
+  // lucide/pencil (editar aviso del dueño).
+  lapiz: <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />,
   // lucide/check.
   check: <path d="M20 6 9 17l-5-5" />,
   // lucide/chevron-down.

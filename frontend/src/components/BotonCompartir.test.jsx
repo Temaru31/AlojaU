@@ -33,6 +33,23 @@ describe('compartirEnlace (nativo con fallback honesto)', () => {
   })
 })
 
+describe('BotonCompartir variante flotante + texto', () => {
+  it('flotante es circular oscuro con mismo accessible name', () => {
+    render(<BotonCompartir titulo="Aviso" url="https://x/1" etiqueta="Compartir esta publicación" variante="flotante" />)
+    const btn = screen.getByRole('button', { name: 'Compartir esta publicación' })
+    expect(btn.className).toMatch(/w-11 h-11/)
+    expect(btn.className).toMatch(/bg-black\/60/)
+  })
+
+  it('envía texto cuando se provee', async () => {
+    const share = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { share })
+    expect(await compartirEnlace({ titulo: 'T', texto: 'Hola', url: 'https://x/1' })).toBe('compartido')
+    expect(share).toHaveBeenCalledWith({ title: 'T', text: 'Hola', url: 'https://x/1' })
+    vi.unstubAllGlobals()
+  })
+})
+
 describe('BotonCompartir', () => {
   it('muestra etiqueta propia y reintenta tras fallo', async () => {
     vi.stubGlobal('navigator', { clipboard: { writeText: vi.fn().mockRejectedValue(new Error('x')) } })

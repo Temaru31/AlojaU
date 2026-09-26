@@ -426,6 +426,58 @@ describe('Detalle R7 (móvil: carrusel, flotantes, sticky bar)', () => {
   })
 })
 
+describe('Detalle acciones flotantes (compartir + editar dueño)', () => {
+  it('compartir flotante usa Web Share nativo con título, texto y url', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    const share = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { share, clipboard: { writeText: vi.fn() } })
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText('Descripción')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Compartir esta publicación' }))
+    await waitFor(() => expect(share).toHaveBeenCalledWith(expect.objectContaining({
+      title: expect.stringContaining('Habitación cerca Tulcán'),
+      text: expect.stringContaining('Habitación cerca Tulcán'),
+      url: expect.any(String),
+    })))
+    vi.unstubAllGlobals()
+  })
+
+  it('dueño ve lápiz flotante que abre el editor; terceros no lo ven', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    const AuthCtx = await import('../contexts/AuthContext')
+    const spy = vi.spyOn(AuthCtx, 'useAuth').mockReturnValue({
+      token: 'tok-dueno', user: { id: 7, email: 'd@b.co' }, loading: false,
+      login: vi.fn(), logout: vi.fn(), refresh: vi.fn(),
+    })
+    try {
+      api.get.mockImplementation((url) => {
+        if (url === '/api/publicaciones/1') {
+          return Promise.resolve({ data: { ...pub, usuario_id: 7 } })
+        }
+        return Promise.resolve({ data: null })
+      })
+      renderDetalle()
+      await waitFor(() => expect(screen.getByText('Descripción')).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('button', { name: 'Editar publicación' }))
+      expect(await screen.findByRole('dialog', { name: /Editar Habitación cerca Tulcán/ })).toBeInTheDocument()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('sin dueño no hay lápiz flotante', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText('Descripción')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Editar publicación' })).not.toBeInTheDocument()
+  })
+})
+
 describe('Detalle v14.1 (sesión en vistas)', () => {
   it('con token: envía Authorization para que el dueño vea su PENDIENTE', async () => {
     const AuthCtx = await import('../contexts/AuthContext')
