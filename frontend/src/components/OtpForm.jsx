@@ -9,12 +9,16 @@ import { api } from '../services/api'
 // Pausa anti-spam tras pedir código (el backend limita a 5/15min).
 const COOLDOWN_S = 60
 
+// Estados visuales: sin-verificar (botón Enviar) → enviado (PIN + Confirmar +
+// Reenviar) → verificado (badge verde). `yaEnviado` distingue el primer envío
+// del reenvío para el copy honesto del botón.
 export default function OtpForm({ email, proposito = 'email_verify', onVerificado }) {
   const [codigo, setCodigo] = useState('')
   const [estado, setEstado] = useState('idle') // idle|enviando|verificando|ok|error
   const [mensaje, setMensaje] = useState('')
   const [canal, setCanal] = useState(null) // null|'email'|'telegram'
   const [cooldown, setCooldown] = useState(0)
+  const [yaEnviado, setYaEnviado] = useState(false)
   const timerRef = useRef(null)
 
   useEffect(() => () => {
@@ -32,8 +36,9 @@ export default function OtpForm({ email, proposito = 'email_verify', onVerificad
       setCanal(c)
       setMensaje(c === 'telegram'
         ? 'Código enviado a través de nuestro Bot oficial de Telegram (válido 10 minutos).'
-        : 'Código enviado a tu correo electrónico registrado (válido por 10 minutos).')
+        : 'Enviamos un código de 6 dígitos a tu correo (válido por 10 minutos).')
       setEstado('idle')
+      setYaEnviado(true)
       setCooldown(COOLDOWN_S)
       timerRef.current = setInterval(() => {
         setCooldown(prev => {
@@ -79,12 +84,12 @@ export default function OtpForm({ email, proposito = 'email_verify', onVerificad
           type="button"
           onClick={solicitar}
           disabled={estado === 'enviando' || cooldown > 0}
-          className="text-xs font-semibold text-navy-700 border border-navy-200 rounded-md px-3 py-1.5 hover:bg-navy-50 disabled:opacity-50"
+          className="min-h-[44px] text-xs font-semibold text-navy-700 border border-navy-200 rounded-md px-3 py-1.5 hover:bg-navy-50 active:bg-navy-100 disabled:opacity-50 transition"
         >
-          {estado === 'enviando' ? 'Enviando…' : cooldown > 0 ? `Reenviar en ${cooldown}s` : 'Enviar código'}
+          {estado === 'enviando' ? 'Enviando…' : cooldown > 0 ? `Reenviar en ${cooldown}s` : yaEnviado ? 'Reenviar código' : 'Enviar código de verificación'}
         </button>
       </div>
-      <form onSubmit={verificar} className="flex gap-2">
+      <form onSubmit={verificar} className="flex flex-col sm:flex-row gap-2">
         <input
           type="text"
           inputMode="numeric"
@@ -94,14 +99,14 @@ export default function OtpForm({ email, proposito = 'email_verify', onVerificad
           value={codigo}
           onChange={(e) => setCodigo(e.target.value.replace(/\D/g, '').slice(0, 6))}
           aria-label="Código de verificación de 6 dígitos"
-          className="input-field tracking-[0.3em] text-center font-mono"
+          className="input-field tracking-[0.5em] text-center font-mono !text-lg !py-3"
         />
         <button
           type="submit"
           disabled={estado === 'verificando' || codigo.length !== 6}
-          className="px-4 py-2 bg-neutral-800 text-white text-xs font-semibold rounded-md hover:bg-navy-900 disabled:opacity-50 shrink-0"
+          className="px-4 py-2 min-h-[44px] bg-navy-800 text-white text-xs font-semibold rounded-md hover:bg-navy-900 active:bg-navy-900 disabled:opacity-50 shrink-0 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy-800/40"
         >
-          {estado === 'verificando' ? 'Verificando…' : 'Verificar'}
+          {estado === 'verificando' ? 'Verificando…' : 'Confirmar código'}
         </button>
       </form>
       {mensaje && (

@@ -1,6 +1,6 @@
 // M3: transparencia de canal OTP (email vs Telegram).
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react'
 import OtpForm from './OtpForm'
 import { api } from '../services/api'
 
@@ -14,7 +14,7 @@ describe('OtpForm canal explícito (M3)', () => {
     api.post.mockResolvedValue({ data: { canal: 'email' } })
     render(<OtpForm email="a@b.co" />)
     fireEvent.click(screen.getByRole('button', { name: /Enviar código/ }))
-    expect(await screen.findByText(/correo electrónico registrado.*10 minutos/i)).toBeInTheDocument()
+    expect(await screen.findByText(/código de 6 dígitos a tu correo.*10 minutos/i)).toBeInTheDocument()
   })
 
   it('canal telegram: mensaje nombra el Bot oficial', async () => {
@@ -28,7 +28,7 @@ describe('OtpForm canal explícito (M3)', () => {
     api.post.mockResolvedValue({ data: {} })
     render(<OtpForm email="a@b.co" />)
     fireEvent.click(screen.getByRole('button', { name: /Enviar código/ }))
-    expect(await screen.findByText(/correo electrónico registrado/i)).toBeInTheDocument()
+    expect(await screen.findByText(/código de 6 dígitos a tu correo/i)).toBeInTheDocument()
   })
 
   it('tras enviar, bloquea reenvío 60s (anti-spam)', async () => {
@@ -46,8 +46,20 @@ describe('OtpForm canal explícito (M3)', () => {
     const onVerificado = vi.fn()
     render(<OtpForm email="a@b.co" onVerificado={onVerificado} />)
     fireEvent.change(screen.getByLabelText(/6 dígitos/i), { target: { value: '123456' } })
-    fireEvent.click(screen.getByRole('button', { name: /Verificar/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Confirmar código/ }))
     expect(await screen.findByText(/✓.*Correo verificado/i)).toBeInTheDocument()
     expect(onVerificado).toHaveBeenCalled()
+  })
+
+  it('tras el cooldown el botón ofrece Reenviar código', async () => {
+    vi.useFakeTimers()
+    api.post.mockResolvedValue({ data: { canal: 'email' } })
+    render(<OtpForm email="a@b.co" />)
+    fireEvent.click(screen.getByRole('button', { name: /Enviar código de verificación/ }))
+    await act(async () => {})
+    expect(screen.getByRole('button', { name: /Reenviar en \d+s/ })).toBeInTheDocument()
+    await act(async () => { vi.advanceTimersByTime(61_000) })
+    expect(screen.getByRole('button', { name: 'Reenviar código' })).toBeInTheDocument()
+    vi.useRealTimers()
   })
 })

@@ -17,7 +17,7 @@ import { signInWithGoogle } from '../services/supabaseClient'
 const TABS = [
   { id: 'datos', label: 'Datos y Verificación', icon: 'usuario' },
   { id: 'seguridad', label: 'Seguridad y Sesiones', icon: 'candado' },
-  { id: 'confianza', label: 'Nivel de Confianza', icon: 'estrella' },
+  { id: 'confianza', label: 'Confianza y Reputación', icon: 'estrella' },
   { id: 'avisos', label: 'Mis Publicaciones', icon: 'casa' },
 ]
 
@@ -514,7 +514,7 @@ export default function Perfil() {
 
   return (
     <div className="container-main py-6 md:py-10">
-      <div className="max-w-3xl mx-auto space-y-6">
+      <div className="max-w-5xl mx-auto space-y-6">
         {/* Cabecera (el acceso admin vive unificado en el Navbar: Admin AlojaU ▾). */}
         <div>
           <nav aria-label="Migas de pan" className="hidden md:flex items-center gap-2 text-xs text-neutral-400 mb-1">
@@ -547,6 +547,76 @@ export default function Perfil() {
           </div>
         )}
 
+        {/* Layout desktop en 2 columnas (sidebar + contenido); en móvil se apila. */}
+        <div className="md:grid md:grid-cols-12 md:gap-8 md:items-start space-y-6 md:space-y-0">
+          <aside className="md:col-span-4" aria-label="Resumen de cuenta">
+            <div className="lg:sticky lg:top-24 space-y-4">
+              {/* Tarjeta de identidad: avatar grande con cambio rápido + rol. */}
+              <section aria-label="Tu identidad" className="card rounded-2xl p-5 sm:p-6 space-y-4 shadow-sm">
+                <div className="flex items-center gap-4">
+                  <AvatarPerfil
+                    perfil={perfil}
+                    token={token}
+                    onCambio={aplicarFoto}
+                    tamano="lg"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-lg font-bold text-navy-900 truncate" title={perfil?.nombre_completo || ''}>{perfil?.nombre_completo || 'Usuario AlojaU'}</h2>
+                    <p className="text-xs text-neutral-500 truncate" title={perfil?.email || ''}>{perfil?.email || ''}</p>
+                  </div>
+                </div>
+                {perfil?.bio && (
+                  <p className="text-xs text-neutral-600 leading-relaxed line-clamp-2" title={perfil.bio}>{perfil.bio}</p>
+                )}
+                <span className="inline-flex badge bg-navy-50 text-navy-700 border border-navy-100 font-semibold text-xs" title={perfil?.rol === 'ARRENDADOR' ? 'Publica y gestiona avisos' : 'Busca, guarda favoritos y contacta'}>
+                  {perfil?.rol === 'ADMIN' ? 'Administrador' : perfil?.rol === 'ARRENDADOR' ? 'Arrendador' : 'Estudiante'}
+                </span>
+              </section>
+              {/* Widget radial: la ÚNICA métrica visible (sin barra plana duplicada). */}
+              <section aria-label="Nivel de confianza" className="card rounded-2xl p-5 sm:p-6 space-y-3 shadow-sm">
+                {(() => {
+                  const checkSide = checklistPerfil(perfil, { tieneAviso: (misStats?.total ?? 0) > 0 })
+                  const pendientes = checkSide.items.filter(i => !i.ok).slice(0, 3)
+                  return (
+                    <>
+                      <NivelConfianza pct={checkSide.pct} />
+                      {pendientes.length > 0 && (
+                        <ul className="space-y-1.5 pt-1 border-t border-neutral-100">
+                          {pendientes.map(i => (
+                            <li key={i.id}>
+                              {i.id === 'aviso' ? (
+                                <Link
+                                  to="/publicar"
+                                  className="text-xs font-semibold text-navy-700 hover:text-navy-900 hover:underline"
+                                >
+                                  → Publicar aviso
+                                </Link>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => irTab('datos')}
+                                  className="text-xs font-semibold text-navy-700 hover:text-navy-900 hover:underline"
+                                >
+                                  → {{
+                                    email: 'Verificar correo',
+                                    telefono: 'Vincular teléfono',
+                                    foto: 'Subir foto',
+                                    bio: 'Escribir presentación',
+                                    tags: 'Elegir preferencias',
+                                  }[i.id] || i.label}
+                                </button>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </>
+                  )
+                })()}
+              </section>
+            </div>
+          </aside>
+          <div className="md:col-span-8 min-w-0">
         {/* Pestañas con hash (#datos, #seguridad, #confianza, #avisos). */}
         <div className="flex gap-1 overflow-x-auto no-scrollbar fade-x border-b border-neutral-150" role="tablist" aria-label="Secciones del perfil">
           {TABS.map((t) => (
@@ -570,58 +640,10 @@ export default function Perfil() {
 
         {tab === 'datos' && (
           <div id="panel-datos" role="tabpanel" aria-labelledby="tab-datos" aria-label="Datos personales y contacto" tabIndex={0} className="space-y-4">
-            {/* Tarjeta identidad: quién eres + rol + progreso */}
-            <section aria-label="Tu cuenta" className="card p-4 sm:p-6 space-y-4">
-            <div className="flex items-center gap-4">
-              <AvatarPerfil
-                perfil={perfil}
-                token={token}
-                onCambio={aplicarFoto}
-              />
-              <div className="min-w-0 flex-1">
-                <h2 className="text-base font-semibold text-navy-900 truncate" title={perfil?.nombre_completo || ''}>{perfil?.nombre_completo || 'Usuario AlojaU'}</h2>
-                {/* El correo vive solo en el campo "Correo" del formulario (sin duplicar). */}
-                <p className="text-xs text-neutral-500 mt-0.5">
-                  {perfil?.telefono_whatsapp ? `📱 ${perfil.telefono_whatsapp}` : '📱 Sin teléfono'} · {estaVerificado ? 'verificado' : 'sin verificar'}
-                </p>
-              </div>
-              <span className="badge bg-navy-50 text-navy-700 border border-navy-100 font-semibold text-xs shrink-0" title={perfil?.rol === 'ARRENDADOR' ? 'Publica y gestiona avisos' : 'Busca, guarda favoritos y contacta'}>
-                {ROL_LABEL[perfil?.rol] || perfil?.rol || 'Usuario Base'}
-              </span>
-            </div>
-
-            {/* M3 checklist gamificada 20+20+20+15+15+10=100 */}
-            {(() => {
-              const check = checklistPerfil(perfil, { tieneAviso: (misStats?.total ?? 0) > 0 })
-              return (
-                <div className="rounded-lg border border-navy-100 bg-navy-50/50 p-4 space-y-2" aria-label="Completa tu perfil">
-                  <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-xs sm:text-sm font-semibold text-navy-900">Completa tu perfil ({check.pct}%)</h3>
-                    <span className="text-[11px] text-neutral-500">{check.items.filter(i => i.ok).length}/{check.items.length}</span>
-                  </div>
-                  <div className="h-1.5 rounded-full bg-neutral-200 overflow-hidden" aria-hidden="true">
-                    <div className="h-full rounded-full bg-gold-400 transition-all" style={{ width: `${check.pct}%` }} />
-                  </div>
-                  <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs">
-                    {check.items.map(i => (
-                      <li key={i.id} className={i.ok ? 'text-emerald-700' : 'text-neutral-400'}>
-                        {i.ok ? '✓' : '•'} {i.label} <span className="opacity-70">({i.peso}%)</span>
-                      </li>
-                    ))}
-                  </ul>
-                  <p className="text-[11px] text-neutral-500 leading-relaxed">
-                    {perfil?.rol === 'ARRENDADOR'
-                      ? 'Eres Arrendador Activo mientras tengas al menos un aviso vigente. Si eliminas tu último aviso, vuelves a Usuario Base automáticamente.'
-                      : 'Publica tu primer aviso para activar el rol de Arrendador automáticamente. Si lo eliminas todo, vuelves a Usuario Base.'}
-                  </p>
-                </div>
-              )
-            })()}
-            </section>
-
+            {/* La identidad y el progreso viven en el sidebar (sin duplicados). */}
             <form onSubmit={handleGuardarDatos} className="space-y-4">
             {/* Tarjeta identidad editable: nombre */}
-            <section aria-label="Identidad" className="card p-4 sm:p-6 space-y-4">
+            <section aria-label="Identidad" className="card rounded-2xl p-4 sm:p-6 space-y-4 shadow-sm">
               <h3 className="text-sm font-bold text-navy-900">👤 Identidad</h3>
               <div>
                 <label htmlFor="perfil-nombre" className="block text-sm font-semibold text-navy-800 mb-1.5">Nombre completo</label>
@@ -639,7 +661,7 @@ export default function Perfil() {
             </section>
 
             {/* F3 Contacto en tarjetas de estado independientes (verde/ámbar claro). */}
-            <section aria-label="Contacto" className="card p-4 sm:p-6 space-y-3">
+            <section aria-label="Contacto" className="card rounded-2xl p-4 sm:p-6 space-y-3 shadow-sm">
               <h3 className="text-sm font-bold text-navy-900">📱 Contacto</h3>
               <p className="text-xs text-neutral-500 -mt-2">Cómo te contactan los interesados. El teléfono verificado suma +20 de confianza.</p>
               {/* Correo */}
@@ -718,13 +740,20 @@ export default function Perfil() {
                 </p>
                 {/* R1: verificación vía Telegram unificada junto al teléfono. */}
                 <div className="pt-1">
-                  <TelegramVincular token={token} vinculado={!!perfil?.telegram_vinculado} />
+                  <TelegramVincular
+                    token={token}
+                    vinculado={!!perfil?.telegram_vinculado}
+                    onVinculado={() => {
+                      setPerfil((p) => (p ? { ...p, telegram_vinculado: true } : p))
+                      setSuccessMsg('Telegram vinculado: recibirás los códigos en tu chat.')
+                    }}
+                  />
                 </div>
               </div>
             </section>
 
             {/* Tarjeta presentación: bio (la foto vive en el avatar superior, sin URL expuesta) */}
-            <section aria-label="Presentación" className="card p-4 sm:p-6 space-y-4">
+            <section aria-label="Presentación" className="card rounded-2xl p-4 sm:p-6 space-y-4 shadow-sm">
               <h3 className="text-sm font-bold text-navy-900">✨ Presentación</h3>
               <p className="text-xs text-neutral-500 -mt-2">Opcional. Cuéntales a otros quién eres y qué buscas.</p>
               <div>
@@ -763,19 +792,22 @@ export default function Perfil() {
               </div>
             </div>
 
-            <button
-              type="submit"
-              disabled={saving}
-              className="btn-accent w-full sm:w-auto justify-center !py-3.5 !rounded-2xl !text-sm"
-            >
-              {saving ? 'Guardando…' : 'Guardar cambios'}
-            </button>
+            {/* Acciones alineadas abajo-derecha con acento y focus visible. */}
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={saving}
+                className="btn-accent w-full sm:w-auto justify-center !py-3.5 !rounded-2xl !text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold-400"
+              >
+                {saving ? 'Guardando…' : 'Guardar cambios'}
+              </button>
+            </div>
             </form>
           </div>
         )}
 
         {tab === 'seguridad' && (
-          <div id="panel-seguridad" role="tabpanel" aria-labelledby="tab-seguridad" aria-label="Seguridad y contraseña" tabIndex={0} className="card p-4 sm:p-6 space-y-4">
+          <div id="panel-seguridad" role="tabpanel" aria-labelledby="tab-seguridad" aria-label="Seguridad y contraseña" tabIndex={0} className="card rounded-2xl p-4 sm:p-6 space-y-4 shadow-sm">
             <h2 className="text-base font-semibold text-navy-900">Cambiar contraseña</h2>
             {perfil?.auth_provider === 'google' ? (
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4" role="note">
@@ -951,7 +983,7 @@ export default function Perfil() {
         )}
 
         {tab === 'confianza' && (
-          <div id="panel-confianza" role="tabpanel" aria-labelledby="tab-confianza" aria-label="Índice de confianza" tabIndex={0} className="card p-4 sm:p-6 space-y-4">
+          <div id="panel-confianza" role="tabpanel" aria-labelledby="tab-confianza" aria-label="Índice de confianza" tabIndex={0} className="card rounded-2xl p-4 sm:p-6 space-y-4 shadow-sm">
             {/* F3 tarjeta de nivel radial (el desglose por factor sigue debajo intacto). */}
             {(() => {
               const checkRadial = checklistPerfil(perfil, { tieneAviso: (misStats?.total ?? 0) > 0 })
@@ -959,9 +991,11 @@ export default function Perfil() {
             })()}
             <h2 className="text-base font-semibold text-navy-900">Tu confianza (0–100)</h2>
             <p className="text-xs text-neutral-500 leading-relaxed">
-              El anillo de arriba es la <b>completitud de tu perfil</b>. El desglose de abajo es el
+              El anillo del panel lateral es la <b>completitud de tu perfil</b>. El desglose de abajo es el
               <b> puntaje que hereda cada aviso publicado</b> (pesos del administrador: 40+20+15+15+10).
             </p>
+            {/* Deslinde explícito: lo tuyo (cuenta) vs lo de tus avisos. */}
+            <h3 className="text-xs font-bold text-navy-800 uppercase tracking-wide pt-1">Requisitos de tu perfil (usuario)</h3>
             <div className="space-y-2 text-xs">
               <div className="flex justify-between items-center gap-2 py-1.5 border-b border-neutral-100">
                 <span className="text-neutral-600">Completitud de oferta <span className="text-neutral-400">(se calcula por aviso al publicar)</span></span>
@@ -980,6 +1014,9 @@ export default function Perfil() {
                   → Vincula tu teléfono en Datos y contacto
                 </button>
               )}
+            </div>
+            <h3 className="text-xs font-bold text-navy-800 uppercase tracking-wide pt-2">Calidad de tus inmuebles (arrendador)</h3>
+            <div className="space-y-2 text-xs">
               <div className="flex justify-between items-center gap-2 py-1.5 border-b border-neutral-100">
                 <span className="text-neutral-600">Fotos reales (≥3) <span className="text-neutral-400">(súbelas al crear o editar cada aviso)</span></span>
                 <span className="font-semibold text-navy-800 shrink-0">15 pts</span>
@@ -993,6 +1030,9 @@ export default function Perfil() {
                 <span className="font-semibold text-navy-800 shrink-0">10 pts</span>
               </div>
             </div>
+            <p className="text-[11px] text-neutral-500 leading-relaxed rounded-lg bg-neutral-50 border border-neutral-200 px-3 py-2" role="note">
+              Las fotos y la vigencia se evalúan individualmente en cada inmueble que publiques, no en tu cuenta personal.
+            </p>
             {/* R3: cada pendiente con su acceso directo (la tarjeta deja de ser solo lectura). */}
             {(() => {
               const check = checklistPerfil(perfil, { tieneAviso: (misStats?.total ?? 0) > 0 })
@@ -1057,12 +1097,12 @@ export default function Perfil() {
           </div>
         )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Link to="/mis-publicaciones" className="card p-5 hover:border-navy-300 transition block">
+              <Link to="/mis-publicaciones" className="card rounded-2xl p-5 hover:border-navy-300 transition block shadow-sm">
                 <p className="text-sm font-semibold text-navy-800">🏠 Mis publicaciones</p>
                 <p className="text-xs text-neutral-500 mt-1">Crea, edita y renueva tus avisos.</p>
                 <span className="inline-block mt-3 text-xs font-semibold text-navy-700">Abrir →</span>
               </Link>
-              <Link to="/favoritos" className="card p-5 hover:border-navy-300 transition block">
+              <Link to="/favoritos" className="card rounded-2xl p-5 hover:border-navy-300 transition block shadow-sm">
                 <p className="text-sm font-semibold text-navy-800">♡ Favoritos</p>
                 <p className="text-xs text-neutral-500 mt-1">Tus alojamientos guardados.</p>
                 <span className="inline-block mt-3 text-xs font-semibold text-navy-700">Abrir →</span>
@@ -1070,6 +1110,8 @@ export default function Perfil() {
             </div>
           </div>
         )}
+          </div>
+        </div>
       </div>
     </div>
   )

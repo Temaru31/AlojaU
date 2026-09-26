@@ -8,7 +8,12 @@ import { useRef, useState } from 'react'
 import { api } from '../services/api'
 import { inicialesDe } from '../contexts/AuthContext'
 
-export default function AvatarPerfil({ perfil, token, onCambio }) {
+// `tamano="lg"` (w-20) para la tarjeta de identidad del sidebar; el
+// default conserva el tamaño compacto usado en el resto de la app.
+export default function AvatarPerfil({ perfil, token, onCambio, tamano }) {
+  const grande = tamano === 'lg'
+  const caja = grande ? 'w-20 h-20' : 'w-14 h-14'
+  const texto = grande ? 'text-2xl' : 'text-lg'
   const [sheet, setSheet] = useState(false)
   const [ver, setVer] = useState(false)
   const [subiendo, setSubiendo] = useState(false)
@@ -61,18 +66,18 @@ export default function AvatarPerfil({ perfil, token, onCambio }) {
         onClick={() => setSheet(true)}
         aria-label={foto ? 'Abrir opciones de foto de perfil' : 'Añadir foto de perfil'}
         aria-haspopup="dialog"
-        className="group relative w-14 h-14 shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-navy-400"
+        className={`group relative ${caja} shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-navy-400`}
       >
         {foto ? (
           <img
             src={foto}
             alt={`Foto de ${perfil?.nombre_completo || 'usuario'}`}
-            className="w-14 h-14 rounded-full object-cover border border-neutral-200"
+            className={`${caja} rounded-full object-cover border border-neutral-200`}
             referrerPolicy="no-referrer"
             onError={(e) => { e.currentTarget.style.display = 'none' }}
           />
         ) : (
-          <span aria-hidden="true" className="w-14 h-14 rounded-full bg-navy-800 text-white text-lg font-bold flex items-center justify-center">
+          <span aria-hidden="true" className={`${caja} rounded-full bg-navy-800 text-white ${texto} font-bold flex items-center justify-center`}>
             {inicialesDe(perfil)}
           </span>
         )}

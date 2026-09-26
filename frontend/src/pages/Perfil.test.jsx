@@ -55,13 +55,13 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
     await waitFor(() => {
       expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument()
     })
-    // El correo vive una sola vez (campo del formulario, sin duplicar en el resumen).
-    expect(screen.queryByText('arrendador@alojau.com')).not.toBeInTheDocument()
+    // El correo vive en el input (display value) y en la tarjeta del sidebar.
+    expect(screen.getByTitle('arrendador@alojau.com')).toBeInTheDocument()
     expect(screen.getByText(/Sin verificar \(0 pts\)/i)).toBeInTheDocument()
     // R1: sin botón de auto-verificación ni bloque huérfano de admin; la vía es Telegram
     expect(screen.queryByRole('button', { name: /Verificar teléfono/i })).not.toBeInTheDocument()
     expect(screen.queryByText(/Un administrador debe verificar tu línea/i)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Abrir Bot de Telegram/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Abrir Bot en Telegram/ })).toBeInTheDocument()
   })
 
   it('al guardar NO envía telefono_verificado al backend (solo-lectura OLA2-M4)', async () => {
@@ -325,7 +325,11 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
       </BrowserRouter>
     )
     await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
-    expect(screen.getByText(/Completa tu perfil \(100%\)/)).toBeInTheDocument()
+    // Métrica única: anillo radial del sidebar (sin barra plana duplicada).
+    expect(screen.queryByText(/Completa tu perfil/)).not.toBeInTheDocument()
+    expect(screen.getByText('100%')).toBeInTheDocument()
+    expect(screen.getByText('Perfil Verificado')).toBeInTheDocument()
+    expect(screen.getByText('Arrendador', { selector: 'span' })).toBeInTheDocument()
   })
 
   it('R1 teléfono verificado bloqueado con ✏️; editar lo habilita', async () => {
@@ -366,7 +370,7 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
       </BrowserRouter>
     )
     await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('tab', { name: /Nivel de Confianza/ }))
+    fireEvent.click(screen.getByRole('tab', { name: /Confianza y Reputación/ }))
     expect(screen.getByText(/Súbela al 100%/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Verificar mi correo/ })).toBeInTheDocument()
   })

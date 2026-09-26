@@ -44,7 +44,7 @@ describe('colchón branches honesto (helpers + bordes UI)', () => {
   it('TelegramVincular error de red muestra alerta honesta', async () => {
     vi.spyOn(api, 'post').mockRejectedValue({ response: { data: { detail: 'Sin bot' } } })
     render(<TelegramVincular token="t" vinculado={false} />)
-    fireEvent.click(screen.getByRole('button', { name: /Abrir Bot de Telegram/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Abrir Bot en Telegram/ }))
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Sin bot'))
   })
 
@@ -52,7 +52,7 @@ describe('colchón branches honesto (helpers + bordes UI)', () => {
     vi.spyOn(api, 'post').mockResolvedValue({ data: { bot_url: 'http://mal' } })
     const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
     render(<TelegramVincular token="t" vinculado={false} />)
-    fireEvent.click(screen.getByRole('button', { name: /Abrir Bot de Telegram/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Abrir Bot en Telegram/ }))
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
     expect(openSpy).not.toHaveBeenCalled()
     openSpy.mockRestore()

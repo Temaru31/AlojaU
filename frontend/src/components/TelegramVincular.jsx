@@ -12,9 +12,15 @@ export function esErrorSinBot(err) {
   return err?.response?.status === 503
 }
 
-export default function TelegramVincular({ token, vinculado }) {
+// Guía infalible en 3 pasos: 1) abrir el bot 2) pulsar /start en Telegram
+// 3) comprobar aquí. La confirmación es REAL: re-lee el perfil y solo marca
+// vinculado si el backend ya registró el chat (el bot lo hace al /start).
+// No existe endpoint de "verificar PIN": inventarlo sería placebo.
+export default function TelegramVincular({ token, vinculado, onVinculado }) {
   const [cargando, setCargando] = useState(false)
+  const [comprobando, setComprobando] = useState(false)
   const [error, setError] = useState('')
+  const [botAbierto, setBotAbierto] = useState(false)
   const [modoLocal, setModoLocal] = useState(false)
   const [pinSim, setPinSim] = useState('')
   const [pinOk, setPinOk] = useState(false)
@@ -37,6 +43,7 @@ export default function TelegramVincular({ token, vinculado }) {
       // window.open no lanza con bloqueador (retorna null): fallback a href.
       const ventana = window.open(url, '_blank', 'noopener,noreferrer')
       if (!ventana) window.location.href = url
+      setBotAbierto(true)
     } catch (e) {
       if (esErrorSinBot(e)) {
         setModoLocal(true)
@@ -53,6 +60,25 @@ export default function TelegramVincular({ token, vinculado }) {
     // Simulación de interfaz: acepta cualquier PIN de 6 dígitos solo para
     // mostrar el estado visual; no toca el backend ni la vinculación real.
     if (/^[0-9]{6}$/.test(pinSim)) setPinOk(true)
+  }
+
+  const comprobarVinculacion = async () => {
+    setComprobando(true)
+    setError('')
+    try {
+      const r = await api.get('/api/auth/perfil', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (r.data?.telegram_vinculado) {
+        onVinculado?.(true)
+      } else {
+        setError('Aún no detectamos tu /start. Abre el bot, pulsa /start y vuelve a intentarlo.')
+      }
+    } catch {
+      setError('No se pudo comprobar. Intenta de nuevo.')
+    } finally {
+      setComprobando(false)
+    }
   }
 
   // El simulador solo existe en desarrollo local (nunca en producción).
@@ -77,14 +103,41 @@ export default function TelegramVincular({ token, vinculado }) {
           : 'Vincula tu cuenta para recibir los códigos en tu chat de Telegram. Si no vinculas, llegan por correo.'}
       </p>
       {!vinculado && (
-        <button
-          type="button"
-          onClick={abrirBot}
-          disabled={cargando}
-          className="px-4 py-2 min-h-[44px] text-sm font-semibold text-white bg-navy-800 rounded-lg hover:bg-navy-900 active:bg-navy-900 transition disabled:opacity-50"
-        >
-          {cargando ? 'Abriendo…' : 'Abrir Bot de Telegram'}
-        </button>
+        <ol className="space-y-2.5 pt-1">
+          <li className="flex items-start gap-2.5">
+            <span aria-hidden="true" className="shrink-0 w-5 h-5 rounded-full bg-navy-800 text-white text-[11px] font-bold flex items-center justify-center mt-2">1</span>
+            <div className="flex-1">
+              <button
+                type="button"
+                onClick={abrirBot}
+                disabled={cargando}
+                className="w-full sm:w-auto px-4 py-2 min-h-[44px] text-sm font-semibold text-white bg-navy-800 rounded-lg hover:bg-navy-900 active:bg-navy-900 transition disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy-800/40"
+              >
+                {cargando ? 'Abriendo…' : 'Abrir Bot en Telegram'}
+              </button>
+            </div>
+          </li>
+          <li className="flex items-start gap-2.5">
+            <span aria-hidden="true" className="shrink-0 w-5 h-5 rounded-full bg-navy-800 text-white text-[11px] font-bold flex items-center justify-center mt-0.5">2</span>
+            <p className="text-xs text-neutral-600 leading-relaxed">
+              Dentro de Telegram presiona el botón <code className="px-1.5 py-0.5 rounded bg-neutral-100 border border-neutral-200 font-mono text-[11px]">/start</code> para recibir tu PIN de 6 dígitos.
+            </p>
+          </li>
+          <li className="flex items-start gap-2.5">
+            <span aria-hidden="true" className="shrink-0 w-5 h-5 rounded-full bg-navy-800 text-white text-[11px] font-bold flex items-center justify-center mt-2">3</span>
+            <div className="flex-1">
+              <button
+                type="button"
+                onClick={comprobarVinculacion}
+                disabled={comprobando}
+                className="w-full sm:w-auto px-4 py-2 min-h-[44px] text-sm font-semibold text-navy-800 bg-white border-2 border-navy-800 rounded-lg hover:bg-navy-50 active:bg-navy-100 transition disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy-800/40"
+              >
+                {comprobando ? 'Comprobando…' : 'Vincular cuenta'}
+              </button>
+              <p className="text-[11px] text-neutral-400 mt-1">El bot confirma solo; aquí verificamos que ya quedó vinculado.</p>
+            </div>
+          </li>
+        </ol>
       )}
       {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
       {/* F5: sin bot configurado el backend da 503. En dev se ofrece

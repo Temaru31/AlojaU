@@ -19,7 +19,7 @@ describe('OtpForm rutas de error honestas (M5 canal correcto)', () => {
   it('código incompleto deja Verificar deshabilitado sin llamar api', () => {
     render(<OtpForm email="a@b.co" />)
     fireEvent.change(screen.getByLabelText(/6 dígitos/i), { target: { value: '123' } })
-    expect(screen.getByRole('button', { name: /Verificar/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Confirmar código/ })).toBeDisabled()
     expect(api.post).not.toHaveBeenCalled()
   })
 
@@ -27,7 +27,7 @@ describe('OtpForm rutas de error honestas (M5 canal correcto)', () => {
     api.post.mockRejectedValue({ response: { data: { detail: 'Código inválido o expirado' } } })
     render(<OtpForm email="a@b.co" />)
     fireEvent.change(screen.getByLabelText(/6 dígitos/i), { target: { value: '000000' } })
-    fireEvent.click(screen.getByRole('button', { name: /Verificar/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Confirmar código/ }))
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Código inválido o expirado'))
   })
 })
