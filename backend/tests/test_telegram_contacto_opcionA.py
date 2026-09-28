@@ -19,7 +19,8 @@ PHONE = "573009991234"
 
 def _dsn():
     raw = os.getenv("DATABASE_URL", "postgresql://alojau:alojau123@localhost:5432/alojau")
-    return raw.replace("postgresql+asyncpg://", "postgresql://")
+    from app.db.session import dsn_asyncpg_a_psycopg
+    return dsn_asyncpg_a_psycopg(raw)
 
 
 def _pg():
@@ -71,9 +72,11 @@ def limpieza():
 
 def _usuario_limpio(limpieza, tag, *, telefono=PHONE, verificado=True):
     """Registra usuario temporal con teléfono controlado. Retorna (email, headers)."""
+    from conftest import generar_password_prueba
+    pw = generar_password_prueba()
     email = f"test_user_tmp_ct{tag}{uuid.uuid4().hex[:6]}@alojau.com"
     assert client.post("/api/auth/register", json={
-        "email": email, "password": "ContactoA1!x", "nombre_completo": "Temporal Contacto",
+        "email": email, "password": pw, "nombre_completo": "Temporal Contacto",
         "telefono_whatsapp": "573001234567", "acepto_tratamiento_datos": True}).status_code == 200
 
     async def _flags():
@@ -89,7 +92,7 @@ def _usuario_limpio(limpieza, tag, *, telefono=PHONE, verificado=True):
             await db.commit()
     asyncio.run(_flags())
     tok = client.post("/api/auth/login",
-                      json={"email": email, "password": "ContactoA1!x"}).json()["access_token"]
+                      json={"email": email, "password": pw}).json()["access_token"]
     return email, {"Authorization": f"Bearer {tok}"}
 
 

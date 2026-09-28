@@ -297,11 +297,15 @@ def test_hu008_whatsapp_solo_verificado():
     p = r.json()
     # Si telefono verificado, debe tener wa.me
     if p.get("telefono_whatsapp"):
+        from urllib.parse import urlsplit
         assert p.get("whatsapp_url") is not None
-        assert "wa.me" in p["whatsapp_url"]
+        # Host exacto wa.me con esquema https (CodeQL: sin substring, que
+        # aceptaría "wa.me.evil" o paths raros).
+        partes = urlsplit(p["whatsapp_url"])
+        assert partes.scheme == "https" and partes.hostname == "wa.me"
         assert str(p["id"]) in p["whatsapp_url"]
         # sin + y con encode
-        assert "https://wa.me/" in p["whatsapp_url"]
+        assert p["whatsapp_url"].startswith("https://wa.me/")
     # Crear una con teléfono no verificado? Nuestro mock arrendador es verificado, siempre tendrá whatsapp
     # Pero probamos que PENDIENTE también oculta? Frontend oculta, backend sigue dando whatsapp si verificado, es ok
     pass

@@ -23,7 +23,8 @@ TAG = "HistMias"
 
 def _dsn():
     raw = os.getenv("DATABASE_URL", "postgresql://alojau:alojau123@localhost:5432/alojau")
-    return raw.replace("postgresql+asyncpg://", "postgresql://")
+    from app.db.session import dsn_asyncpg_a_psycopg
+    return dsn_asyncpg_a_psycopg(raw)
 
 
 def _pg():
@@ -94,10 +95,12 @@ def test_mias_historial_dueno_ve_sus_eventos(limpieza):
     if not _pg():
         pytest.skip("sin PG real")
     # Usuario temporal verificado (patrón oráculo): el demo EST no pasa
-    # el gate de teléfono/email para publicar.
+    # el gate de teléfono/email para publicar. Clave aleatoria (no quemada).
+    from conftest import generar_password_prueba
+    pw = generar_password_prueba()
     email = f"test_user_tmp_hm{uuid.uuid4().hex[:8]}@alojau.com"
     assert client.post("/api/auth/register", json={
-        "email": email, "password": "HistMias1!x", "nombre_completo": "Temporal Historial",
+        "email": email, "password": pw, "nombre_completo": "Temporal Historial",
         "telefono_whatsapp": "573001234567", "acepto_tratamiento_datos": True}).status_code == 200
 
     async def _ver():
@@ -112,7 +115,7 @@ def test_mias_historial_dueno_ve_sus_eventos(limpieza):
             await db.commit()
     asyncio.run(_ver())
     tok = client.post("/api/auth/login",
-                      json={"email": email, "password": "HistMias1!x"}).json()["access_token"]
+                      json={"email": email, "password": pw}).json()["access_token"]
     h = {"Authorization": f"Bearer {tok}"}
     PUB["titulo"] = f"Habitación temporal amplia {TAG} {uuid.uuid4().hex[:6]}"
     r_pub = client.post("/api/publicaciones", json=PUB, headers=h)

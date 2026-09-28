@@ -205,7 +205,15 @@ def test_csp_docs_permite_swagger():
     r = client.get("/docs")
     assert r.status_code == 200
     csp = r.headers.get("content-security-policy", "")
-    assert "cdn.jsdelivr.net" in csp  # JS/CSS de Swagger UI
+    # Host exacto en las directivas script/style (CodeQL: sin substring):
+    # "cdn.jsdelivr.net.evil" o query-params no deben colarse.
+    from urllib.parse import urlsplit
+    fuentes = set()
+    for directiva in csp.split(";"):
+        partes = directiva.strip().split()
+        if partes and partes[0] in ("script-src", "style-src"):
+            fuentes.update(partes[1:])
+    assert "https://cdn.jsdelivr.net" in fuentes  # JS/CSS de Swagger UI
 
 def test_permissions_policy():
     r = client.get("/health")

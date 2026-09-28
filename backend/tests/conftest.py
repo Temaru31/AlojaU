@@ -30,8 +30,18 @@ def _dsn_test() -> str:
     raw = os.getenv(
         "DATABASE_URL", "postgresql://alojau:alojau123@localhost:5432/alojau"
     )
-    dsn = raw.replace("postgresql+asyncpg://", "postgresql://")
-    return dsn
+    from app.db.session import dsn_asyncpg_a_psycopg
+    return dsn_asyncpg_a_psycopg(raw)
+
+
+def generar_password_prueba() -> str:
+    """Password fuerte ALEATORIA para usuarios temporales de tests.
+
+    Cumple _password_fuerte_v13 (8+, mayúscula, número, especial) sin quemar
+    credenciales en el código (CodeQL/higiene de secretos).
+    """
+    import secrets
+    return f"T-{secrets.token_hex(5)}9!Q"
 
 
 def _es_url_segura(dsn: str) -> bool:
