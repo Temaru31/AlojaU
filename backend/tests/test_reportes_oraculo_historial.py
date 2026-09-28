@@ -41,8 +41,13 @@ PUB = {
 def limpieza():
     creados = []
     auth_router._LOGIN_ATTEMPTS.clear()
+    # El bucket anti-spam es por IP y TestClient comparte "testclient":
+    # limpiarlo evita 429 heredados de otros archivos (orden-dependiente).
+    from app.routers import reportes as reportes_mod
+    reportes_mod.clear_report_rate_limit_for_tests()
     yield creados
     auth_router._LOGIN_ATTEMPTS.clear()
+    reportes_mod.clear_report_rate_limit_for_tests()
     for e in list(creados):
         auth_router.MOCK_USERS.pop(e, None)
     try:

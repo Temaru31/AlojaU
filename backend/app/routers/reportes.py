@@ -54,6 +54,17 @@ REPORT_LIMIT = 5
 REPORT_WINDOW_S = 60.0
 
 
+def clear_report_rate_limit_for_tests() -> None:
+    """Limpia el bucket anti-spam (solo tests).
+
+    TestClient siempre usa la misma IP ("testclient"): sin limpieza, un
+    archivo que reporta mucho deja al siguiente en 429 según el orden de
+    ejecución (falso negativo intermitente). Patrón del repo (cfr.
+    clear_rol_cache_for_tests en core/security).
+    """
+    _REPORT_ATTEMPTS.clear()
+
+
 def _check_report_rate_limit(request: Request):
     ip = request.client.host if request.client and request.client.host else "unknown"
     now = time.monotonic()

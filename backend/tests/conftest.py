@@ -133,3 +133,56 @@ def _uploads_limpio():
             os.remove(os.path.join(d, name))
         except FileNotFoundError:
             pass
+
+
+@pytest.fixture(scope="function", autouse=True)
+def _memoria_hermetica():
+    """Aísla el estado global en memoria entre tests (orden-independiente).
+
+    TestClient comparte IP ("testclient") y los throttles/cachés viven en
+    el proceso: sin esto, un archivo que llena un bucket deja 429 al
+    siguiente (falso negativo intermitente, ej. reportes/oráculo).
+    La BD la resetea _t5_test_hermetico; aquí solo memoria. Los tests que
+    mutan MOCK_USERS/MOCK_PUBS a propósito conservan su propio cleanup.
+    """
+    _limpiar_memoria()
+    yield
+    _limpiar_memoria()
+
+
+def _limpiar_memoria() -> None:
+    try:
+        from app.routers import reportes as _rep
+        _rep.clear_report_rate_limit_for_tests()
+    except Exception:
+        pass
+    try:
+        from app.services import telegram as _tg
+        _tg.clear_throttle_for_tests()
+    except Exception:
+        pass
+    try:
+        from app.core.security import clear_rol_cache_for_tests
+        clear_rol_cache_for_tests()
+    except Exception:
+        pass
+    try:
+        from app.routers import publicaciones as _pub
+        _pub.clear_admin_revalid_for_tests()
+    except Exception:
+        pass
+    for _mod, _nombres in (
+        ("app.routers.auth", ("_TG_MEM", "_AVATAR_MEM", "_OTP_SOLICITAR",
+                              "_OTP_VERIFICAR", "_MOCK_OTPS", "_MOCK_RESETS",
+                              "_TELEGRAM_VINCULOS", "_TELEGRAM_USADOS")),
+        ("app.routers.publicaciones", ("_VISTAS_MEM", "_VISTAS_MOCK_SET")),
+    ):
+        try:
+            import importlib as _il
+            _m = _il.import_module(_mod)
+            for _n in _nombres:
+                _o = getattr(_m, _n, None)
+                if isinstance(_o, (dict, set)):
+                    _o.clear()
+        except Exception:
+            pass

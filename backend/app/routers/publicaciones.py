@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 import logging
 import re
+import time as _time
 logger = logging.getLogger("alojau.publicaciones")
 
 # Bloque 2: idempotencia de POST /api/publicaciones (solo este endpoint;
@@ -144,14 +145,52 @@ def _mock_enabled() -> bool:
     # B0-2 fail-closed: mock solo en dev/test con flag True.
     return bool(getattr(settings, "mock_enabled", False))
 
-def _is_owner_or_admin(user: dict | None, owner_id: int | None) -> bool:
+# Revalidación ADMIN anti-stale (caché 10s; el negativo no se cachea).
+_ADMIN_REVALID_MEM: dict[int, tuple[float, bool]] = {}
+_ADMIN_REVALID_TTL_S = 10.0
+
+
+def clear_admin_revalid_for_tests() -> None:
+    _ADMIN_REVALID_MEM.clear()
+
+
+async def _is_owner_or_admin(user: dict | None, owner_id: int | None) -> bool:
+    """Dueño por id, o ADMIN revalidado contra BD (anti-stale, caché 10s).
+
+    El claim ADMIN del JWT (2h) no basta: un admin democionado no debe
+    seguir viendo/editando avisos ajenos. La caché de 10s evita 1 query
+    por request en ráfagas; el negativo no se cachea (fail-closed ante
+    democión). Sin PG en dev con mocks, manda el claim (tests).
+    """
     if not user:
         return False
-    if user.get("rol") == "ADMIN":
+    try:
+        if owner_id is not None and int(user.get("id")) == int(owner_id):
+            return True
+    except Exception:
+        pass
+    if user.get("rol") != "ADMIN":
+        return False
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        return False
+    ahora = _time.monotonic()
+    hit = _ADMIN_REVALID_MEM.get(uid)
+    if hit and hit[1] and (ahora - hit[0]) < _ADMIN_REVALID_TTL_S:
         return True
     try:
-        return int(user.get("id")) == int(owner_id) if owner_id is not None else False
+        from app.models import Usuario as _U
+        from app.db.session import AsyncSession as _Factory
+        async with _Factory() as _s:
+            res = await _s.execute(select(_U.rol).where(_U.id == uid))
+            es_admin = (res.scalars().first() or "") == "ADMIN"
+        if es_admin:
+            _ADMIN_REVALID_MEM[uid] = (ahora, True)
+            return True
+        return False
     except Exception:
+        if _mock_enabled():
+            return True
         return False
 
 # v15.2 throttle de vistas: 120/min por IP (memoria en mock, PG en real).
@@ -406,6 +445,58 @@ async def mis_publicaciones(
     items = [view.mock_to_out(p, None, True) for p in filtradas[offset:offset + size_norm]]
     return build_paginated(items, total, page, size_norm)
 
+
+@router.get("/mias/historial", summary="Dueño: actividad reciente de mis avisos")
+async def mi_historial(
+    page: int = Query(1, ge=1, le=1000),
+    size: int = Query(20, ge=1, le=50),
+    db: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Trazabilidad agregada: últimos eventos (creada, aprobada, pausada,
+    renovada...) de TODOS los avisos del dueño, con título del aviso.
+    Solo dueño (401/403 por contrato). Base del centro de notificaciones
+    dentro de la app (ver docs/NOTIFICACIONES.md).
+    Sin PG en dev: lista vacía (el mock no persiste auditoría).
+    """
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    try:
+        from app.models import Publicacion, PublicacionesAudit
+
+        base = (
+            select(PublicacionesAudit, Publicacion.titulo)
+            .join(Publicacion, PublicacionesAudit.publicacion_id == Publicacion.id)
+            .where(Publicacion.usuario_id == uid)
+        )
+        total = (await db.execute(
+            select(func.count()).select_from(PublicacionesAudit)
+            .join(Publicacion, PublicacionesAudit.publicacion_id == Publicacion.id)
+            .where(Publicacion.usuario_id == uid)
+        )).scalar() or 0
+        offset, size_norm = paginate_params(page, size)
+        rows = (await db.execute(
+            base.order_by(PublicacionesAudit.id.desc()).limit(size_norm).offset(offset)
+        )).all()
+        return {"items": [
+            {"id": a.id, "publicacion_id": a.publicacion_id, "titulo": titulo,
+             "evento": a.evento, "detalle": a.detalle,
+             "creado_en": a.creado_en.isoformat() if a.creado_en else None}
+            for a, titulo in rows],
+            "total": total, "page": page, "size": size_norm}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[DB fallback] mias/historial {uid} falló: {e!r}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    return {"items": [], "total": 0, "page": page, "size": size_norm, "mock": True}
+
 @router.get("/config-publica", summary="Config pública de validación y frescura (sin auth)")
 async def config_publica(db: AsyncSession = Depends(get_session)):
     """Detalle #3: expone los settings que el frontend hardcodeaba.
@@ -488,7 +579,7 @@ async def get_publicacion(
                     and not (current_user and current_user.get("rol") == "ADMIN")):
                 raise HTTPException(status_code=404, detail="Publicación no encontrada")
             # Detalle no-ACTIVO privado (404 para no filtrar existencia).
-            if p.estado != "ACTIVO" and not _is_owner_or_admin(current_user, p.usuario_id):
+            if p.estado != "ACTIVO" and not await _is_owner_or_admin(current_user, p.usuario_id):
                 raise HTTPException(status_code=404, detail="Publicación no encontrada")
             # 004 POIs: referencia al lugar buscado (el mapa del Detalle se
             # sincroniza a ESTE punto; sin campus_id se usa la distancia mínima).
@@ -509,7 +600,7 @@ async def get_publicacion(
                 }
             return view.build_detail(
                 p, reportes_activos, u, dist, campus_ref,
-                await repo.vistas_publicas(db) or _is_owner_or_admin(current_user, p.usuario_id),
+                await repo.vistas_publicas(db) or await _is_owner_or_admin(current_user, p.usuario_id),
             )
     except HTTPException:
         raise
@@ -531,7 +622,7 @@ async def get_publicacion(
     pub = next((p for p in MOCK_PUBS if p["id"] == pub_id), None)
     if not pub:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if pub.get("estado") != "ACTIVO" and not _is_owner_or_admin(current_user, pub.get("usuario_id")):
+    if pub.get("estado") != "ACTIVO" and not await _is_owner_or_admin(current_user, pub.get("usuario_id")):
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
     # 004 POIs mock: misma forma que la rama DB (distancia a ESTE lugar + ref).
     if campus_id is not None:
@@ -544,7 +635,7 @@ async def get_publicacion(
         if pub.get("latitud") is not None and pub.get("longitud") is not None:
             dist_ref = haversine_m(pub["latitud"], pub["longitud"], lugar["lat"], lugar["lng"])
         out = view.mock_to_out(pub, campus_id,
-                               _is_owner_or_admin(current_user, pub.get("usuario_id")))
+                               await _is_owner_or_admin(current_user, pub.get("usuario_id")))
         out["campus_ref"] = {
             "campus_id": campus_id,
             "institucion": lugar["institucion"],
@@ -556,7 +647,7 @@ async def get_publicacion(
         }
         return out
     return view.mock_to_out(pub, None,
-                            _is_owner_or_admin(current_user, pub.get("usuario_id")))
+                            await _is_owner_or_admin(current_user, pub.get("usuario_id")))
 
 @router.patch("/{pub_id}", response_model=PublicacionCardOut, summary="UX Editar aviso del dueño (solo owner/ADMIN)")
 async def editar_publicacion(
@@ -596,7 +687,7 @@ async def editar_publicacion(
         p = await db.get(Publicacion, pub_id)
         if not p:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not _is_owner_or_admin(user, p.usuario_id):
+        if not await _is_owner_or_admin(user, p.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede editar")
         if servicios_nuevos is not None:
             for sid in servicios_nuevos:
@@ -653,7 +744,7 @@ async def editar_publicacion(
     pub = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
     if not pub:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if not _is_owner_or_admin(user, pub.get("usuario_id")):
+    if not await _is_owner_or_admin(user, pub.get("usuario_id")):
         raise HTTPException(status_code=403, detail="Solo el dueño puede editar")
     if fotos_nuevas is not None:
         # Mock dev: el set ya viene validado por el schema; reemplazo directo.
@@ -750,7 +841,7 @@ async def reemplazar_fotos(
         pub = await db.get(Publicacion, pub_id)
         if not pub:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not _is_owner_or_admin(user, pub.usuario_id):
+        if not await _is_owner_or_admin(user, pub.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede editar fotos")
         await _reconciliar_fotos_urls(db, pub_id, urls)
         await db.commit()
@@ -781,7 +872,7 @@ async def reemplazar_fotos(
     pub = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
     if not pub:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if not _is_owner_or_admin(user, pub.get("usuario_id")):
+    if not await _is_owner_or_admin(user, pub.get("usuario_id")):
         raise HTTPException(status_code=403, detail="Solo el dueño puede editar fotos")
     pub["fotos"] = list(urls)
     return {"id": pub_id, "fotos": list(urls),
@@ -884,7 +975,7 @@ async def eliminar_publicacion(
         p = await db.get(Publicacion, pub_id)
         if not p:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not _is_owner_or_admin(user, p.usuario_id):
+        if not await _is_owner_or_admin(user, p.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede eliminar")
         dueno_id = p.usuario_id
         await db.delete(p)
@@ -914,7 +1005,7 @@ async def eliminar_publicacion(
     pub = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
     if not pub:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if not _is_owner_or_admin(user, pub.get("usuario_id")):
+    if not await _is_owner_or_admin(user, pub.get("usuario_id")):
         raise HTTPException(status_code=403, detail="Solo el dueño puede eliminar")
     dueno_id = pub.get("usuario_id")
     MOCK_PUBS.remove(pub)
@@ -967,7 +1058,7 @@ async def cambiar_estado_dueno(
         p = await db.get(Publicacion, pub_id)
         if not p:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not _is_owner_or_admin(user, p.usuario_id):
+        if not await _is_owner_or_admin(user, p.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede cambiar el estado")
         if p.estado not in ("ACTIVO", "PAUSADO"):
             raise HTTPException(
@@ -1009,7 +1100,7 @@ async def cambiar_estado_dueno(
     pub = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
     if not pub:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if not _is_owner_or_admin(user, pub.get("usuario_id")):
+    if not await _is_owner_or_admin(user, pub.get("usuario_id")):
         raise HTTPException(status_code=403, detail="Solo el dueño puede cambiar el estado")
     if pub.get("estado") not in ("ACTIVO", "PAUSADO"):
         raise HTTPException(status_code=409, detail="Solo ACTIVO<->PAUSADO")
@@ -1037,7 +1128,7 @@ async def historial_aviso(
         pub = await db.get(Publicacion, pub_id)
         if not pub:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not _is_owner_or_admin(user, pub.usuario_id):
+        if not await _is_owner_or_admin(user, pub.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede ver el historial")
         rows = (await db.execute(
             select(PublicacionesAudit).where(PublicacionesAudit.publicacion_id == pub_id)

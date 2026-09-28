@@ -198,11 +198,45 @@ async def require_arrendador(authorization: str = Header(None)):
     raise HTTPException(status_code=403, detail="Solo ARRENDADOR")
 
 async def require_admin(authorization: str = Header(None)):
-    # Guard ADMIN para moderación. 401 sin token, 403 si no ADMIN.
+    """Guard ADMIN para moderación. 401 sin token, 403 si no ADMIN.
+
+    Endurecido (auditoría): el claim ADMIN se REVALIDA contra BD en cada
+    llamada, no se confía en el JWT (vigencia 2h). Si un ADMIN es
+    democionado, su token viejo deja de abrir el panel de inmediato.
+    Un claim no-ADMIN da 403 directo (sin query: nadie se promueve solo;
+    tras una promoción real se reingresa). Tráfico admin bajo: aceptable.
+    Sin PG en dev/tests con mocks activos, el claim del mock manda.
+    """
     u = await get_current_user(authorization)
     if u.get("rol") != "ADMIN":
         raise HTTPException(status_code=403, detail="Solo ADMIN")
-    return u
+    try:
+        uid = u.get("id")
+        if isinstance(uid, int):
+            try:
+                from sqlalchemy import select as _select
+                from app.models import Usuario as _U
+                from app.db.session import AsyncSession as _Factory
+                async with _Factory() as _s:
+                    res = await _s.execute(_select(_U).where(_U.id == uid))
+                    row = res.scalars().first()
+                    if row is not None:
+                        if row.rol == "ADMIN":
+                            return {**u, "rol": "ADMIN"}
+                        raise HTTPException(status_code=403, detail="Solo ADMIN")
+            except HTTPException:
+                raise
+            except Exception:
+                if _mock_activo() and u.get("rol") == "ADMIN":
+                    return u
+                raise
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning("[security] verificación de rol ADMIN falló: %r", e)
+    if _mock_activo() and u.get("rol") == "ADMIN":
+        return u
+    raise HTTPException(status_code=403, detail="Solo ADMIN")
 
 
 # Alias con nombre explícito para endpoints de administración (RBAC).
