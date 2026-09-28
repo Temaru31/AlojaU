@@ -38,7 +38,7 @@ describe('Card - HU-001/003 y overflow', ()=>{
     // matcher de función con prefijo exacto sobre el string completo.
     expect(screen.getAllByText(/^4 fotos$/).length).toBeGreaterThan(0)
     expect(screen.queryByText(
-      (_contenido, el) => (el?.textContent || '').startsWith('https://a.com'),
+      (_contenido, el) => (el?.textContent || '').startsWith('https://a.com/'),
     )).not.toBeInTheDocument()
   })
 

@@ -1330,10 +1330,13 @@ def _enviar_codigo(email: str, codigo: str, proposito: str, chat_id: str | None 
             logger.warning(f"[otp telegram DM] falló, usando email: {exc_resumen(e)}")
     # Sin DM vinculado o sin bot: Email-code (log en dev, Supabase en prod).
     # Semántica correcta: canal "email" = llegó (o se logueó) por correo.
+    # CodeQL: desinfección directa sobre args del logger (wrappers no cortan taint).
+    _proposito_seguro = str(proposito).replace('\n', '').replace('\r', '')
+    _email_seguro = str(una_linea(email)).replace('\n', '').replace('\r', '')
     if chat_id and not settings.TELEGRAM_BOT_TOKEN.strip():
-        logger.info(f"[otp {proposito}] sin bot configurado, fallback email para {una_linea(email)}")
+        logger.info(f"[otp {_proposito_seguro}] sin bot configurado, fallback email para {_email_seguro}")
     # El código NUNCA se loguea (secreto de un solo uso): solo el hecho.
-    logger.info(f"[otp {proposito}] código generado para {una_linea(email)} (10 min, canal email)")
+    logger.info(f"[otp {_proposito_seguro}] código generado para {_email_seguro} (10 min, canal email)")
     return "email"
 
 
@@ -2125,7 +2128,9 @@ async def recovery_solicitar(data: RecoverySolicitarIn, request: Request,
             pass
         _MOCK_RESETS[email] = {"hash": digest, "expira": time.monotonic() + 900}
     # Respuesta genérica anti-enumeración; en dev se loguea el token.
-    logger.info(f"[recovery] token generado para {una_linea(email)} (15 min, un solo uso)")
+    # CodeQL: desinfección directa (una_linea sola no corta taint).
+    _email_seguro = str(una_linea(email)).replace('\n', '').replace('\r', '')
+    logger.info(f"[recovery] token generado para {_email_seguro} (15 min, un solo uso)")
     resp: dict = {"mensaje": "Si el correo existe, enviamos un enlace válido 15 minutos."}
     if settings.ENV != "prod" and _mock_enabled():
         resp["dev_token"] = token  # solo dev/test para e2e sin SMTP

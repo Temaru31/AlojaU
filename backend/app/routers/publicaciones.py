@@ -420,7 +420,9 @@ async def mis_publicaciones(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] mis_publicaciones {uid} falló: {exc_resumen(e)}", exc_info=True)
+        _uid_seguro = str(uid).replace('\n', '').replace('\r', '')
+        _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
+        logger.error(f"[DB fallback] mis_publicaciones {_uid_seguro} falló: {_err_seguro}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -489,7 +491,9 @@ async def mi_historial(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] mias/historial {uid} falló: {exc_resumen(e)}", exc_info=True)
+        _uid_seguro = str(uid).replace('\n', '').replace('\r', '')
+        _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
+        logger.error(f"[DB fallback] mias/historial {_uid_seguro} falló: {_err_seguro}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -732,7 +736,9 @@ async def editar_publicacion(
             pass
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] editar {pub_id} falló: {exc_resumen(e)}", exc_info=True)
+        _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
+        _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
+        logger.error(f"[DB fallback] editar {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -861,7 +867,9 @@ async def reemplazar_fotos(
             pass
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] fotos {pub_id} falló: {exc_resumen(e)}", exc_info=True)
+        _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
+        _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
+        logger.error(f"[DB fallback] fotos {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -911,7 +919,9 @@ async def renovar_publicacion(
             pass
         raise
     except Exception as e:
-        logger.error(f"[DB] renovar_publicacion {pub_id} falló: {exc_resumen(e)}", exc_info=True)
+        _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
+        _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
+        logger.error(f"[DB] renovar_publicacion {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -994,7 +1004,9 @@ async def eliminar_publicacion(
             pass
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] eliminar {pub_id} falló: {exc_resumen(e)}", exc_info=True)
+        _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
+        _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
+        logger.error(f"[DB fallback] eliminar {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -1089,7 +1101,9 @@ async def cambiar_estado_dueno(
             pass
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] estado {pub_id} falló: {exc_resumen(e)}", exc_info=True)
+        _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
+        _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
+        logger.error(f"[DB fallback] estado {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -1142,7 +1156,9 @@ async def historial_aviso(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] historial {pub_id} falló: {exc_resumen(e)}", exc_info=True)
+        _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
+        _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
+        logger.error(f"[DB fallback] historial {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -1206,7 +1222,9 @@ async def similares(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] similares {pub_id} falló: {exc_resumen(e)}", exc_info=True)
+        _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
+        _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
+        logger.error(f"[DB fallback] similares {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -1276,7 +1294,9 @@ async def registrar_vista(
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[DB vista] {pub_id} falló: {exc_resumen(e)}", exc_info=True)
+        _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
+        _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
+        logger.error(f"[DB vista] {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     # Mock dev: memoria local del proceso.

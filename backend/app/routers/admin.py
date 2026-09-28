@@ -238,7 +238,9 @@ async def cambiar_estado(
             pass
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] admin cambiar_estado {pub_id} falló: {exc_resumen(e)}", exc_info=True)
+        _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
+        _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
+        logger.error(f"[DB fallback] admin cambiar_estado {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -287,7 +289,9 @@ async def eliminar(
             pass
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] admin eliminar {pub_id} falló: {exc_resumen(e)}", exc_info=True)
+        _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
+        _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
+        logger.error(f"[DB fallback] admin eliminar {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
