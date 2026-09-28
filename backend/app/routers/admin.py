@@ -54,6 +54,24 @@ class CambioEstadoIn(BaseModel):
 
 ESTADO_A_EVENTO = {"ACTIVO": "APPROVED", "RECHAZADO": "REJECTED", "PAUSADO": "PAUSED"}
 
+# Re-export de compatibilidad (fuente única: services/notifications).
+from app.services.notifications import MENSAJE_ESTADO_DUENO  # noqa: E402
+
+
+async def _notificar_dueno_estado(db, usuario_id: int | None, titulo: str, estado: str) -> str:
+    """Avisa al dueño del cambio de estado (best-effort, nunca rompe el 200).
+
+    Delega en el centro de notificaciones (services/notifications):
+    DM de Telegram si hay chat vinculado, si no queda el aviso dentro de
+    la app (banner de Mis publicaciones). Retorna canal o "none".
+    """
+    try:
+        from app.services import notifications as _nt
+        return await _nt.notificar_cambio_estado(db, usuario_id, titulo, estado)
+    except Exception as e:
+        logger.warning(f"[admin notificar] fallo best-effort: {e!r}")
+        return "none"
+
 
 @router.get("/metricas", response_model=MetricasOut, summary="Admin métricas globales")
 async def metricas(
@@ -174,7 +192,8 @@ async def cambiar_estado(
     admin: dict = Depends(require_admin),
 ):
     """approve->ACTIVO (+audit APPROVED), rechazar->RECHAZADO (+REJECTED), pausar->PAUSADO (+PAUSED).
-    404 si no existe. El dueño ve el cambio en Mis Publicaciones."""
+    404 si no existe. El dueño ve el cambio en Mis Publicaciones y recibe DM
+    de Telegram si vinculó su chat (best-effort)."""
     try:
         from app.models import Publicacion, PublicacionesAudit
 
@@ -196,6 +215,7 @@ async def cambiar_estado(
         except Exception:
             pass
         await db.commit()
+        dueno_id, titulo = p.usuario_id, p.titulo
         stmt = (
             select(Publicacion)
             .options(
@@ -207,6 +227,8 @@ async def cambiar_estado(
         )
         p = (await db.execute(stmt)).scalars().unique().one()
         rep_map, users_map, _ = await repo.fetch_page_aggregates(db, [p], None)
+        # Aviso fuera de la app (no bloquea la respuesta si Telegram falla).
+        await _notificar_dueno_estado(db, dueno_id, titulo, payload.estado)
         return view.cards_for_page([p], rep_map, users_map, {}, None, True)[0]
     except HTTPException:
         try:
@@ -361,6 +383,7 @@ async def _bulk_cambiar_estado(db: AsyncSession, admin: dict, ids: list[int],
 
     vistos, cambiados, faltantes = [], [], []
     duenos_afectados: set[int] = set()
+    cambiados_info: list[tuple[int, int, str]] = []  # (pub_id, dueno_id, titulo)
     try:
         for pid in dict.fromkeys(ids):
             if not isinstance(pid, int) or pid < 1:
@@ -383,6 +406,7 @@ async def _bulk_cambiar_estado(db: AsyncSession, admin: dict, ids: list[int],
             cambiados.append(pid)
             try:
                 duenos_afectados.add(int(p.usuario_id))
+                cambiados_info.append((pid, int(p.usuario_id), str(p.titulo or f"aviso {pid}")))
             except Exception:
                 pass
         # Misma transacción: flush de estados + democión N->0 por dueño.
@@ -401,9 +425,31 @@ async def _bulk_cambiar_estado(db: AsyncSession, admin: dict, ids: list[int],
             except Exception:
                 pass
         await db.commit()
+        # Avisos fuera de la app (best-effort, tras el commit, en paralelo
+        # con tope de 5 para no saturar la Bot API).
+        notificados = 0
+        try:
+            import asyncio as _asyncio
+            _semaforo = _asyncio.Semaphore(5)
+
+            async def _uno(_dueno, _titulo):
+                async with _semaforo:
+                    try:
+                        return await _notificar_dueno_estado(db, _dueno, _titulo, estado)
+                    except Exception:
+                        return "none"
+
+            resultados = await _asyncio.gather(
+                *[_uno(_d, _t) for _p, _d, _t in cambiados_info],
+                return_exceptions=True,
+            )
+            notificados = sum(1 for r in resultados if r != "none" and not isinstance(r, Exception))
+        except Exception:
+            pass
         return {"estado": estado, "solicitados": len(ids), "cambiados": cambiados,
                 "sin_cambios": [i for i in vistos if i not in cambiados],
-                "no_encontrados": faltantes, "democionados": democionados}
+                "no_encontrados": faltantes, "democionados": democionados,
+                "notificados": notificados}
     except Exception as e:
         try:
             await db.rollback()
