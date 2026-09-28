@@ -71,3 +71,14 @@
 - Los JWT de 8h emitidos antes del release 2h conviven hasta su `exp`.
 - Verificación pre-push: `pytest` 310+1, `vitest` 360, `npm run build` OK.
 - Push limpio `git push origin main` (Render/Vercel redespliegan solos).
+
+## 2026-09-28 — CodeQL 17 alertas a 0 + CI DB al 100% (verde total)
+- **Contexto:** scan sobre `2ff4b2a` fallaba con 17 alertas nuevas (2 HIGH + 15 MEDIUM). El agente anterior usaba wrappers (`una_linea`/`exc_resumen`) que no cortan taint en CodeQL y hacía push directo a `main` sin pasar pruebas.
+- **Logro:** 7 checks en verde en GitHub (CI + CodeQL), merge PR #31 (`080ed8a`), más fix CI web (`8cb149f`). `main` = `origin/main` limpio, `0 ahead/behind`. CI #67 y CodeQL #59 en Success.
+- **Cambios y por qué:**
+  - `frontend/src/components/Card.test.jsx:41`: `startsWith('https://a.com')` → `startsWith('https://a.com/')`. Sin slash, `https://a.com.evil.com` también coincide (Incomplete URL sanitization).
+  - `backend/scripts/verificar_telegram_e2e.py:139`: `print(f"Sin password (define {ENV_PASSWORD} ...)")` → `print("Sin credencial: no se puede verificar (falta variable de entorno).")`. Evita clear-text logging de variable con nombre `password`.
+  - `backend/app/routers/admin.py:241,290`, `auth.py:1334,1336,2128`, `publicaciones.py:423,492,735,864,914,997,1092,1145,1209,1279`: desinfección directa `str(v).replace('\n','').replace('\r','')` en variable previa al logger (ej. `_pub_id_seguro`, `_email_seguro`, `_proposito_seguro`, `_err_seguro`). Los wrappers no son sanitizers para CodeQL; el `.replace` directo sí. Se hace fuera del f-string por compatibilidad Python 3.11 (sin backslash en `{}`), conservando `una_linea`/`exc_resumen` + `exc_info`.
+  - `.github/workflows/ci.yml` paso `Init DB schema` (vía web, commit `8cb149f`): agrega `import glob` + loop `for mig in sorted(glob.glob("db/migrations/*.sql"))`. Sin esto la CI solo aplicaba `schema.sql` y nunca ejercía migraciones 017/018 (índice + CHECK `telegram_chat_id`) → falso negativo. Replica `scripts/verify_ci.sh [2/4]`.
+- **Commits:** `1a7373a` fix CodeQL (PR #31) → merge `080ed8a`; `8cb149f` fix CI web. Ramas temporales `fix/codeql-desinfeccion-directa` y `backup-ci-migrations-08ccfdc` eliminadas tras merge.
+- **Validación:** `py_compile` OK, `vitest Card.test.jsx` 16 passed, `test_security.py` 27 passed, `ci.yml` YAML OK. `test_ci_fallbacks.py::test_prod_admin_y_auth_503` falla solo local sin Postgres (preexistente, no regresión).
