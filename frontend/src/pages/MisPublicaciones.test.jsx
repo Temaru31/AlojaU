@@ -6,7 +6,12 @@ import EditarPublicacionModal from '../components/EditarPublicacionModal'
 import { api } from '../services/api'
 import * as Auth from '../contexts/AuthContext'
 
-vi.mock('../services/api', () => ({ api: { get: vi.fn(), patch: vi.fn(), delete: vi.fn() } }))
+vi.mock('../services/api', () => ({
+  api: { get: vi.fn(), patch: vi.fn(), delete: vi.fn() },
+  isCancelError: (e) => e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError',
+}))
+// HistorialAvisos se prueba en su propio archivo (stub aquí para aislar).
+vi.mock('../components/HistorialAvisos', () => ({ default: () => <div data-testid="stub-historial" /> }))
 
 afterEach(() => cleanup())
 beforeEach(() => vi.clearAllMocks())
@@ -440,5 +445,19 @@ describe('MisPublicaciones M4 (edición bufferizada en modal)', () => {
     await waitFor(() => expect(api.patch).toHaveBeenCalledWith(
       '/api/publicaciones/3', expect.not.objectContaining({ servicios_ids: expect.anything() }), expect.anything()))
     expect(api.patch).toHaveBeenCalledTimes(1)
+  })
+
+  it('con aviso en revisión muestra guía + invita a vincular Telegram si no hay vínculo', async () => {
+    api.get.mockResolvedValue({ data: paged([pub1]) })
+    renderPage('tok')
+    expect(await screen.findByText(/1 aviso\(s\) en revisión/)).toBeInTheDocument()
+    // user mock sin telegram_vinculado -> sugiere Mi Perfil.
+    expect(screen.getByRole('link', { name: 'Mi Perfil' })).toHaveAttribute('href', '/perfil')
+  })
+
+  it('con aviso rechazado muestra guía de corrección', async () => {
+    api.get.mockResolvedValue({ data: paged([{ ...pub1, id: 4, estado: 'RECHAZADO' }]) })
+    renderPage('tok')
+    expect(await screen.findByText(/1 aviso\(s\) no aprobado/)).toBeInTheDocument()
   })
 })

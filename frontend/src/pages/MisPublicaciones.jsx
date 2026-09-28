@@ -4,7 +4,7 @@
 // cálculo de días restantes según reglas de vigencia y botón de renovación.
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api } from '../services/api'
+import { api, isCancelError } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 import { formatDistancia } from '../utils/formatters'
 import SmartImage from '../components/SmartImage'
@@ -12,7 +12,8 @@ import Paginacion from '../components/Paginacion'
 import ConfirmDialog from '../components/ConfirmDialog'
 import EditarPublicacionModal from '../components/EditarPublicacionModal'
 import RenovarModal from '../components/RenovarModal'
-import { portadaUrl } from '../utils/portada'
+import HistorialAvisos from '../components/HistorialAvisos'
+import { portadaUrl, zonaTextoDe } from '../utils/portada'
 import { getEtiquetaTipo } from '../utils/tiposVivienda'
 import useTiposVivienda from '../hooks/useTiposVivienda'
 
@@ -128,7 +129,7 @@ const FILTROS = [
 const PAGE_SIZE = 12
 
 export default function MisPublicaciones() {
-  const { token, refresh } = useAuth()
+  const { token, refresh, user } = useAuth()
   // M2: catálogo dinámico con fallback estático.
   const { tipos: tiposCatalogo } = useTiposVivienda()
   const [items, setItems] = useState([])
@@ -223,7 +224,7 @@ export default function MisPublicaciones() {
         }
       })
       .catch(err => {
-        if (err?.code === 'ERR_CANCELED') return
+        if (isCancelError(err) || controller.signal.aborted) return
         const status = err?.response?.status
         setError(status === 401
           ? 'Sesión vencida. Inicia sesión de nuevo.'
@@ -267,6 +268,36 @@ export default function MisPublicaciones() {
           Mis publicaciones {total > 0 && <span className="text-sm font-normal text-neutral-400">({total})</span>}
         </h1>
       </div>
+
+      {/* Guía de estado: qué significa cada estado y cómo te avisamos.
+          El dueño recién promovido (publicó pero sigue en revisión) ve aquí
+          con claridad que su panel ya está activo y qué sigue. */}
+      {!loading && !error && (items.some((p) => p.estado === 'PENDIENTE') || items.some((p) => p.estado === 'RECHAZADO')) && (
+        <div className="space-y-2 mb-4">
+          {items.some((p) => p.estado === 'PENDIENTE') && (
+            <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5" role="status">
+              <p className="text-xs text-amber-800">
+                <b>⏳ {items.filter((p) => p.estado === 'PENDIENTE').length} aviso(s) en revisión.</b>{' '}
+                El equipo de AlojaU los está verificando. Te avisaremos aquí mismo cuando sean visibles.
+                {!user?.telegram_vinculado && (
+                  <> Vincula tu Telegram en <Link to="/perfil" className="font-semibold underline hover:text-amber-900">Mi Perfil</Link> para enterarte al instante, estés o no en la app.</>
+                )}
+              </p>
+            </div>
+          )}
+          {items.some((p) => p.estado === 'RECHAZADO') && (
+            <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2.5" role="status">
+              <p className="text-xs text-rose-800">
+                <b>{items.filter((p) => p.estado === 'RECHAZADO').length} aviso(s) no aprobado(s).</b>{' '}
+                Revisa las reglas de publicación, corrige tu aviso y vuelve a publicarlo.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Trazabilidad: actividad reciente de todos sus avisos. */}
+      <HistorialAvisos token={token} />
 
       {/* Filtros por estado + orden del panel */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -362,10 +393,11 @@ export default function MisPublicaciones() {
               const fechaExpTexto = formatFechaExpiracion(p.fecha_expiracion)
               // BUG#1: portada = orden=1 vía helper central.
               const cover = portadaUrl(p)
-              const zonaTexto = p.zona_nombre || p.zona || 'Zona no informada'
+              const zonaTexto = zonaTextoDe(p) || 'Zona no informada'
               // Bloque 3: fuente única (dinámico + fallback central).
               const tipoTexto = getEtiquetaTipo(p.tipo_inmueble, tiposCatalogo, 'Vivienda')
               const canonValor = p.canon_mensual ?? p.canon
+              const distM = p.distancia_geodesica_m ?? p.dist_m
 
               return (
                 <article
@@ -399,10 +431,10 @@ export default function MisPublicaciones() {
                           <span className="font-semibold text-navy-800">{tipoTexto}</span>
                           <span>•</span>
                           <span>{zonaTexto}</span>
-                          {p.distancia_geodesica_m != null && (
+                          {distM != null && (
                             <>
                               <span>•</span>
-                              <span>{formatDistancia(p.distancia_geodesica_m)}</span>
+                              <span>{formatDistancia(distM)}</span>
                             </>
                           )}
                         </div>
