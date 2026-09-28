@@ -182,4 +182,24 @@ describe('Buscar Fase 4 Hero + multiciudad', () => {
       expect(calls[calls.length - 1][1].params.page).toBe(1)
     })
   })
+
+  it('Limpiar en la barra desktop resetea sin abrir el drawer', async () => {
+    renderBuscar('/?precio_min=400000')
+    // Visible sin desplegar panel ni drawer.
+    const limpiar = await screen.findByRole('button', { name: 'Limpiar filtros' })
+    expect(limpiar).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    fireEvent.click(limpiar)
+    // Tras limpiar (debounce 400ms) la URL queda sin el filtro.
+    vi.useFakeTimers()
+    await act(async () => { vi.advanceTimersByTime(500) })
+    vi.useRealTimers()
+    await waitFor(() => {
+      const calls = api.get.mock.calls.filter((c) => c[0] === '/api/publicaciones')
+      const last = calls[calls.length - 1][1].params
+      expect(last.precio_min).toBeUndefined()
+    })
+    // El Limpiar de la barra (badge) desaparece; queda solo el de la tarjeta vacía.
+    expect(screen.getByText(/No encontramos alojamientos/)).toBeInTheDocument()
+  })
 })

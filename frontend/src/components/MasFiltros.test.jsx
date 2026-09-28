@@ -24,6 +24,14 @@ describe('MasFiltrosModal (drawer desktop espejo del sheet móvil)', () => {
     expect(screen.getByLabelText('WiFi Fibra')).toBeInTheDocument()
   })
 
+  it('chips de tipo envueltos en desktop (sin scroll táctil)', () => {
+    render(<MasFiltrosModal filtros={{ min: '', max: '', tipo: '', servicios: '' }} setFiltros={() => {}} />)
+    fireEvent.click(screen.getByRole('button', { name: /Abrir más filtros/ }))
+    const grupo = screen.getByRole('group', { name: 'Tipo de inmueble' })
+    expect(grupo.className).toMatch('flex-wrap')
+    expect(grupo.className).not.toMatch('overflow-x-auto')
+  })
+
   it('CTA muestra conteo en vivo y Limpiar resetea todo', () => {
     const setFiltros = vi.fn()
     render(<MasFiltrosModal filtros={{ min: '0', max: '400000', tipo: '', servicios: '' }} setFiltros={setFiltros} totalResultados={13} />)

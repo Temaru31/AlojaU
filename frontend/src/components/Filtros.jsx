@@ -53,12 +53,18 @@ export function AtajosPresupuesto({ filtros, setFiltros }) {
 // Chips de tipo desde el catálogo dinámico (misma fuente en móvil y
 // desktop). Sin <select> nativo: en Android el popup lo pinta el OS en
 // modo oscuro y rompe el sistema de diseño.
-export function SelectorTipoChips({ filtros, setFiltros }) {
+// `envolver`: en pantallas anchas los chips se organizan en varias filas
+// (sin scroll: no hay arrastre táctil); en móvil siguen en carrusel.
+export function SelectorTipoChips({ filtros, setFiltros, envolver = false }) {
   const { tipos } = useTiposVivienda()
   const lista = Array.isArray(tipos) && tipos.length > 0 ? tipos : TIPOS_FALLBACK
   const opciones = [{ slug: '', nombre_visible: 'Todos' }, ...lista]
   return (
-    <div className="flex gap-2 overflow-x-auto no-scrollbar fade-x pb-1" role="group" aria-label="Tipo de inmueble">
+    <div
+      className={envolver ? 'flex flex-wrap gap-2' : 'flex gap-2 overflow-x-auto no-scrollbar fade-x pb-1'}
+      role="group"
+      aria-label="Tipo de inmueble"
+    >
       {opciones.map((t) => {
         const activo = (filtros.tipo || '') === t.slug
         return (
@@ -319,7 +325,7 @@ export function MasFiltrosModal({ filtros, setFiltros, totalResultados = null })
               </section>
               <section aria-labelledby="f-tipo-d" className="space-y-2">
                 <p className="text-xs font-bold text-navy-800" id="f-tipo-d">2 · Tipo de inmueble</p>
-                <SelectorTipoChips filtros={filtros} setFiltros={setFiltros} />
+                <SelectorTipoChips filtros={filtros} setFiltros={setFiltros} envolver />
               </section>
               <section aria-labelledby="f-serv-d" className="space-y-2">
                 <p className="text-xs font-bold text-navy-800" id="f-serv-d">3 · Servicios y comodidades</p>
