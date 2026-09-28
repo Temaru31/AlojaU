@@ -9,11 +9,11 @@ import useMediaQuery from '../hooks/useMediaQuery'
 const Casa3D = lazy(() => import('../components/Casa3D'))
 import CercanoA, { etiquetaLugar } from '../components/CercanoA'
 import CiudadSelector, { CIUDADES_FALLBACK, etiquetaCiudad } from '../components/CiudadSelector'
-import { contarAvanzados, parseServicios, toggleServicio, PanelPrimario, MasFiltrosModal, SERVICIOS_OPCIONES } from '../components/Filtros'
-import useTiposVivienda, { TIPOS_FALLBACK } from '../hooks/useTiposVivienda'
+import { contarAvanzados, parseServicios, toggleServicio, PanelPrimario, MasFiltrosModal, SERVICIOS_OPCIONES, AtajosPresupuesto, SelectorTipoChips } from '../components/Filtros'
 import useFocusTrap from '../hooks/useFocusTrap'
 import Paginacion from '../components/Paginacion'
 import SearchBar from '../components/SearchBar'
+import { guardarCampusFiltro, guardarFiltrosBuscar, leerFiltrosBuscar, limpiarFiltrosBuscar } from '../utils/persistenciaBuscar'
 
 function parseCiudadId(searchParams) {
   const raw = searchParams.get('ciudad_id')
@@ -22,33 +22,21 @@ function parseCiudadId(searchParams) {
   return Number.isInteger(n) && n >= 1 ? n : null
 }
 
+// Snapshot inicial: si se llega a `/` sin params (navbar, volver desde otra
+// zona), se restaura la última búsqueda de la sesión en vez de resetear.
+// El atrás nativo conserva params por historial; esto cubre el resto.
+function snapshotInicialBuscar(sp) {
+  const tiene = ['campus_id', 'ciudad_id', 'precio_min', 'precio_max', 'tipo', 'servicios', 'q']
+    .some((k) => { const v = sp.get(k); return v != null && v !== '' })
+  if (tiene) return null
+  try { return leerFiltrosBuscar() } catch { return null }
+}
+
 // Bloque 2 del sheet: chips de tipo desde el catálogo dinámico (misma
-// fuente que desktop: `filtros.tipo`). Crece solo con scroll horizontal.
+// fuente que desktop: `filtros.tipo`). Delega en el componente compartido
+// (paridad exacta con el drawer desktop).
 export function BloqueTipos({ filtros, setFiltros }) {
-  const { tipos } = useTiposVivienda()
-  const lista = Array.isArray(tipos) && tipos.length > 0 ? tipos : TIPOS_FALLBACK
-  return (
-    <div className="flex gap-2 overflow-x-auto no-scrollbar fade-x pb-1" role="group" aria-label="Tipo de inmueble">
-      {[{ slug: '', nombre_visible: 'Todos' }, ...lista].map((t) => {
-        const activo = (filtros.tipo || '') === t.slug
-        return (
-          <button
-            key={t.slug || 'todos'}
-            type="button"
-            onClick={() => setFiltros({ ...filtros, tipo: t.slug })}
-            aria-pressed={activo}
-            title={t.descripcion_tooltip || t.nombre_visible}
-            className={`shrink-0 min-h-[44px] px-3.5 py-2 rounded-full border text-xs font-bold transition active:scale-[0.97] ${activo
-              ? 'border-navy-800 ring-2 ring-navy-800/25 bg-navy-800 text-white'
-              : 'border-neutral-200 bg-white text-neutral-600 active:bg-neutral-50'
-              }`}
-          >
-            {t.icono ? `${t.icono} ` : ''}{t.nombre_visible}
-          </button>
-        )
-      })}
-    </div>
-  )
+  return <SelectorTipoChips filtros={filtros} setFiltros={setFiltros} />
 }
 
 // Bloque 4 del sheet: grid de servicios colapsable. Con el catálogo actual
@@ -119,23 +107,82 @@ export default function Buscar() {
   // Una sola fuente de ciudades para el selector Y la píldora del Hero.
   const [ciudades, setCiudades] = useState(CIUDADES_FALLBACK)
   const [searchParams, setSearchParams] = useSearchParams()
+  // Snapshot de la sesión (volver/navegar sin perder la búsqueda). Se lee
+  // UNA vez al montar: si la URL ya trae params, manda la URL (null).
+  const snapRef = useRef(undefined)
+  if (snapRef.current === undefined) snapRef.current = snapshotInicialBuscar(searchParams)
+  const snap = snapRef.current
   // 004 POIs: sin ?campus_id= no hay filtro de cercanía (estado inicial vacío).
   // NaN-safe: un valor manual inválido (?campus_id=abc) equivale a "Todos".
-  const campusIdRaw = searchParams.get('campus_id')
-  const campusIdNum = campusIdRaw != null ? Number(campusIdRaw) : NaN
+  const campusIdRaw = searchParams.get('campus_id') ?? snap?.campus_id ?? null
+  const campusIdNum = campusIdRaw != null && campusIdRaw !== '' ? Number(campusIdRaw) : NaN
   const campusId = Number.isInteger(campusIdNum) && campusIdNum >= 1 ? campusIdNum : null
-  const ciudadId = parseCiudadId(searchParams)
-  const page = Number(searchParams.get('page') || 1)
-  const q = searchParams.get('q') || ''
+  const ciudadId = parseCiudadId(searchParams) ?? (snap?.ciudad_id != null ? Number(snap.ciudad_id) || null : null)
+  // page saneado: ?page=abc o <=0 equivale a 1 (evita 422 y Paginacion rota).
+  const pageRaw = Number(searchParams.get('page') || 1)
+  const page = Number.isInteger(pageRaw) && pageRaw >= 1 ? pageRaw : 1
+  const q = searchParams.get('q') || snap?.q || ''
   const [filtros, setFiltros] = useState({
-    min: searchParams.get('precio_min') || '',
-    max: searchParams.get('precio_max') || '',
-    tipo: searchParams.get('tipo') || '',
-    servicios: searchParams.get('servicios') || '',
+    min: searchParams.get('precio_min') ?? snap?.filtros?.min ?? '',
+    max: searchParams.get('precio_max') ?? snap?.filtros?.max ?? '',
+    tipo: searchParams.get('tipo') ?? snap?.filtros?.tipo ?? '',
+    servicios: searchParams.get('servicios') ?? snap?.filtros?.servicios ?? '',
   })
+
+  // Al montar con snapshot: deja la URL canónica (replace, sin historia).
+  // El campus restaurado también se publica como filtro global (Comparar).
+  const restauradoRef = useRef(false)
+  useEffect(() => {
+    if (restauradoRef.current || !snap) return
+    restauradoRef.current = true
+    const params = new URLSearchParams()
+    if (snap.campus_id) { params.set('campus_id', snap.campus_id); guardarCampusFiltro(snap.campus_id) }
+    if (snap.ciudad_id) params.set('ciudad_id', snap.ciudad_id)
+    if (snap.filtros?.min) params.set('precio_min', snap.filtros.min)
+    if (snap.filtros?.max) params.set('precio_max', snap.filtros.max)
+    if (snap.filtros?.tipo) params.set('tipo', snap.filtros.tipo)
+    if (snap.filtros?.servicios) params.set('servicios', snap.filtros.servicios)
+    if (snap.q) params.set('q', snap.q)
+    params.set('page', 1)
+    setSearchParams(params, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Snapshot continuo: cada cambio de búsqueda se guarda en la sesión para
+  // restaurarlo al volver desde una publicación u otra zona.
+  useEffect(() => {
+    guardarFiltrosBuscar({
+      filtros: { min: filtros.min || '', max: filtros.max || '', tipo: filtros.tipo || '', servicios: filtros.servicios || '' },
+      campus_id: campusId != null ? String(campusId) : '',
+      ciudad_id: ciudadId != null ? String(ciudadId) : '',
+      q: q || '',
+    })
+  }, [filtros, campusId, ciudadId, q])
   // OLA4: string primitivo estable (el objeto searchParams cambia de identidad
   // y provocaba doble-fetch). El efecto de resultados depende de este string.
   const queryString = searchParams.toString()
+
+  // Los chips/inputs locales siguen a la URL cuando esta cambia por
+  // navegación (atrás/adelante): sin esto, los resultados cambian pero la
+  // UI muestra los filtros viejos. No pisa mientras se escribe (firma).
+  const firmaFiltros = useRef(null)
+  useEffect(() => {
+    const desdeUrl = {
+      min: searchParams.get('precio_min') || '',
+      max: searchParams.get('precio_max') || '',
+      tipo: searchParams.get('tipo') || '',
+      servicios: searchParams.get('servicios') || '',
+    }
+    const firma = JSON.stringify(desdeUrl)
+    if (firmaFiltros.current === null) {
+      firmaFiltros.current = JSON.stringify(filtros)
+    }
+    if (firma !== firmaFiltros.current) {
+      firmaFiltros.current = firma
+      setFiltros(desdeUrl)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryString])
   const [pubs, setPubs] = useState([])
   const [total, setTotal] = useState(0)
   const [pages, setPages] = useState(1)
@@ -164,6 +211,8 @@ export default function Buscar() {
   }, [sheetAbierto])
 
   const setCampusId = (id) => {
+    // Filtro global: Comparar lo lee desde aquí (vive en otra ruta).
+    guardarCampusFiltro(id ?? '')
     const params = new URLSearchParams(searchParams)
     if (id == null || id === '') params.delete('campus_id')
     else params.set('campus_id', id)
@@ -189,6 +238,8 @@ export default function Buscar() {
 
   const limpiarTodo = () => {
     setFiltros({ min: '', max: '', tipo: '', servicios: '' })
+    limpiarFiltrosBuscar()
+    guardarCampusFiltro('')
     const params = new URLSearchParams(searchParams)
     params.delete('q')
     params.delete('precio_min')
@@ -254,6 +305,8 @@ export default function Buscar() {
 
   // Fase 3: AbortController + error SOLO ante HTTP >= 400 o fallo real de red.
   // Un 200 OK con [] NUNCA pinta banner rojo: va a la tarjeta neutra de vacío.
+  // Deps: solo queryString (campusId/ciudadId/page ya viven dentro de él;
+  // listarlos además provocaba doble fetch).
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true); setError('')
@@ -287,7 +340,8 @@ export default function Buscar() {
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [campusId, ciudadId, page, queryString])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryString])
 
   const currentCampus = campus.find(c => c.id == campusId)
 
@@ -467,34 +521,11 @@ export default function Buscar() {
                 <BloqueTipos filtros={filtros} setFiltros={setFiltros} />
               </section>
               {/* 3 · Presupuesto: atajos + min/max en un solo bloque (el
-                  atajo escribe los inputs; pulsar el activo lo limpia). */}
+                  atajo escribe los inputs; pulsar el activo lo limpia).
+                  Mismo componente que el drawer desktop (paridad). */}
               <section aria-labelledby="f-pres-m" className="space-y-2">
                 <p className="text-xs font-bold text-navy-800" id="f-pres-m">3 · Presupuesto (COP)</p>
-                <div className="flex gap-2" role="group" aria-labelledby="f-pres-m">
-                  {[
-                    { etiqueta: '< $400 mil', min: '0', max: '400000' },
-                    { etiqueta: '$400 – $700 mil', min: '400000', max: '700000' },
-                    { etiqueta: '> $700 mil', min: '700000', max: '' },
-                  ].map((b) => {
-                    const activo = (filtros.min || '') === b.min && (filtros.max || '') === b.max
-                    return (
-                      <button
-                        key={b.etiqueta}
-                        type="button"
-                        onClick={() => setFiltros(activo
-                          ? { ...filtros, min: '', max: '' }
-                          : { ...filtros, min: b.min, max: b.max })}
-                        aria-pressed={activo}
-                        className={`flex-1 min-h-[44px] px-2 py-2 rounded-xl border text-xs font-bold transition active:scale-[0.97] ${activo
-                          ? 'border-navy-800 ring-2 ring-navy-800/25 bg-navy-50 text-navy-900'
-                          : 'border-neutral-200 bg-white text-neutral-600 active:bg-neutral-50'
-                          }`}
-                      >
-                        {b.etiqueta}
-                      </button>
-                    )
-                  })}
-                </div>
+                <AtajosPresupuesto filtros={filtros} setFiltros={setFiltros} />
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label htmlFor="f-min-m" className="sr-only">Precio mínimo en COP</label>
@@ -590,7 +621,7 @@ export default function Buscar() {
                 {/* M4: primarios inline (texto ya arriba + precio/tipo/principales aquí) */}
                 <PanelPrimario filtros={filtros} setFiltros={setFiltros} />
                 <div className="flex items-center gap-2">
-                  <MasFiltrosModal filtros={filtros} setFiltros={setFiltros} />
+                  <MasFiltrosModal filtros={filtros} setFiltros={setFiltros} totalResultados={total} />
                   {numAvanzados > 0 && (
                     <button
                       type="button"

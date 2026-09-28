@@ -16,6 +16,71 @@ export const SERVICIOS_OPCIONES = [
 export const SERVICIOS_PRINCIPALES = [1, 2, 3]
 export const SERVICIOS_SECUNDARIOS = [4, 5]
 
+// Fuente única de atajos de presupuesto (móvil sheet + drawer desktop).
+// El atajo escribe min/max; pulsar el activo lo limpia.
+export const ATAJOS_PRESUPUESTO = [
+  { etiqueta: '< $400 mil', min: '0', max: '400000' },
+  { etiqueta: '$400 – $700 mil', min: '400000', max: '700000' },
+  { etiqueta: '> $700 mil', min: '700000', max: '' },
+]
+
+export function AtajosPresupuesto({ filtros, setFiltros }) {
+  return (
+    <div className="flex gap-2" role="group" aria-label="Atajos de presupuesto">
+      {ATAJOS_PRESUPUESTO.map((b) => {
+        const activo = (filtros.min || '') === b.min && (filtros.max || '') === b.max
+        return (
+          <button
+            key={b.etiqueta}
+            type="button"
+            onClick={() => setFiltros(activo
+              ? { ...filtros, min: '', max: '' }
+              : { ...filtros, min: b.min, max: b.max })}
+            aria-pressed={activo}
+            className={`flex-1 min-h-[44px] px-2 py-2 rounded-xl border text-xs font-bold transition active:scale-[0.97] ${activo
+              ? 'border-navy-800 ring-2 ring-navy-800/25 bg-navy-50 text-navy-900'
+              : 'border-neutral-200 bg-white text-neutral-600 active:bg-neutral-50'
+              }`}
+          >
+            {b.etiqueta}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// Chips de tipo desde el catálogo dinámico (misma fuente en móvil y
+// desktop). Sin <select> nativo: en Android el popup lo pinta el OS en
+// modo oscuro y rompe el sistema de diseño.
+export function SelectorTipoChips({ filtros, setFiltros }) {
+  const { tipos } = useTiposVivienda()
+  const lista = Array.isArray(tipos) && tipos.length > 0 ? tipos : TIPOS_FALLBACK
+  const opciones = [{ slug: '', nombre_visible: 'Todos' }, ...lista]
+  return (
+    <div className="flex gap-2 overflow-x-auto no-scrollbar fade-x pb-1" role="group" aria-label="Tipo de inmueble">
+      {opciones.map((t) => {
+        const activo = (filtros.tipo || '') === t.slug
+        return (
+          <button
+            key={t.slug || 'todos'}
+            type="button"
+            onClick={() => setFiltros({ ...filtros, tipo: t.slug })}
+            aria-pressed={activo}
+            title={t.descripcion_tooltip || t.nombre_visible}
+            className={`shrink-0 min-h-[44px] px-3.5 py-2 rounded-full border text-xs font-bold transition active:scale-[0.97] ${activo
+              ? 'border-navy-800 ring-2 ring-navy-800/25 bg-navy-800 text-white'
+              : 'border-neutral-200 bg-white text-neutral-600 active:bg-neutral-50'
+              }`}
+          >
+            {t.icono ? `${t.icono} ` : ''}{t.nombre_visible}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 export function parseServicios(serviciosStr) {
   if (!serviciosStr) return []
   return serviciosStr.split(",").map(s => s.trim()).filter(Boolean)
@@ -70,9 +135,36 @@ function SelectorTipo({ filtros, setFiltros, id = 'filtro-tipo' }) {
   )
 }
 
-function GrupoServicios({ filtros, setFiltros, ids }) {
+function GrupoServicios({ filtros, setFiltros, ids, variante = 'chips' }) {
   const selectedIds = parseServicios(filtros.servicios)
   const ops = SERVICIOS_OPCIONES.filter((o) => ids.includes(o.id))
+  if (variante === 'grid') {
+    return (
+      <div className="grid grid-cols-2 gap-2" role="group" aria-label="Filtrar por servicios">
+        {ops.map((opt) => {
+          const activo = selectedIds.includes(String(opt.id))
+          return (
+            <label
+              key={opt.id}
+              className={`flex items-center gap-2 min-h-[44px] px-3 rounded-xl border text-xs font-semibold cursor-pointer transition active:scale-[0.98] ${activo
+                ? 'border-navy-800 ring-2 ring-navy-800/25 bg-navy-50 text-navy-900'
+                : 'border-neutral-200 bg-white text-neutral-600 active:bg-neutral-50'
+                }`}
+            >
+              <input
+                type="checkbox"
+                className="w-4 h-4 rounded border-neutral-300 text-navy-800 accent-navy-800"
+                checked={activo}
+                onChange={(e) => setFiltros({ ...filtros, servicios: toggleServicio(filtros.servicios, opt.id, e.target.checked) })}
+                aria-label={opt.label}
+              />
+              {opt.label}
+            </label>
+          )
+        })}
+      </div>
+    )
+  }
   return (
     <div className="col-span-2 sm:col-auto flex flex-wrap gap-2 items-center" role="group" aria-label="Filtrar por servicios">
       {ops.map(opt => (
@@ -146,17 +238,18 @@ export function PanelPrimario({ filtros, setFiltros }) {
   )
 }
 
-// M4 modal "Más Filtros" desktop: secundarios en drawer/modal (reutiliza contarAvanzados).
-export function MasFiltrosModal({ filtros, setFiltros }) {
+// Drawer "Más Filtros" desktop: espejo del bottom sheet móvil (mismos
+// bloques numerados y mismos componentes). Paridad total: lo que se puede
+// filtrar en móvil se puede en pantallas anchas y viceversa.
+export function MasFiltrosModal({ filtros, setFiltros, totalResultados = null }) {
   const [abierto, setAbierto] = useState(false)
   // Bloque 3: Tab cicla dentro del drawer + foco vuelve al botón.
   const cajaRef = useRef(null)
   useFocusTrap(cajaRef, abierto)
-  const total = contarAvanzados(filtros)
-  const secundarios = parseServicios(filtros.servicios).filter((s) =>
-    SERVICIOS_SECUNDARIOS.includes(Number(s)))
+  const activos = contarAvanzados(filtros)
 
   const cerrar = () => setAbierto(false)
+  const limpiar = () => setFiltros({ min: '', max: '', tipo: '', servicios: '' })
 
   return (
     <>
@@ -165,24 +258,24 @@ export function MasFiltrosModal({ filtros, setFiltros }) {
         onClick={() => setAbierto(true)}
         aria-haspopup="dialog"
         aria-expanded={abierto}
-        aria-label={`Abrir más filtros${total > 0 ? `, ${total} activos` : ''}`}
+        aria-label={`Abrir más filtros${activos > 0 ? `, ${activos} activos` : ''}`}
         className="shrink-0 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border transition bg-white text-navy-800 border-neutral-200 hover:border-navy-300"
       >
         <span aria-hidden="true">⚙️</span> Más Filtros
-        {total > 0 && (
-          <span className="inline-flex items-center rounded-full bg-navy-800 px-2 py-0.5 text-[11px] font-bold text-white" aria-label={`${total} filtros activos`}>
-            {total}
+        {activos > 0 && (
+          <span className="inline-flex items-center rounded-full bg-navy-800 px-2 py-0.5 text-[11px] font-bold text-white" aria-label={`${activos} filtros activos`}>
+            {activos}
           </span>
         )}
       </button>
       {abierto && (
         <div ref={cajaRef} className="fixed inset-0 z-50 hidden md:block" role="dialog" aria-modal="true" aria-label="Más filtros">
           <div aria-hidden="true" onClick={cerrar} className="absolute inset-0 bg-navy-950/60" />
-          <div className="absolute right-0 top-0 h-full w-full max-w-md bg-white shadow-2xl flex flex-col">
-            <div className="flex items-center justify-between px-4 pt-4 pb-3 border-b border-neutral-100">
+          <div className="absolute right-0 top-0 h-full w-full max-w-lg bg-white shadow-2xl flex flex-col">
+            <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-neutral-100">
               <p className="text-sm font-bold text-navy-900">
-                Más Filtros
-                {total > 0 && <span className="ml-2 text-[11px] font-bold text-navy-700 bg-navy-50 rounded-full px-2 py-0.5">{total} activos</span>}
+                Filtros
+                {activos > 0 && <span className="ml-2 text-[11px] font-bold text-navy-700 bg-navy-50 rounded-full px-2 py-0.5">{activos} activos</span>}
               </p>
               <button
                 type="button"
@@ -193,36 +286,61 @@ export function MasFiltrosModal({ filtros, setFiltros }) {
                 ×
               </button>
             </div>
-            <div className="overflow-y-auto px-4 py-4 space-y-4">
-              <div>
-                <p className="text-xs font-semibold text-neutral-600 mb-2">Servicios adicionales</p>
-                <GrupoServicios filtros={filtros} setFiltros={setFiltros} ids={SERVICIOS_SECUNDARIOS} />
-                {secundarios.length > 0 && (
-                  <p className="text-[11px] text-neutral-400 mt-2">{secundarios.length} secundarios activos</p>
-                )}
-              </div>
-              <p className="text-[11px] text-neutral-400 leading-relaxed">
-                Los filtros principales (precio, tipo y servicios básicos) quedan en la barra superior.
-                Aquí solo van los secundarios.
-              </p>
+            <div className="overflow-y-auto px-5 py-4 space-y-5">
+              <section aria-labelledby="f-pres-d" className="space-y-2">
+                <p className="text-xs font-bold text-navy-800" id="f-pres-d">1 · Presupuesto (COP)</p>
+                <AtajosPresupuesto filtros={filtros} setFiltros={setFiltros} />
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label htmlFor="f-min-d" className="sr-only">Precio mínimo en COP</label>
+                    <input
+                      id="f-min-d"
+                      type="number"
+                      placeholder="Mín COP"
+                      value={filtros.min || ''}
+                      onChange={(e) => setFiltros({ ...filtros, min: e.target.value })}
+                      min="0"
+                      className="input-field"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="f-max-d" className="sr-only">Precio máximo en COP</label>
+                    <input
+                      id="f-max-d"
+                      type="number"
+                      placeholder="Máx COP"
+                      value={filtros.max || ''}
+                      onChange={(e) => setFiltros({ ...filtros, max: e.target.value })}
+                      min="0"
+                      className="input-field"
+                    />
+                  </div>
+                </div>
+              </section>
+              <section aria-labelledby="f-tipo-d" className="space-y-2">
+                <p className="text-xs font-bold text-navy-800" id="f-tipo-d">2 · Tipo de inmueble</p>
+                <SelectorTipoChips filtros={filtros} setFiltros={setFiltros} />
+              </section>
+              <section aria-labelledby="f-serv-d" className="space-y-2">
+                <p className="text-xs font-bold text-navy-800" id="f-serv-d">3 · Servicios y comodidades</p>
+                <GrupoServicios filtros={filtros} setFiltros={setFiltros} ids={SERVICIOS_OPCIONES.map((o) => o.id)} variante="grid" />
+              </section>
             </div>
             <div className="p-4 border-t border-neutral-100 bg-white flex gap-2">
               <button
                 type="button"
-                onClick={() => setFiltros({ ...filtros, servicios: (() => {
-                  const keep = parseServicios(filtros.servicios).filter((s) => !SERVICIOS_SECUNDARIOS.includes(Number(s)))
-                  return keep.length ? keep.join(',') : ''
-                })() })}
-                className="btn-ghost text-xs"
+                onClick={limpiar}
+                aria-label="Limpiar todos los filtros"
+                className="shrink-0 min-h-[52px] px-4 rounded-2xl border border-neutral-200 text-xs font-bold text-neutral-600 hover:bg-neutral-50 transition"
               >
-                Limpiar secundarios
+                Limpiar
               </button>
               <button
                 type="button"
                 onClick={cerrar}
-                className="btn-accent flex-1 justify-center !py-3"
+                className="btn-accent flex-1 justify-center !py-3.5 !rounded-2xl !text-sm"
               >
-                Ver resultados
+                {totalResultados == null || totalResultados === 0 ? 'Ver resultados' : `Mostrar ${totalResultados} alojamiento${totalResultados === 1 ? '' : 's'}`}
               </button>
             </div>
           </div>

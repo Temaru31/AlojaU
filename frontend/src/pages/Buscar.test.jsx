@@ -19,6 +19,8 @@ const CAMPUS = [{ id: 1, institucion: 'Universidad del Cauca', nombre_sede: 'Cam
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers() })
 beforeEach(() => {
   vi.clearAllMocks()
+  // La persistencia (session/localStorage) no debe fugar entre tests.
+  try { sessionStorage.clear(); localStorage.clear() } catch { /* noop */ }
   api.get.mockImplementation((url) => {
     if (url === '/api/campus') return Promise.resolve({ data: CAMPUS })
     if (url === '/api/ciudades') return Promise.resolve({ data: [{ id: 1, nombre: 'Popayán', departamento: 'Cauca', slug: 'popayan' }] })
@@ -155,5 +157,29 @@ describe('Buscar Fase 4 Hero + multiciudad', () => {
     await waitFor(() => expect(screen.getByText(/Encuentra tu espacio ideal/)).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: /Abrir filtros/ }))
     expect(screen.getByRole('button', { name: 'Mostrar 5 alojamientos' })).toBeInTheDocument()
+  })
+
+  it('sin params restaura la última búsqueda de la sesión (volver sin perder)', async () => {
+    sessionStorage.setItem('alojau_buscar_filtros', JSON.stringify({
+      filtros: { min: '400000', max: '', tipo: '', servicios: '' },
+      campus_id: '1', ciudad_id: '', q: '',
+    }))
+    renderBuscar('/')
+    await waitFor(() => {
+      const calls = api.get.mock.calls.filter((c) => c[0] === '/api/publicaciones')
+      expect(calls.length).toBeGreaterThan(0)
+      const last = calls[calls.length - 1][1].params
+      expect(last.precio_min).toBe('400000')
+      expect(last.campus_id).toBe(1)
+    })
+  })
+
+  it('?page=abc se sanea a 1 (sin 422 al backend)', async () => {
+    renderBuscar('/?page=abc')
+    await waitFor(() => {
+      const calls = api.get.mock.calls.filter((c) => c[0] === '/api/publicaciones')
+      expect(calls.length).toBeGreaterThan(0)
+      expect(calls[calls.length - 1][1].params.page).toBe(1)
+    })
   })
 })

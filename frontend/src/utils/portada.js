@@ -30,3 +30,29 @@ export function fotosOrdenadas(pub) {
   if (!Array.isArray(fotos)) return []
   return fotos.map((f) => (typeof f === 'string' ? f : f?.url)).filter(Boolean)
 }
+
+// ficha.js embebida (fuente única de texto derivado del payload):
+// el backend responde formas mixtas (canon_mensual/canon, zona_nombre/zona/
+// barrio_texto, fotos[]/num_fotos/imagenes[], deposito_requerido/deposito,
+// distancia_geodesica_m/dist_m). Centralizar evita "NaN COP/mes" y
+// "No informado" falsos cuando el aviso solo trae barrio libre.
+
+/** "$480.000 COP/mes" o null si no hay canon válido. */
+export function canonTexto(pub) {
+  const n = Number(pub?.canon_mensual ?? pub?.canon)
+  if (!Number.isFinite(n) || n <= 0) return null
+  return `$${n.toLocaleString('es-CO')} COP/mes`
+}
+
+/** Zona legible (incluye barrio libre) o null. */
+export function zonaTextoDe(pub) {
+  return pub?.zona_nombre || pub?.zona || pub?.barrio_texto || null
+}
+
+/** Nº de fotos cualesquiera que sea la forma del payload. */
+export function numFotosDe(pub) {
+  if (Array.isArray(pub?.fotos)) return pub.fotos.length
+  if (typeof pub?.fotos === 'number') return pub.fotos
+  if (typeof pub?.num_fotos === 'number') return pub.num_fotos
+  return fotosOrdenadas(pub).length
+}
