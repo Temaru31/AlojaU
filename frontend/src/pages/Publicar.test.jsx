@@ -108,6 +108,7 @@ describe('Publicar (HU-005: solo ARRENDADOR, nace PENDIENTE)', () => {
     localStorage.setItem('alojau_token', TOKEN)
     api.post.mockResolvedValue(CREATED)
     renderPage()
+    fireEvent.click(screen.getByTestId('mock-fotos'))
     fillValid()
     fireEvent.click(screen.getByRole('button', { name: 'Enviar a revision' }))
     await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1))
@@ -126,7 +127,7 @@ describe('Publicar (HU-005: solo ARRENDADOR, nace PENDIENTE)', () => {
     })
     expect(payload.fotos).toHaveLength(3)
     expect(config.headers.Authorization).toBe(`Bearer ${TOKEN}`)
-    expect(await screen.findByText(/¡Publicación creada! Estado: PENDIENTE/)).toBeInTheDocument()
+    expect(await screen.findByText(/¡Publicación enviada! Está en revisión/)).toBeInTheDocument()
   })
 
   it('R8 promoción a Arrendador: banner sin recargar la página', async () => {
@@ -137,6 +138,7 @@ describe('Publicar (HU-005: solo ARRENDADOR, nace PENDIENTE)', () => {
     const reloadSpy = vi.fn()
     Object.defineProperty(window, 'location', { value: { ...window.location, reload: reloadSpy }, writable: true })
     renderPage()
+    fireEvent.click(screen.getByTestId('mock-fotos'))
     fillValid()
     fireEvent.click(screen.getByRole('button', { name: 'Enviar a revision' }))
     expect(await screen.findByText(/Tu cuenta ahora es/)).toBeInTheDocument()
@@ -147,6 +149,7 @@ describe('Publicar (HU-005: solo ARRENDADOR, nace PENDIENTE)', () => {
     localStorage.setItem('alojau_token', TOKEN)
     api.post.mockResolvedValue(CREATED)
     renderPage()
+    fireEvent.click(screen.getByTestId('mock-fotos'))
     fillValid()
     fireEvent.click(screen.getByRole('button', { name: 'Enviar a revision' }))
     await waitFor(() => expect(api.post).toHaveBeenCalledTimes(1))
@@ -165,14 +168,33 @@ describe('Publicar (HU-005: solo ARRENDADOR, nace PENDIENTE)', () => {
     expect(api.post).not.toHaveBeenCalled()
   })
 
-  it('URL de foto inválida se rechaza antes del POST', () => {
+  it('sin fotos subidas guía a pulsar Subir antes de Enviar', () => {
     localStorage.setItem('alojau_token', TOKEN)
     renderPage()
     fillValid()
-    fireEvent.change(screen.getByPlaceholderText('https://.../foto1.jpg'), { target: { value: 'notaurl' } })
     fireEvent.click(screen.getByRole('button', { name: 'Enviar a revision' }))
-    expect(screen.getByText('URLs deben ser http(s) válidas')).toBeInTheDocument()
+    expect(screen.getByText(/Mínimo 3 fotos/)).toBeInTheDocument()
     expect(api.post).not.toHaveBeenCalled()
+  })
+
+  it('helpers: formato COP en vivo y sanitización anti-XSS', async () => {
+    const { formatearCOP, sanitizarTexto } = await import('./Publicar')
+    expect(formatearCOP('450000')).toBe('$ 450.000')
+    expect(formatearCOP('')).toBe('')
+    expect(sanitizarTexto('<script>alert(1)</script> hola')).not.toContain('<')
+  })
+
+  it('doble clic en Enviar no duplica el POST (anti-doble envío)', async () => {
+    localStorage.setItem('alojau_token', TOKEN)
+    api.post.mockImplementation(() => new Promise((res) => setTimeout(() => res(CREATED), 60)))
+    renderPage()
+    fireEvent.click(screen.getByTestId('mock-fotos'))
+    fillValid()
+    const btn = screen.getByRole('button', { name: 'Enviar a revision' })
+    fireEvent.click(btn)
+    fireEvent.click(btn)
+    expect(await screen.findByText(/¡Publicación enviada! Está en revisión/)).toBeInTheDocument()
+    expect(api.post).toHaveBeenCalledTimes(1)
   })
 
   it('canon bajo muestra la advertencia de monto total', () => {
@@ -203,6 +225,7 @@ describe('Publicar (HU-005: solo ARRENDADOR, nace PENDIENTE)', () => {
   it('401/403/array del backend se traducen a mensajes legibles', async () => {
     localStorage.setItem('alojau_token', TOKEN)
     renderPage()
+    fireEvent.click(screen.getByTestId('mock-fotos'))
     fillValid()
     api.post.mockRejectedValueOnce({ response: { status: 401, data: {} } })
     fireEvent.click(screen.getByRole('button', { name: 'Enviar a revision' }))
@@ -218,15 +241,11 @@ describe('Publicar (HU-005: solo ARRENDADOR, nace PENDIENTE)', () => {
     expect(await screen.findByText('body.titulo: corto')).toBeInTheDocument()
   })
 
-  it('cerrar sesión usa el logout total y vuelve al auth unificado', async () => {
+  it('con sesión no hay botón Cerrar sesión (vive en el navbar)', async () => {
     localStorage.setItem('alojau_token', TOKEN)
     api.get.mockResolvedValue({ data: { email: 'a@b.co', rol: 'ARRENDADOR' } })
     render(<MemoryRouter><AuthProvider><Publicar /></AuthProvider></MemoryRouter>)
-    // M1: el logout total es async (revoca en BD y luego limpia).
-    fireEvent.click(await screen.findByRole('button', { name: 'Cerrar sesión' }))
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/api/auth/logout', {},
-      expect.objectContaining({ headers: expect.anything() })))
-    await waitFor(() => expect(localStorage.getItem('alojau_token')).toBeNull())
-    expect(screen.getByRole('button', { name: /Continuar con Google/i })).toBeInTheDocument()
+    expect(await screen.findByPlaceholderText('Ej: Habitacion amoblada cerca al Tulcan')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cerrar sesión' })).not.toBeInTheDocument()
   })
 })

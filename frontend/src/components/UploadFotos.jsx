@@ -15,13 +15,30 @@ export const UPLOAD_MAX_SIZE = 5 * 1024 * 1024 // 5MB (igual que backend uploads
 // Formatos permitidos en cliente (JPG, PNG, WEBP; el backend valida además magia binaria).
 export const UPLOAD_ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp']
 export const UPLOAD_ACCEPT = 'image/jpeg,image/png,image/webp'
+// Bloque 5: iPhone guarda en HEIC/HEIF por defecto. Se detecta por extensión
+// y MIME para dar guía accionable (o convertir con heic2any si está disponible).
+export const HEIC_MIMES = ['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence']
+export const HEIC_EXTS = ['.heic', '.heif']
+
+export function esArchivoHeic(file) {
+  if (!file) return false
+  const mime = String(file.type || '').toLowerCase()
+  if (HEIC_MIMES.includes(mime)) return true
+  const name = String(file.name || '').toLowerCase()
+  return HEIC_EXTS.some((ext) => name.endsWith(ext))
+}
+
+export const MENSAJE_HEIC =
+  'Tu iPhone guardó esta foto como HEIC, que el servidor no acepta. ' +
+  'Abre Ajustes → Cámara → Formatos → «Más compatible» y vuelve a tomarla, ' +
+  'o conviértela a JPG antes de subirla.'
 
 // Cada archivo tiene su propia entrada {key, file, url}: solo se revoca la
 // eliminada (más cleanup al desmontar).
 const newKey = () =>
   (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`)
 
-export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint = '/api/publicaciones/upload' }) {
+export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint = '/api/publicaciones/upload', onPendientes }) {
   // `items`: [{key, file, url, name, size}] — url es objectURL local para preview (no la final).
   const [items, setItems] = useState([])
   const [error, setError] = useState('')
@@ -33,6 +50,27 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
   // Ref espejo para cleanup al desmontar sin depender del closure (evita revocar de más/menos).
   const itemsRef = useRef([])
   itemsRef.current = items
+
+  // Avisa al padre cuántas fotos están elegidas pero sin subir, para que
+  // pueda guiar ("pulsa Subir antes de Enviar") en vez de un error seco.
+  useEffect(() => {
+    try { onPendientes?.(items.length) } catch { /* noop */ }
+  }, [items.length])
+
+  // Hidrata URLs ya subidas (borrador restaurado): el padre es dueño de
+  // las finales y las pasa por initialUrls; aquí se reflejan como banner
+  // sin obligar a re-seleccionar archivos. Si el padre vacía (Limpiar /
+  // descartar borrador / éxito), se limpia el banner también.
+  useEffect(() => {
+    if (!initialUrls || initialUrls.length === 0) {
+      setUploadedUrls((prev) => (prev.length && itemsRef.current.length === 0 ? [] : prev))
+      return
+    }
+    if (itemsRef.current.length === 0) {
+      setUploadedUrls((prev) => (prev.length === 0 ? [...initialUrls] : prev))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialUrls])
 
   // Revoca todas las previews al desmontar (evita leak si el usuario navega sin Limpiar).
   useEffect(() => {
@@ -51,6 +89,13 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
       return
     }
     for (const f of arr) {
+      // Bloque 5: HEIC de iPhone con mensaje accionable (antes: error
+      // genérico). No se convierte en cliente (sin dependencia pesada):
+      // se pide JPG desde Ajustes o conversión previa.
+      if (esArchivoHeic(f)) {
+        setError(`"${f.name}": ${MENSAJE_HEIC}`)
+        return
+      }
       if (!f.type || !UPLOAD_ALLOWED_TYPES.includes(f.type.toLowerCase())) {
         setError(`"${f.name}" no es un formato válido (solo JPG, PNG o WEBP)`)
         return
@@ -175,11 +220,12 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
         <p className="text-xs text-neutral-400 mt-1" aria-live="polite">
           {comprimiendo
             ? 'Optimizando imágenes…'
-            : `${total}/${UPLOAD_MAX_FILES} fotos • ${total >= UPLOAD_MIN_FILES ? '✓ mínimo alcanzado' : `faltan ${UPLOAD_MIN_FILES - total} para mínimo`}`}
+            : uploading
+              ? 'Subiendo…'
+              : total === 0
+                ? `0/${UPLOAD_MAX_FILES} fotos • elige al menos ${UPLOAD_MIN_FILES} de tu galería o cámara`
+                : `${total}/${UPLOAD_MAX_FILES} fotos • ${total >= UPLOAD_MIN_FILES ? 'listas para subir ✓ (pulsa el botón de abajo)' : `elige ${UPLOAD_MIN_FILES - total} más para poder subir`}`}
         </p>
-        {initialUrls.length > 0 && uploadedUrls.length === 0 && (
-          <p className="text-[11px] text-neutral-400 mt-1">Tienes {initialUrls.length} URLs de ejemplo; sube fotos reales para reemplazarlas.</p>
-        )}
       </div>
 
       {/* Previews locales (objectURL, no son las finales) */}
@@ -205,7 +251,11 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
         </div>
       )}
 
-      {/* URLs reales devueltas por el backend (local /uploads/* o Cloudinary secure_url) */}
+      {/* URLs reales devueltas por el backend (local /uploads/* o Cloudinary secure_url).
+          Los archivos elegidos se CONSERVAN tras subir para poder acumular
+          (subir 3, elegir 2 más, subir: cada subida reemplaza las URLs del
+          padre con su propio lote). Sus objectURL siguen vivos para el
+          preview y se revocan al quitar/limpiar/desmontar. */}
       {uploadedUrls.length > 0 && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-3">
           <p className="text-xs font-medium text-green-800">✓ Subidas {uploadedUrls.length} URLs listas para publicar:</p>
