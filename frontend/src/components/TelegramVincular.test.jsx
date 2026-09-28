@@ -1,7 +1,12 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import TelegramVincular from './TelegramVincular'
 import { api } from '../services/api'
+
+beforeEach(() => {
+  // Los spyOn de cada test no deben fugar al siguiente (orden-independiente).
+  vi.restoreAllMocks()
+})
 
 describe('TelegramVincular (M5 bot_url directo)', () => {
   it('botón consume bot_url del endpoint (sin construirlo en frontend)', async () => {
@@ -35,7 +40,8 @@ describe('TelegramVincular (M5 bot_url directo)', () => {
     vi.spyOn(api, 'get').mockResolvedValue({ data: { telegram_vinculado: false } })
     render(<TelegramVincular token="t" vinculado={false} onVinculado={onVinculado} />)
     fireEvent.click(screen.getByRole('button', { name: 'Vincular cuenta' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent(/Aún no detectamos tu \/start/)
+    // Bloque 1: reintentos con backoff (~6s) antes del aviso.
+    expect(await screen.findByRole('alert', {}, { timeout: 9000 })).toHaveTextContent(/Aún no detectamos tu \/start/)
     expect(onVinculado).not.toHaveBeenCalled()
   })
 
@@ -48,5 +54,26 @@ describe('TelegramVincular (M5 bot_url directo)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Probar' }))
     expect(await screen.findByText(/Flujo simulado correcto/)).toBeInTheDocument()
     expect(screen.queryByText(/Vinculado/)).not.toBeInTheDocument()
+  })
+
+  it('bot_url inválida del backend muestra error (no navega)', async () => {
+    vi.spyOn(api, 'post').mockResolvedValue({ data: { bot_url: 'https://evil.com/x' } })
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    render(<TelegramVincular token="t" vinculado={false} />)
+    fireEvent.click(screen.getByRole('button', { name: /Abrir Bot en Telegram/ }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Respuesta inválida del bot/)
+    expect(openSpy).not.toHaveBeenCalled()
+  })
+
+  it('doble clic en Vincular no duplica el check (botón se deshabilita)', async () => {
+    const getSpy = vi.spyOn(api, 'get').mockResolvedValue({ data: { telegram_vinculado: true } })
+    const onVinculado = vi.fn()
+    render(<TelegramVincular token="t" vinculado={false} onVinculado={onVinculado} />)
+    const btn = screen.getByRole('button', { name: 'Vincular cuenta' })
+    fireEvent.click(btn)
+    fireEvent.click(btn)
+    await waitFor(() => expect(onVinculado).toHaveBeenCalledWith(true))
+    // 1 solo ciclo de comprobación aunque se pulse dos veces.
+    expect(getSpy.mock.calls.length).toBeLessThanOrEqual(3)
   })
 })

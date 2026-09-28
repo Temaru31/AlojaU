@@ -8,6 +8,7 @@ Los tokens legacy sin scopes/jti siguen válidos (enriquecidos por rol).
 """
 import hashlib
 import logging
+import os
 import re
 import secrets
 import time
@@ -1361,36 +1362,60 @@ _TELEGRAM_USADOS: set[str] = set()
 
 
 def _firmar_vinculo(user_id: int, exp: int, nonce: str) -> str:
+    """Firma un token de vinculación URL-safe para deep-linking de Telegram.
+
+    Bloque 1 fix: el formato legacy `uid.exp.nonce.sig` usa puntos, pero
+    Telegram solo acepta `start` con `[A-Za-z0-9_-]{1,64}` (los puntos se
+    truncan y el payload nunca llega al webhook). El formato nuevo usa
+    `_` como separador: `uid_exp_nonce_sig` (sig recortada a 16 hex = 64
+    bits, suficiente para 5 min + un solo uso) y nonce corto para que el
+    token total quede <= 64 chars.
+    """
     import hashlib as _hl
     import hmac as _hm
-    payload = f"{user_id}.{exp}.{nonce}"
-    sig = _hm.new(settings.SECRET_KEY.encode(), payload.encode(), _hl.sha256).hexdigest()[:32]
-    return f"{payload}.{sig}"
+    payload = f"{user_id}_{exp}_{nonce}"
+    sig = _hm.new(settings.SECRET_KEY.encode(), payload.encode(), _hl.sha256).hexdigest()[:16]
+    return f"{payload}_{sig}"
 
 
 def _desarmar_token_vinculo(token: str) -> tuple[int, int, str] | None:
     """Parse + HMAC + expiración de un token (sin tocar stores).
 
-    Fuente única para las dos variantes de validación. Retorna
+    Fuente única para las dos variantes de validación. Acepta formato
+    nuevo `a_b_c_d` (URL-safe, sig 16/32 hex) y legacy `a.b.c.d` (sig 32)
+    para compatibilidad con tokens emitidos antes del fix. Retorna
     (uid, exp, nonce) o None si el formato/firma/expiración fallan.
     """
     import hashlib as _hl
     import hmac as _hm
     try:
-        partes = (token or "").split(".")
+        raw = (token or "").strip()
+        # Normaliza: ambos separadores a "_" y parte en 4.
+        if raw.count(".") == 3 and "_" not in raw:
+            partes = raw.split(".")
+        else:
+            partes = raw.split("_")
         if len(partes) != 4:
             return None
         uid_s, exp_s, nonce, sig = partes
+        if not uid_s.lstrip("-").isdigit() or not exp_s.isdigit():
+            return None
+        if not nonce or not sig:
+            return None
         uid = int(uid_s)
         exp = int(exp_s)
         if time.time() > exp:
             return None
-        esperado = _hm.new(
-            settings.SECRET_KEY.encode(), f"{uid}.{exp}.{nonce}".encode(), _hl.sha256
-        ).hexdigest()[:32]
-        if not secrets.compare_digest(esperado, sig):
-            return None
-        return uid, exp, nonce
+        for sep in ("_", "."):
+            esperado_full = _hm.new(
+                settings.SECRET_KEY.encode(), f"{uid}{sep}{exp}{sep}{nonce}".encode(), _hl.sha256
+            ).hexdigest()
+            # Acepta sig completa (32) o recortada (16) en ambos separadores.
+            if secrets.compare_digest(esperado_full[:32], sig) or secrets.compare_digest(
+                esperado_full[:16], sig
+            ):
+                return uid, exp, nonce
+        return None
     except Exception:
         return None
 
@@ -1421,12 +1446,16 @@ def validar_token_vinculo(token: str) -> int | None:
         return None
 
 
-async def validar_token_vinculo_db(db: AsyncSession, token: str) -> int | None:
+async def validar_token_vinculo_db(db: AsyncSession, token: str,
+                                   commit: bool = True) -> int | None:
     """Variante persistente para el webhook del bot (Bloque 2).
 
     Misma semántica que `validar_token_vinculo` pero contra PG con
     `SELECT FOR UPDATE` (cierra la carrera de doble-consumo entre workers).
-    Si PG no responde, cae al camino en memoria (resiliencia dev).
+    Con `commit=False` solo hace `flush` (el caller commitea junto con sus
+    cambios: el webhook vincula chat_id en la MISMA transacción para no
+    quemar el token si el UPDATE falla). Si PG no responde, cae al camino
+    en memoria (resiliencia dev).
     """
     parsed = _desarmar_token_vinculo(token)
     if not parsed:
@@ -1446,7 +1475,10 @@ async def validar_token_vinculo_db(db: AsyncSession, token: str) -> int | None:
         if exp_db <= datetime.now(timezone.utc) or row.usado:
             return None
         row.usado = True
-        await db.commit()
+        if commit:
+            await db.commit()
+        else:
+            await db.flush()
         try:
             _TELEGRAM_USADOS.add(nonce)
             _TELEGRAM_VINCULOS.pop(nonce, None)
@@ -1483,7 +1515,9 @@ async def telegram_vincular_inicio(
     if not username:
         raise HTTPException(status_code=503, detail="Telegram no configurado (TELEGRAM_BOT_USERNAME). Vincula por correo.")
     exp = int(time.time()) + 300
-    nonce = secrets.token_hex(8)
+    # Bloque 1 fix: nonce corto (8 hex) para que el token total quede <= 64
+    # chars (límite de Telegram para `?start=`). Formato URL-safe con "_".
+    nonce = secrets.token_hex(4)
     token = _firmar_vinculo(uid, exp, nonce)
     _TELEGRAM_VINCULOS[nonce] = {"user_id": uid, "exp": exp, "usado": False}
     # Bloque 2: espejo persistente (fuente de verdad ante redeploys).
@@ -1523,6 +1557,190 @@ async def telegram_vincular_inicio(
         except Exception:
             pass
     return {"bot_url": f"https://t.me/{username}?start={token}", "expira_segundos": 300}
+
+
+def _telegram_send_message(chat_id: str, texto: str) -> bool:
+    """Envía un DM por Bot API. Retorna True si Telegram respondió 200/ok.
+
+    Bloque 1: usado por el webhook (confirmación) y por OTP (códigos).
+    Nunca lanza: ante fallo retorna False y loguea (fallback a email).
+    Delega en services/telegram (fuente única; este wrapper conserva el
+    contrato para callers sync existentes).
+    """
+    from ..services import telegram as _tg
+    token = (getattr(settings, "TELEGRAM_BOT_TOKEN", "") or "").strip()
+    return _tg.send_message_sync(token, chat_id, texto)
+
+
+async def _telegram_send_message_async(chat_id: str, texto: str) -> bool:
+    """Versión async (no bloquea el loop): webhook y notificaciones."""
+    from ..services import telegram as _tg
+    token = (getattr(settings, "TELEGRAM_BOT_TOKEN", "") or "").strip()
+    return await _tg.send_message(token, chat_id, texto)
+
+
+def webhook_secret_obligatorio() -> bool:
+    """True si prod exige secret de webhook (fail-closed auditable/testeable).
+
+    Regla: ENV=prod + bot configurado (hay USERNAME) => el secret es
+    obligatorio. Así un prod mal configurado no queda abierto.
+    """
+    prod = (getattr(settings, "ENV", "dev") or "dev") == "prod" or os.getenv("ENV", "dev") == "prod"
+    bot_cfg = bool((getattr(settings, "TELEGRAM_BOT_USERNAME", "") or "").strip())
+    secret_cfg = bool((getattr(settings, "TELEGRAM_WEBHOOK_SECRET", "") or "").strip())
+    return bool(prod and bot_cfg and not secret_cfg)
+
+
+def _extraer_start_payload(texto: str | None) -> str | None:
+    """Extrae el payload de `/start` en sus variantes.
+
+    Acepta: `/start`, `/startPAYLOAD`, `/start PAYLOAD`,
+    `/start@BotName PAYLOAD`. Retorna el payload (o "" si /start pelado)
+    o None si no es un /start.
+    """
+    if not texto:
+        return None
+    t = texto.strip()
+    if not t.startswith("/start"):
+        return None
+    resto = t[len("/start"):]
+    # Quita "@BotName" opcional.
+    if resto.startswith("@"):
+        partes = resto.split(None, 1)
+        # "/start@Bot" sin payload -> resto es solo "@Bot"
+        resto = (" " + partes[1]) if len(partes) > 1 else ""
+    resto = resto.strip()
+    return resto or ""
+
+
+@router.post("/telegram/webhook", summary="Bloque 1: receptor /start del bot (vincula chat_id)")
+async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_session)):
+    """Webhook productivo de Telegram ( causa raíz del bug `/start` ).
+
+    Flujo: Telegram POSTea cada update aquí (tras `setWebhook`). Si el
+    mensaje es `/start <TOKEN>` en chat privado, se valida el token
+    (HMAC, 5 min, un solo uso, PG) y se persiste
+    `usuarios.telegram_chat_id = str(chat.id)`. Sin este endpoint nada
+    escribía `telegram_chat_id` y `GET /perfil` siempre devolvía
+    `telegram_vinculado=False` ("no se detectó /start").
+
+    Seguridad: exige `X-Telegram-Bot-Api-Secret-Token` si hay secret
+    configurado; en prod con bot configurado el secret es OBLIGATORIO
+    (fail-closed 503 si falta). Throttle 60/min por IP (anti-enumeración).
+    Ignora grupos/canales. Transacción ÚNICA: quemar token + vincular
+    chat_id commitean juntos (si el UPDATE falla, el token sigue válido).
+    Tipo de datos: `telegram_chat_id` es VARCHAR(32) (no INTEGER) para
+    soportar IDs de 64 bits sin overflow; se guarda normalizado como
+    texto sin espacios.
+    """
+    if webhook_secret_obligatorio():
+        raise HTTPException(
+            status_code=503,
+            detail="Telegram mal configurado en el servidor (falta TELEGRAM_WEBHOOK_SECRET)",
+        )
+    secreto_cfg = (getattr(settings, "TELEGRAM_WEBHOOK_SECRET", "") or "").strip()
+    if secreto_cfg:
+        enviado = (request.headers.get("X-Telegram-Bot-Api-Secret-Token") or "").strip()
+        if not secrets.compare_digest(enviado, secreto_cfg):
+            raise HTTPException(status_code=401, detail="Secret de webhook inválido")
+    try:
+        from ..services import telegram as _tg
+        ip = request.client.host if request.client and request.client.host else "unknown"
+        _tg.check_throttle(f"tg_wh:{ip}", 60, 60.0, "Demasiadas peticiones al webhook, espera 1 minuto")
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+    try:
+        cuerpo = await request.json()
+    except Exception:
+        return {"ok": True, "ignorado": "sin-json"}
+    msg = (cuerpo or {}).get("message") or (cuerpo or {}).get("edited_message") or {}
+    chat = msg.get("chat") or {}
+    chat_id_raw = chat.get("id")
+    chat_tipo = str(chat.get("type") or "private")
+    texto = msg.get("text") or ""
+    # Solo DMs privados (M5 privacidad: nunca grupos/canales).
+    if chat_tipo != "private":
+        return {"ok": True, "ignorado": "no-privado"}
+    payload = _extraer_start_payload(texto)
+    if payload is None:
+        return {"ok": True, "ignorado": "no-start"}
+    if not payload:
+        # /start pelado: guía al usuario a iniciar desde la web.
+        if chat_id_raw is not None:
+            await _telegram_send_message_async(
+                str(chat_id_raw),
+                "Hola, soy AlojaU. Para vincular tu cuenta, entra a AlojaU → Mi Perfil → "
+                "Telegram → «Abrir Bot en Telegram» y pulsa el botón /start que te abre.",
+            )
+        return {"ok": True, "ignorado": "start-sin-payload"}
+    # Normaliza chat_id como texto (BIGINT de Telegram -> VARCHAR sin espacios).
+    try:
+        chat_id = str(int(str(chat_id_raw).strip()))
+    except Exception:
+        return {"ok": True, "ignorado": "chat-id-invalido"}
+    # Transacción única: valida (flush, sin commit) + vincula + commit.
+    try:
+        uid = await validar_token_vinculo_db(db, payload.strip(), commit=False)
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.warning(f"[telegram webhook] validación falló: {e!r}")
+        uid = None
+    if uid is None:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        await _telegram_send_message_async(
+            chat_id,
+            "Ese enlace expiró o ya fue usado (5 min, un solo uso). "
+            "Vuelve a AlojaU → Mi Perfil → Telegram y genera uno nuevo.",
+        )
+        return {"ok": True, "vinculado": False, "motivo": "token-invalido"}
+    # Vincula: UPDATE usuarios.telegram_chat_id (transición ausente antes).
+    try:
+        from ..models import Usuario
+        res = await db.execute(select(Usuario).where(Usuario.id == uid))
+        u = res.scalars().first()
+        if u is None:
+            # Fallback mock dev.
+            for _email, _m in MOCK_USERS.items():
+                if _m.get("id") == uid:
+                    _m["telegram_chat_id"] = chat_id
+                    break
+        else:
+            u.telegram_chat_id = chat_id
+        await db.commit()
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.warning(f"[telegram webhook] no se pudo persistir chat_id: {e!r}")
+        # Intento mock dev para no bloquear el flujo local.
+        try:
+            for _email, _m in MOCK_USERS.items():
+                if _m.get("id") == uid:
+                    _m["telegram_chat_id"] = chat_id
+                    break
+        except Exception:
+            pass
+        await _telegram_send_message_async(
+            chat_id,
+            "Hubo un problema guardando la vinculación. Genera un enlace nuevo "
+            "en AlojaU → Mi Perfil → Telegram e inténtalo de nuevo.",
+        )
+        return {"ok": True, "vinculado": False, "motivo": "persistencia"}
+    await _telegram_send_message_async(
+        chat_id,
+        "¡Listo! Tu Telegram quedó vinculado a AlojaU. Vuelve a la web y pulsa "
+        "«Vincular cuenta» para confirmar. Los códigos llegarán a este chat.",
+    )
+    return {"ok": True, "vinculado": True, "user_id": uid}
 
 
 @router.post("/otp/solicitar", status_code=202, summary="Solicitar código OTP 6 dígitos (10 min)")

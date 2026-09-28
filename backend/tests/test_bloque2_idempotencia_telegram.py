@@ -86,8 +86,9 @@ def test_telegram_pg_escribe_y_consume_una_vez():
         async def _flujo():
             from app.models import TelegramVinculo
             async with AsyncSession() as db:
-                # Fila persistida en PG al generar.
-                nonce = token.split(".")[2]
+                # Fila persistida en PG al generar (formato nuevo "_" o legacy ".").
+                sep = "_" if "_" in token else "."
+                nonce = token.split(sep)[2]
                 row = await db.get(TelegramVinculo, nonce)
                 assert row is not None and row.usado is False
                 # Primer consumo OK (vía PG, con row-lock).

@@ -63,6 +63,14 @@ class Settings(BaseSettings):
     # M5 vinculación $0: username público del bot (sin @) para bot_url t.me.
     # Ej. TELEGRAM_BOT_USERNAME=AlojaU_bot -> https://t.me/AlojaU_bot?start=TOKEN
     TELEGRAM_BOT_USERNAME: str = ""
+    # Bloque 1 fix: webhook productivo del bot.
+    # TELEGRAM_WEBHOOK_SECRET se valida contra el header
+    # X-Telegram-Bot-Api-Secret-Token que envía Telegram en cada update.
+    # Vacío = se acepta sin verificar (solo dev); en prod configurarlo.
+    TELEGRAM_WEBHOOK_SECRET: str = ""
+    # URL pública del webhook (informativa, para `setWebhook` manual).
+    # Ej. https://alojau-api.onrender.com/api/auth/telegram/webhook
+    TELEGRAM_WEBHOOK_URL: str = ""
 
     # v13: versión de política de datos vigente (Ley 1581/2012).
     POLITICA_VERSION: str = POLITICA_VERSION_VIGENTE

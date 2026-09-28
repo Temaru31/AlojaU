@@ -5,7 +5,7 @@
 // ofrece una simulación de interfaz claramente etiquetada que NUNCA marca la
 // cuenta como vinculada (solo demuestra el flujo visual del PIN de 6).
 // Uso: <TelegramVincular token={token} vinculado={perfil?.telegram_vinculado} />
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
 
 export function esErrorSinBot(err) {
@@ -21,9 +21,18 @@ export default function TelegramVincular({ token, vinculado, onVinculado }) {
   const [comprobando, setComprobando] = useState(false)
   const [error, setError] = useState('')
   const [botAbierto, setBotAbierto] = useState(false)
+  const [botUrl, setBotUrl] = useState('')
+  const [intentos, setIntentos] = useState(0)
   const [modoLocal, setModoLocal] = useState(false)
   const [pinSim, setPinSim] = useState('')
   const [pinOk, setPinOk] = useState(false)
+
+  // Guard de desmontaje: los reintentos duermen hasta 3s; sin esto habría
+  // setState sobre componente desmontado al navegar en mitad del check.
+  const vivoRef = useRef(true)
+  useEffect(() => () => { vivoRef.current = false }, [])
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
   const abrirBot = async () => {
     setError('')
@@ -39,11 +48,13 @@ export default function TelegramVincular({ token, vinculado, onVinculado }) {
       if (!url || !url.startsWith('https://t.me/')) {
         throw new Error('Respuesta inválida del bot')
       }
+      setBotUrl(url)
       // Consume directamente el bot_url del backend (sin construirlo aquí).
       // window.open no lanza con bloqueador (retorna null): fallback a href.
       const ventana = window.open(url, '_blank', 'noopener,noreferrer')
       if (!ventana) window.location.href = url
       setBotAbierto(true)
+      setIntentos(0)
     } catch (e) {
       if (esErrorSinBot(e)) {
         setModoLocal(true)
@@ -66,18 +77,36 @@ export default function TelegramVincular({ token, vinculado, onVinculado }) {
     setComprobando(true)
     setError('')
     try {
-      const r = await api.get('/api/auth/perfil', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      })
-      if (r.data?.telegram_vinculado) {
-        onVinculado?.(true)
-      } else {
-        setError('Aún no detectamos tu /start. Abre el bot, pulsa /start y vuelve a intentarlo.')
+      // Bloque 1: el webhook de Telegram puede tardar unos segundos en
+      // procesar el /start (cold start de Render). Reintenta con backoff
+      // 3 intentos (~0s, 1s, 2s) antes de mostrar "no detectado".
+      const delays = [0, 1000, 2000]
+      for (let i = 0; i < delays.length; i += 1) {
+        if (delays[i]) await sleep(delays[i])
+        if (!vivoRef.current) return
+        try {
+          const r = await api.get('/api/auth/perfil', {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          })
+          if (!vivoRef.current) return
+          if (r.data?.telegram_vinculado) {
+            onVinculado?.(true)
+            setIntentos(0)
+            return
+          }
+        } catch {
+          // Sigue al siguiente intento salvo que sea el último.
+          if (i === delays.length - 1) throw new Error('red')
+        }
+        if (vivoRef.current) setIntentos(i + 1)
       }
+      if (!vivoRef.current) return
+      setError('Aún no detectamos tu /start. Abre el bot, pulsa /start y vuelve a intentarlo. Si el enlace expiró (5 min), genera uno nuevo con «Abrir Bot».')
     } catch {
-      setError('No se pudo comprobar. Intenta de nuevo.')
+      if (!vivoRef.current) return
+      setError('No se pudo comprobar (el servidor puede estar despertando). Espera unos segundos e intenta de nuevo.')
     } finally {
-      setComprobando(false)
+      if (vivoRef.current) setComprobando(false)
     }
   }
 
@@ -119,9 +148,17 @@ export default function TelegramVincular({ token, vinculado, onVinculado }) {
           </li>
           <li className="flex items-start gap-2.5">
             <span aria-hidden="true" className="shrink-0 w-5 h-5 rounded-full bg-navy-800 text-white text-[11px] font-bold flex items-center justify-center mt-0.5">2</span>
-            <p className="text-xs text-neutral-600 leading-relaxed">
-              Dentro de Telegram presiona el botón <code className="px-1.5 py-0.5 rounded bg-neutral-100 border border-neutral-200 font-mono text-[11px]">/start</code> para recibir tu PIN de 6 dígitos.
-            </p>
+            <div className="flex-1">
+              <p className="text-xs text-neutral-600 leading-relaxed">
+                Dentro de Telegram presiona el botón <code className="px-1.5 py-0.5 rounded bg-neutral-100 border border-neutral-200 font-mono text-[11px]">/start</code> para vincular (el enlace dura 5 min, un solo uso).
+              </p>
+              {botAbierto && botUrl && (
+                <p className="text-[11px] text-neutral-500 mt-1 break-all">
+                  Si el botón no abrió Telegram, copia este enlace:{' '}
+                  <a href={botUrl} target="_blank" rel="noreferrer" className="text-navy-700 underline">{botUrl}</a>
+                </p>
+              )}
+            </div>
           </li>
           <li className="flex items-start gap-2.5">
             <span aria-hidden="true" className="shrink-0 w-5 h-5 rounded-full bg-navy-800 text-white text-[11px] font-bold flex items-center justify-center mt-2">3</span>
@@ -132,7 +169,7 @@ export default function TelegramVincular({ token, vinculado, onVinculado }) {
                 disabled={comprobando}
                 className="w-full sm:w-auto px-4 py-2 min-h-[44px] text-sm font-semibold text-navy-800 bg-white border-2 border-navy-800 rounded-lg hover:bg-navy-50 active:bg-navy-100 transition disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy-800/40"
               >
-                {comprobando ? 'Comprobando…' : 'Vincular cuenta'}
+                {comprobando ? `Comprobando${intentos ? ` (intento ${intentos + 1}/3)…` : '…'}` : 'Vincular cuenta'}
               </button>
               <p className="text-[11px] text-neutral-400 mt-1">El bot confirma solo; aquí verificamos que ya quedó vinculado.</p>
             </div>

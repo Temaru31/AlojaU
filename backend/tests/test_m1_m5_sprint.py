@@ -178,7 +178,11 @@ def test_m5_telegram_vincular_y_privacidad():
         url = r2.json()["bot_url"]
         assert url.startswith("https://t.me/AlojaU_test_bot?start=")
         token = url.split("start=")[1]
-        assert token.count(".") == 3
+        # Bloque 1 fix: token URL-safe "_" (Telegram deep-link solo
+        # [A-Za-z0-9_-]{1,64}; los "." legacy se truncaban). Legacy con "."
+        # sigue aceptado por _desarmar_token_vinculo por compatibilidad.
+        assert len(token) <= 64
+        assert token.count("_") == 3 or token.count(".") == 3
         # HMAC un solo uso: primera validación ok, segunda None.
         from app.routers.auth import validar_token_vinculo
         from app.core.security import decode_token

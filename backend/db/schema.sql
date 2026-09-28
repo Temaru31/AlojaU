@@ -68,6 +68,16 @@ CREATE TABLE IF NOT EXISTS usuarios (
 );
 CREATE INDEX IF NOT EXISTS idx_usuarios_rol ON usuarios(rol);
 CREATE INDEX IF NOT EXISTS idx_usuarios_eliminado ON usuarios(eliminado_en);
+-- Bloque 1 (mig 017): lookup del webhook/OTP + formato (IDs 64 bits).
+CREATE INDEX IF NOT EXISTS idx_usuarios_telegram_chat ON usuarios(telegram_chat_id);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'chk_telegram_chat_fmt') THEN
+    ALTER TABLE usuarios ADD CONSTRAINT chk_telegram_chat_fmt
+      CHECK (telegram_chat_id IS NULL OR telegram_chat_id ~ '^-?[0-9]{5,20}$');
+  END IF;
+END
+$$;
 
 -- v13 Enterprise Auth: rate-limit persistente, OTP, recovery y sesiones.
 CREATE TABLE IF NOT EXISTS rate_limit_attempts (
