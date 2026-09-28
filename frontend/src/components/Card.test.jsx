@@ -34,9 +34,12 @@ describe('Card - HU-001/003 y overflow', ()=>{
   it('maneja fotos como array (no muestra URLs crudas)', ()=>{
     render(<Card pub={basePub} />)
     // Debe mostrar "4 fotos" (overlay + texto), no URLs crudas.
-    // Regex anclados (CodeQL): sin ^$ matchean subcadenas parciales.
+    // Sin regex (CodeQL exige anclas ^ y $; el prefijo varía por foto):
+    // matcher de función con prefijo exacto sobre el string completo.
     expect(screen.getAllByText(/^4 fotos$/).length).toBeGreaterThan(0)
-    expect(screen.queryByText(/^https:\/\/a\.com/)).not.toBeInTheDocument()
+    expect(screen.queryByText(
+      (_contenido, el) => (el?.textContent || '').startsWith('https://a.com'),
+    )).not.toBeInTheDocument()
   })
 
   it('maneja fotos como número legacy', ()=>{

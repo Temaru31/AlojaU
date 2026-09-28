@@ -55,6 +55,14 @@ ENV_WEBHOOK_SECRET = "ALOJAU_WEBHOOK_SECRET"
 _CLAVES_SENSIBLES = ("token", "secret", "codigo", "code", "password", "passwd")
 
 
+def _enmascarar(valor) -> str:
+    """Enmascara PII (teléfonos): muestra solo los últimos 2 dígitos."""
+    s = re.sub(r"\D", "", str(valor or ""))
+    if len(s) <= 2:
+        return "***"
+    return "*" * (len(s) - 2) + s[-2:]
+
+
 def _resumen(cuerpo) -> str:
     """Resumen seguro de una respuesta: claves + tipos, valores redactados.
 
@@ -175,7 +183,7 @@ def main():
                                             "first_name": "Test"}}}
         s, wc = llamada(args.base, "POST", "/api/auth/telegram/webhook",
                         cuerpo=contacto, headers=wh_headers)
-        print(f"[4] webhook contacto ({args.telefono}): {s} vinculado={wc.get('vinculado')}")
+        print(f"[4] webhook contacto ({_enmascarar(args.telefono)}): {s} vinculado={wc.get('vinculado')}")
         if wc.get("vinculado") is not True:
             print("     ", _resumen(wc))
             ok = False
