@@ -63,11 +63,15 @@ jobs:
 
       - name: Init DB schema
         # tests/conftest.py hace TRUNCATE + seed.sql por test, pero las tablas
-        # deben existir: se crean una vez aquí desde db/schema.sql (al día con
-        # migraciones 003/004/005: FTS, categoria, automation).
+        # deben existir: se crean una vez aquí desde db/schema.sql y LUEGO se
+        # aplican db/migrations/*.sql en orden (aditivas e idempotentes:
+        # IF NOT EXISTS). Sin este segundo paso, la CI nunca ejercería las
+        # migraciones (ej. 017: índice + CHECK de telegram_chat_id) y un
+        # schema.sql desfasado pasaría en verde (falso negativo).
         run: |
           python - <<'EOF'
           import asyncio
+          import glob
           import os
           import asyncpg
 
@@ -80,13 +84,16 @@ jobs:
               try:
                   with open("db/schema.sql", encoding="utf-8") as f:
                       await conn.execute(f.read())
+                  for mig in sorted(glob.glob("db/migrations/*.sql")):
+                      with open(mig, encoding="utf-8") as f:
+                          await conn.execute(f.read())
               finally:
                   await conn.close()
 
 
           asyncio.run(main())
           EOF
-
+          
       - name: Run tests with coverage (min 70%)
         # `python -m` (no el binario `pytest`): antepone el CWD (backend/) al
         # sys.path, sin lo cual `from app...` falla en colección con
