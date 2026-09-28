@@ -1,6 +1,7 @@
 // SmartImage - imagen con reintentos, fallback local y aspect estable.
 // Uso: <SmartImage src alt className eager tone /> en Card/Galeria/Visor. Ej: <SmartImage src={url} alt="Foto 1" />.
 import { useState } from 'react'
+import { hostDe } from '../utils/urls'
 
 export const FALLBACK_IMG = '/fallback-foto.svg'
 const MAX_ATTEMPTS = 3
@@ -8,7 +9,8 @@ const TONES = { light: 'bg-neutral-100', dark: 'bg-neutral-800' }
 
 export function normalizeImgUrl(url) {
   // Unsplash sin auto=format falla en burst: añade params estándar una sola vez.
-  if (typeof url !== 'string' || !url.includes('images.unsplash.com')) return url
+  // Host exacto (CodeQL): substring aceptaba `evil.com/?x=images.unsplash.com`.
+  if (typeof url !== 'string' || hostDe(url) !== 'images.unsplash.com') return url
   if (url.includes('auto=format')) return url
   return url.includes('?') ? `${url}&auto=format&q=80` : `${url}?auto=format&q=80`
 }

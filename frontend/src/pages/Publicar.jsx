@@ -10,6 +10,7 @@ import { notifyToast } from '../components/Toast'
 import { emitAuthChange, useAuth } from '../contexts/AuthContext'
 import ContadorCaracteres from '../components/ContadorCaracteres'
 import { LIMITES, estadoRango, RANGO_CLS } from '../constants'
+import { esHttpUrl } from '../utils/urls'
 import { SERVICIOS } from '../utils/servicios'
 import InfoTooltip from '../components/InfoTooltip'
 import useTiposVivienda from '../hooks/useTiposVivienda'
@@ -116,7 +117,9 @@ export function validarPublicar(form, lim = LIMITES) {
   if (fotosValid.length < lim.fotosMin) e.fotos = `Mínimo ${lim.fotosMin} fotos (sube fotos reales)`
   else {
     for (const url of fotosValid) {
-      try { new URL(url); if (!url.startsWith('http')) throw new Error() } catch { e.fotos = 'URLs deben ser http(s) válidas'; break }
+      // Validación estricta (CodeQL): protocolo http/https real, nunca
+      // substring-match (aceptaba `http:evil` o `httpx://...`).
+      if (!esHttpUrl(url)) { e.fotos = 'URLs deben ser http(s) válidas'; break }
     }
   }
   if (form.latitud !== '' && form.latitud != null && (isNaN(Number(form.latitud)) || Number(form.latitud) < -90 || Number(form.latitud) > 90)) e.latitud = 'Latitud entre -90 y 90'
