@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import require_admin
+from app.core.logseguro import exc_resumen
 from app.core.config import settings
 from app.db.session import get_session
 
@@ -106,7 +107,7 @@ async def listar_admin(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[housing admin listar] falló: {e!r}", exc_info=True)
+        logger.error(f"[housing admin listar] falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -159,7 +160,7 @@ async def crear_tipo(
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[housing crear] falló: {e!r}", exc_info=True)
+        logger.error(f"[housing crear] falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     # Mock dev
@@ -217,7 +218,7 @@ async def editar_tipo(
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[housing editar] falló: {e!r}", exc_info=True)
+        logger.error(f"[housing editar] falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     from app.services import housing_types as _ht
@@ -265,7 +266,7 @@ async def eliminar_tipo(
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[housing eliminar] falló: {e!r}", exc_info=True)
+        logger.error(f"[housing eliminar] falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     # Mock dev: RESTRICT si algún MOCK_PUB lo usa.

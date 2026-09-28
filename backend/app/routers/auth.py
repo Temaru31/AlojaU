@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.security import hash_password, verify_password, create_token, get_current_user
 from ..core.config import settings
+from ..core.logseguro import exc_resumen, una_linea
 from ..db.session import get_session
 
 logger = logging.getLogger("alojau.auth")
@@ -471,7 +472,7 @@ async def _db_rate_check(db: AsyncSession, clave: str, limite: int = 5,
             await db.rollback()
         except Exception:
             pass
-        logger.error("[rate-limit] verificación persistente falló (fail-closed): %r", e)
+        logger.error("[rate-limit] verificación persistente falló (fail-closed): %s", exc_resumen(e))
         if _mock_enabled():
             logger.warning("[rate-limit] sin PG en dev: solo rige el límite en memoria")
             return
@@ -490,7 +491,7 @@ async def _db_rate_record(db: AsyncSession, clave: str, exito: bool) -> None:
             await db.rollback()
         except Exception:
             pass
-        logger.warning("[rate-limit] no se pudo registrar intento: %r", e)
+        logger.warning("[rate-limit] no se pudo registrar intento: %s", exc_resumen(e))
 
 
 def _check_login_rate_limit(request: Request):
@@ -644,7 +645,7 @@ async def register(data: RegisterIn, request: Request, db: AsyncSession = Depend
                             "mock": False, "email_verificado": bool(u.email_verificado)}
             except Exception:
                 pass
-        logger.error(f"[auth register] DB falló: {e!r}", exc_info=True)
+        logger.error(f"[auth register] DB falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         if email in MOCK_USERS or data.email in MOCK_USERS:
@@ -784,7 +785,7 @@ async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[auth login] DB falló: {e!r}", exc_info=True)
+        logger.error(f"[auth login] DB falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         u = MOCK_USERS.get(email) or MOCK_USERS.get(data.email)
@@ -821,7 +822,7 @@ async def get_perfil(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[auth get_perfil] DB falló: {e!r}", exc_info=True)
+        logger.error(f"[auth get_perfil] DB falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
@@ -892,7 +893,7 @@ async def cambiar_password(
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[auth password] DB falló: {e!r}", exc_info=True)
+        logger.error(f"[auth password] DB falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
@@ -1021,7 +1022,7 @@ async def _avatar_guardar(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[avatar storage] falló: {e!r}", exc_info=True)
+        logger.error(f"[avatar storage] falló: {exc_resumen(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="No se pudo guardar la imagen")
     # Misma transacción: actualiza foto_perfil_url en BD.
     try:
@@ -1059,7 +1060,7 @@ async def _avatar_guardar(
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[avatar db] falló: {e!r}", exc_info=True)
+        logger.error(f"[avatar db] falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             # Bloque 1: el archivo ya se guardó pero la BD falló -> huérfano.
             try:
@@ -1118,7 +1119,7 @@ async def quitar_avatar(
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[avatar quitar] falló: {e!r}", exc_info=True)
+        logger.error(f"[avatar quitar] falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     for _em, _m in MOCK_USERS.items():
@@ -1184,7 +1185,7 @@ async def update_perfil(
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[auth update_perfil] DB falló: {e!r}", exc_info=True)
+        logger.error(f"[auth update_perfil] DB falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
@@ -1326,12 +1327,13 @@ def _enviar_codigo(email: str, codigo: str, proposito: str, chat_id: str | None 
                 pass
             return "telegram"
         except Exception as e:
-            logger.warning(f"[otp telegram DM] falló, usando email: {e!r}")
+            logger.warning(f"[otp telegram DM] falló, usando email: {exc_resumen(e)}")
     # Sin DM vinculado o sin bot: Email-code (log en dev, Supabase en prod).
     # Semántica correcta: canal "email" = llegó (o se logueó) por correo.
     if chat_id and not settings.TELEGRAM_BOT_TOKEN.strip():
-        logger.info(f"[otp {proposito}] usuario con telegram sin bot configurado, fallback email para {email}")
-    logger.info(f"[otp {proposito}] código para {email}: {codigo} (10 min, canal email)")
+        logger.info(f"[otp {proposito}] sin bot configurado, fallback email para {una_linea(email)}")
+    # El código NUNCA se loguea (secreto de un solo uso): solo el hecho.
+    logger.info(f"[otp {proposito}] código generado para {una_linea(email)} (10 min, canal email)")
     return "email"
 
 
@@ -1491,7 +1493,7 @@ async def validar_token_vinculo_db(db: AsyncSession, token: str,
             await db.rollback()
         except Exception:
             pass
-        logger.warning(f"[telegram validar] PG no disponible, fallback memoria: {e!r}")
+        logger.warning(f"[telegram validar] PG no disponible, fallback memoria: {exc_resumen(e)}")
         if not _mock_enabled():
             return None
         if commit:
@@ -1546,7 +1548,7 @@ async def telegram_vincular_inicio(
             await db.rollback()
         except Exception:
             pass
-        logger.warning(f"[telegram inicio] PG no disponible, solo memoria: {e!r}")
+        logger.warning(f"[telegram inicio] PG no disponible, solo memoria: {exc_resumen(e)}")
     await _db_rate_record(db, f"tg:{uid}", False)
     # Limpieza best-effort de expirados (memoria acotada + PG).
     try:
@@ -1811,7 +1813,7 @@ async def _webhook_contacto(db: AsyncSession, chat_id: str, from_id, contacto: d
             except Exception:
                 pass
         except Exception as e:
-            logger.warning(f"[telegram contacto] no se pudo vincular: {e!r}")
+            logger.warning(f"[telegram contacto] no se pudo vincular: {exc_resumen(e)}")
             try:
                 await db.rollback()
             except Exception:
@@ -1826,7 +1828,7 @@ async def _webhook_contacto(db: AsyncSession, chat_id: str, from_id, contacto: d
         )
         return {"ok": True, "vinculado": True, "user_id": int(pend["user_id"])}
     except Exception as e:
-        logger.warning(f"[telegram contacto] fallo inesperado: {e!r}")
+        logger.warning(f"[telegram contacto] fallo inesperado: {exc_resumen(e)}")
         try:
             await db.rollback()
         except Exception:
@@ -1944,7 +1946,7 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_sess
             await db.rollback()
         except Exception:
             pass
-        logger.warning(f"[telegram webhook] validación falló: {e!r}")
+        logger.warning(f"[telegram webhook] validación falló: {exc_resumen(e)}")
         uid = None
     if uid is None:
         try:
@@ -2022,7 +2024,7 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_sess
             await db.rollback()
         except Exception:
             pass
-        logger.warning(f"[telegram webhook] no se pudo registrar pendiente: {e!r}")
+        logger.warning(f"[telegram webhook] no se pudo registrar pendiente: {exc_resumen(e)}")
         await _telegram_send_message_async(
             chat_id,
             "Hubo un problema guardando la solicitud. Genera un enlace nuevo "
@@ -2123,7 +2125,7 @@ async def recovery_solicitar(data: RecoverySolicitarIn, request: Request,
             pass
         _MOCK_RESETS[email] = {"hash": digest, "expira": time.monotonic() + 900}
     # Respuesta genérica anti-enumeración; en dev se loguea el token.
-    logger.info(f"[recovery] token para {email} (15 min, un solo uso)")
+    logger.info(f"[recovery] token generado para {una_linea(email)} (15 min, un solo uso)")
     resp: dict = {"mensaje": "Si el correo existe, enviamos un enlace válido 15 minutos."}
     if settings.ENV != "prod" and _mock_enabled():
         resp["dev_token"] = token  # solo dev/test para e2e sin SMTP
@@ -2313,7 +2315,7 @@ async def oauth_google_callback(data: GoogleCallbackIn, request: Request,
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[oauth google] DB falló: {e!r}", exc_info=True)
+        logger.error(f"[oauth google] DB falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         m = MOCK_USERS.get(email)
@@ -2432,7 +2434,7 @@ async def revocar_sesiones(user: dict = Depends(get_current_user),
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[sesiones revocar] DB falló: {e!r}", exc_info=True)
+        logger.error(f"[sesiones revocar] DB falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         return {"mensaje": "Sesiones revocadas (mock).", "revocadas": 1}
@@ -2483,7 +2485,7 @@ async def logout_actual(
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[logout] DB falló: {e!r}", exc_info=True)
+        logger.error(f"[logout] DB falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         return {"mensaje": "Sesión cerrada (mock).", "revocadas": 1, "mock": True}
@@ -2510,7 +2512,7 @@ async def logout_todas(
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[logout-all] DB falló: {e!r}", exc_info=True)
+        logger.error(f"[logout-all] DB falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         return {"mensaje": "Sesiones revocadas (mock).", "revocadas": 1, "mock": True}
@@ -2567,7 +2569,7 @@ async def eliminar_cuenta(data: CuentaEliminarIn,
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[cuenta eliminar] DB falló: {e!r}", exc_info=True)
+        logger.error(f"[cuenta eliminar] DB falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         for em, m in MOCK_USERS.items():
@@ -2622,7 +2624,7 @@ async def restaurar_cuenta(data: CuentaRestaurarIn, request: Request,
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[cuenta restaurar] DB falló: {e!r}", exc_info=True)
+        logger.error(f"[cuenta restaurar] DB falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         m = MOCK_USERS.get(email)

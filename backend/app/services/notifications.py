@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 from typing import Protocol
+from app.core.logseguro import exc_resumen, una_linea
 
 logger = logging.getLogger("alojau.notificaciones")
 
@@ -46,15 +47,15 @@ class CanalTelegram:
             token = (getattr(_settings, "TELEGRAM_BOT_TOKEN", "") or "").strip()
             return await _tg.send_message(token, destino, texto)
         except Exception as e:
-            logger.warning(f"[notificaciones telegram] falló: {e!r}")
+            logger.warning(f"[notificaciones telegram] falló: {exc_resumen(e)}")
             return False
 
 
 class CanalLog:
-    """Canal de respaldo/observabilidad: deja traza en logs."""
+    """Canal de respaldo/observabilidad: deja traza en logs (saneada)."""
 
     async def enviar(self, destino: str, texto: str) -> bool:
-        logger.info(f"[notificaciones log] para {destino}: {texto[:120]}")
+        logger.info(f"[notificaciones log] para {una_linea(destino, 40)}: {una_linea(texto, 120)}")
         return True
 
 
@@ -89,7 +90,7 @@ async def despachar(db, usuario_id: int | None, texto: str,
                 continue
             resultado[nombre] = bool(await canal.enviar(destino, texto))
         except Exception as e:
-            logger.warning(f"[notificaciones {nombre}] falló: {e!r}")
+            logger.warning(f"[notificaciones {nombre}] falló: {exc_resumen(e)}")
             resultado[nombre] = False
     return resultado
 
@@ -109,5 +110,5 @@ async def notificar_cambio_estado(db, usuario_id: int | None,
         if res.get("CanalTelegram"):
             return "telegram"
     except Exception as e:
-        logger.warning(f"[notificaciones cambio-estado] falló: {e!r}")
+        logger.warning(f"[notificaciones cambio-estado] falló: {exc_resumen(e)}")
     return "none"

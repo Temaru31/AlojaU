@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_session
 from app.core.config import settings
 from app.core.security import get_current_user, get_optional_user
+from app.core.logseguro import exc_resumen
 from app.repositories import publicacion_repo as repo
 from app.services import publicacion_view as view
 from app.schemas.publicacion import (
@@ -131,7 +132,7 @@ async def _idem_guardar(db: AsyncSession, clave: str, uid: int, cuerpo: dict) ->
             await db.rollback()
         except Exception:
             pass
-        logger.warning(f"[idempotencia] no se pudo guardar (se responde igual): {e!r}")
+        logger.warning(f"[idempotencia] no se pudo guardar (se responde igual): {exc_resumen(e)}")
         if not _mock_enabled():
             return None
     _IDEMPOTENCY_MOCK[(clave, uid, IDEM_RUTA_CREAR)] = {
@@ -339,14 +340,14 @@ async def list_publicaciones(
         raise
     except Exception as e:
         # Log real para diagnóstico en Render (no ocultar excepción)
-        logger.error(f"[DB fallback] query_lista falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] query_lista falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
             pass
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        logger.warning(f"[Sprint1 mock fallback] DB no disponible: {e!r}")
+        logger.warning(f"[Sprint1 mock fallback] DB no disponible: {exc_resumen(e)}")
         filtradas = view.filter_mock_pubs(
             MOCK_PUBS, campus_id, precio_min, precio_max, tipo, servicios_ids, q,
             ciudad_id=ciudad_id, ciudad_slug=ciudad_slug,
@@ -419,7 +420,7 @@ async def mis_publicaciones(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] mis_publicaciones {uid} falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] mis_publicaciones {uid} falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -488,7 +489,7 @@ async def mi_historial(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] mias/historial {uid} falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] mias/historial {uid} falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -607,14 +608,14 @@ async def get_publicacion(
     except Exception as e:
         # CWE-117: pub_id viene del path; sanear CR/LF antes de loguear.
         safe_pub_id = str(pub_id).replace("\r", "").replace("\n", "")
-        logger.error(f"[DB fallback] get_publicacion {safe_pub_id} falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] get_publicacion {safe_pub_id} falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
             pass
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        logger.warning(f"[DB fallback] get_publicacion {safe_pub_id}: {e!r}")
+        logger.warning(f"[DB fallback] get_publicacion {safe_pub_id}: {exc_resumen(e)}")
 
     # Mock fallback solo dev. No-ACTIVO privado también en mock.
     if not _mock_enabled():
@@ -731,7 +732,7 @@ async def editar_publicacion(
             pass
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] editar {pub_id} falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] editar {pub_id} falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -860,7 +861,7 @@ async def reemplazar_fotos(
             pass
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] fotos {pub_id} falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] fotos {pub_id} falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -910,7 +911,7 @@ async def renovar_publicacion(
             pass
         raise
     except Exception as e:
-        logger.error(f"[DB] renovar_publicacion {pub_id} falló: {e!r}", exc_info=True)
+        logger.error(f"[DB] renovar_publicacion {pub_id} falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -993,7 +994,7 @@ async def eliminar_publicacion(
             pass
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] eliminar {pub_id} falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] eliminar {pub_id} falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -1088,7 +1089,7 @@ async def cambiar_estado_dueno(
             pass
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] estado {pub_id} falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] estado {pub_id} falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -1141,7 +1142,7 @@ async def historial_aviso(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] historial {pub_id} falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] historial {pub_id} falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -1205,7 +1206,7 @@ async def similares(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] similares {pub_id} falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] similares {pub_id} falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -1275,7 +1276,7 @@ async def registrar_vista(
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[DB vista] {pub_id} falló: {e!r}", exc_info=True)
+        logger.error(f"[DB vista] {pub_id} falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     # Mock dev: memoria local del proceso.
@@ -1480,7 +1481,7 @@ async def crear_publicacion(
             if _res.labels.get("auto", True) is not False and _res.decision == _am.APPROVE:
                 mod_info = _res.to_dict()
         except Exception as _e:
-            logger.warning(f"[automod] no aplicada, sigue flujo manual: {_e!r}")
+            logger.warning(f"[automod] no aplicada, sigue flujo manual: {exc_resumen(_e)}")
         resp = {"id": nueva.id, "estado": nueva.estado, "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "mensaje": "Publicación en PENDIENTE, pendiente de moderación" if nueva.estado == "PENDIENTE" else "Publicación aprobada automáticamente", "rol": user.get("rol"), "rol_actualizado": rol_actualizado, "moderacion": mod_info}
         # Bloque 2: guarda la respuesta para replays (carrera -> replay ganador).
         if clave_idem:
@@ -1500,7 +1501,7 @@ async def crear_publicacion(
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[DB crear] falló: {e!r}", exc_info=True)
+        logger.error(f"[DB crear] falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         # Mock fallback Sprint1 solo dev: no hay PG, simular creación (usa id 10000+ para no colisionar con ids del seed)
@@ -1518,7 +1519,7 @@ async def crear_publicacion(
             "campus_ids": list(dict.fromkeys(payload.campus_ids)), "usuario_id": user["id"],
             "telefono_verificado": bool(user.get("telefono_verificado", False)), "reportes_activos": 0,
         })
-        resp_mock = {"id": mock_id, "estado": "PENDIENTE (MOCK - sin PG)", "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "detalle_mock": f"DB no disponible ({e}), se usó mock en memoria", "rol": user.get("rol"), "rol_actualizado": rol_actualizado}
+        resp_mock = {"id": mock_id, "estado": "PENDIENTE (MOCK - sin PG)", "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "detalle_mock": "Base de datos no disponible (dev sin PG)", "rol": user.get("rol"), "rol_actualizado": rol_actualizado}
         # Bloque 2: espejo mock del replay (el lookup superior ya lo cubre).
         if clave_idem:
             _IDEMPOTENCY_MOCK[(clave_idem, user["id"], IDEM_RUTA_CREAR)] = {

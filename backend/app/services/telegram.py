@@ -16,6 +16,7 @@ import logging
 import time
 import urllib.parse
 import urllib.request
+from app.core.logseguro import exc_resumen
 
 logger = logging.getLogger("alojau.telegram")
 
@@ -64,7 +65,7 @@ def send_message_sync(bot_token: str, chat_id: str, texto: str,
             except Exception:
                 return True
     except Exception as e:
-        logger.warning(f"[telegram send] falló DM: {e!r}")
+        logger.warning(f"[telegram send] falló DM: {exc_resumen(e)}")
         return False
 
 
@@ -75,7 +76,7 @@ async def send_message(bot_token: str, chat_id: str, texto: str,
         return await asyncio.to_thread(
             send_message_sync, bot_token, chat_id, texto, timeout_s, reply_markup)
     except Exception as e:
-        logger.warning(f"[telegram send async] falló: {e!r}")
+        logger.warning(f"[telegram send async] falló: {exc_resumen(e)}")
         return False
 
 

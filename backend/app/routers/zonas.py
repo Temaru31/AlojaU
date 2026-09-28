@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.logseguro import exc_resumen
 from app.db.session import get_session
 
 import logging
@@ -63,7 +64,7 @@ async def list_zonas(response: Response, db: AsyncSession = Depends(get_session)
             for r in rows
         ]
     except Exception as e:
-        logger.error(f"[zonas] DB falló: {e!r}", exc_info=True)
+        logger.error(f"[zonas] DB falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:

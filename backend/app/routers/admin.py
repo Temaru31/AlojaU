@@ -17,6 +17,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import require_admin
+from app.core.logseguro import exc_resumen
 from app.db.session import get_session
 from app.core.config import settings
 from app.core.pagination import paginate_params, build_paginated
@@ -69,7 +70,7 @@ async def _notificar_dueno_estado(db, usuario_id: int | None, titulo: str, estad
         from app.services import notifications as _nt
         return await _nt.notificar_cambio_estado(db, usuario_id, titulo, estado)
     except Exception as e:
-        logger.warning(f"[admin notificar] fallo best-effort: {e!r}")
+        logger.warning(f"[admin notificar] fallo best-effort: {exc_resumen(e)}")
         return "none"
 
 
@@ -107,7 +108,7 @@ async def metricas(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] metricas falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] metricas falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -165,7 +166,7 @@ async def pendientes(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] pendientes falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] pendientes falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -237,7 +238,7 @@ async def cambiar_estado(
             pass
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] admin cambiar_estado {pub_id} falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] admin cambiar_estado {pub_id} falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -286,7 +287,7 @@ async def eliminar(
             pass
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] admin eliminar {pub_id} falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] admin eliminar {pub_id} falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -331,7 +332,7 @@ async def purgar_cuentas(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] purgar_cuentas falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] purgar_cuentas falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -455,7 +456,7 @@ async def _bulk_cambiar_estado(db: AsyncSession, admin: dict, ids: list[int],
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[DB fallback] bulk {estado} falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] bulk {estado} falló: {exc_resumen(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
@@ -562,5 +563,5 @@ async def ver_auditoria(
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[DB fallback] auditoria falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] auditoria falló: {exc_resumen(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="Base de datos no disponible")

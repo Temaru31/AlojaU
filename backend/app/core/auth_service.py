@@ -80,7 +80,8 @@ def _fetch_jwks(jwks_url: str) -> dict:
         with urllib.request.urlopen(req, timeout=8) as resp:  # noqa: S310
             payload = json.loads(resp.read().decode("utf-8"))
     except Exception as e:
-        raise RuntimeError(f"JWKS no disponible ({jwks_url}): {e!r}") from e
+        from app.core.logseguro import exc_resumen
+        raise RuntimeError(f"JWKS no disponible ({jwks_url}): {exc_resumen(e)}") from e
     _JWKS_CACHE["keys"] = payload
     _JWKS_CACHE["ts"] = now
     return payload

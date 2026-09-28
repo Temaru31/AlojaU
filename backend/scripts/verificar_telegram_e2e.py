@@ -51,6 +51,29 @@ CHAT_RE = re.compile(r"^-?[0-9]{5,20}$")
 ENV_PASSWORD = "ALOJAU_TEST_PASSWORD"
 ENV_WEBHOOK_SECRET = "ALOJAU_WEBHOOK_SECRET"
 
+# Claves que JAMÁS se imprimen (tokens/códigos/secretos).
+_CLAVES_SENSIBLES = ("token", "secret", "codigo", "code", "password", "passwd")
+
+
+def _resumen(cuerpo) -> str:
+    """Resumen seguro de una respuesta: claves + tipos, valores redactados.
+
+    Evita filtrar access_token u otros secretos en consola/CI (CodeQL).
+    """
+    if not isinstance(cuerpo, dict):
+        return f"<{type(cuerpo).__name__}>"
+    partes = []
+    for k in sorted(cuerpo.keys()):
+        kl = str(k).lower()
+        if any(s in kl for s in _CLAVES_SENSIBLES):
+            partes.append(f"{k}=<redactado>")
+        else:
+            v = cuerpo[k]
+            s = v if isinstance(v, (bool, int, float)) else str(v)
+            s = str(s).replace("\r", " ").replace("\n", " ")
+            partes.append(f"{k}={s[:60]}")
+    return "{" + ", ".join(partes) + "}"
+
 
 def llamada(base, metodo, ruta, token=None, cuerpo=None, headers=None):
     url = base.rstrip("/") + ruta
@@ -119,7 +142,7 @@ def main():
     token = login.get("access_token")
     print(f"[1] login: {s} {'OK' if token else 'FALLO'}")
     if not token:
-        print("     ", login)
+        print("     ", _resumen(login))
         return 1
 
     s, ini = llamada(args.base, "POST", "/api/auth/telegram/vincular-inicio", token=token, cuerpo={})
@@ -154,7 +177,7 @@ def main():
                         cuerpo=contacto, headers=wh_headers)
         print(f"[4] webhook contacto ({args.telefono}): {s} vinculado={wc.get('vinculado')}")
         if wc.get("vinculado") is not True:
-            print("     ", wc)
+            print("     ", _resumen(wc))
             ok = False
     else:
         print("[4] sin --telefono: se omite el paso de contacto "

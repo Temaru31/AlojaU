@@ -11,6 +11,7 @@ import logging
 import uuid
 import jwt  # OLA1: PyJWT (reemplaza python-jose abandonado); HS256 + require exp/sub
 import bcrypt as _bcrypt
+from app.core.logseguro import exc_resumen
 from fastapi import HTTPException, Header
 from .config import settings
 logger = logging.getLogger("alojau.security")
@@ -97,7 +98,7 @@ async def _verificar_sesion_activa(claims: dict, db=None) -> None:
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("[security] verificación de sesión falló (fail-closed): %r", e)
+        logger.error("[security] verificación de sesión falló (fail-closed): %s", exc_resumen(e))
         if _mock_activo():
             logger.warning("[security] sin PG en dev: revocación no verificable (se permite)")
             return
@@ -194,7 +195,7 @@ async def require_arrendador(authorization: str = Header(None)):
                             return u
                 raise
     except Exception as e:
-        logger.warning("[security] verificación de rol ARRENDADOR falló: %r", e)
+        logger.warning("[security] verificación de rol ARRENDADOR falló: %s", exc_resumen(e))
     raise HTTPException(status_code=403, detail="Solo ARRENDADOR")
 
 async def require_admin(authorization: str = Header(None)):
@@ -233,7 +234,7 @@ async def require_admin(authorization: str = Header(None)):
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning("[security] verificación de rol ADMIN falló: %r", e)
+        logger.warning("[security] verificación de rol ADMIN falló: %s", exc_resumen(e))
     if _mock_activo() and u.get("rol") == "ADMIN":
         return u
     raise HTTPException(status_code=403, detail="Solo ADMIN")

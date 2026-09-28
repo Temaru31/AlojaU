@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_optional_user, require_admin
+from app.core.logseguro import exc_resumen
 from app.core.config import settings
 from app.db.session import get_session
 
@@ -131,7 +132,7 @@ async def crear_reporte(
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[reportes crear] DB falló: {e!r}", exc_info=True)
+        logger.error(f"[reportes crear] DB falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
@@ -159,7 +160,7 @@ async def listar_reportes(
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[reportes listar] DB falló: {e!r}", exc_info=True)
+        logger.error(f"[reportes listar] DB falló: {exc_resumen(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
@@ -197,5 +198,5 @@ async def revisar_reporte(
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[reportes revisar] DB falló: {e!r}", exc_info=True)
+        logger.error(f"[reportes revisar] DB falló: {exc_resumen(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="Base de datos no disponible")

@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import require_admin
+from app.core.logseguro import exc_resumen
 from app.db.session import get_session
 
 router = APIRouter(prefix="/api/admin/automation", tags=["admin-automation"])
@@ -176,7 +177,7 @@ async def editar_setting(
         # v15.2 fix false-200 (V14.0 M1): un fallo de persistencia NUNCA se
         # reporta como éxito. Rollback + 503 ruidoso (sin mock: admin es prod).
         import logging as _logging
-        _logging.getLogger("alojau.admin").error("[settings] persistencia falló: %r", e)
+        _logging.getLogger("alojau.admin").error("[settings] persistencia falló: %s", exc_resumen(e))
         try:
             await db.rollback()
         except Exception:
