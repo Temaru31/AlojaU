@@ -43,6 +43,16 @@ POST_016 = ["idx_idempotency_expira"]
 MIG_016 = REPO / "alembic" / "versions" / "016_idempotency_keys.py"
 SQL_016 = REPO / "db" / "migrations" / "016_idempotency_keys.sql"
 
+# Bloque 1 fix: índice de lookup + CHECK nacidos en la 017.
+POST_017 = ["idx_usuarios_telegram_chat"]
+MIG_017 = REPO / "alembic" / "versions" / "017_telegram_chat_id_idx.py"
+SQL_017 = REPO / "db" / "migrations" / "017_telegram_chat_id_idx.sql"
+
+# Opción A: índice de pendiente nacido en la 018.
+POST_018 = ["idx_telegram_vinculos_chat"]
+MIG_018 = REPO / "alembic" / "versions" / "018_telegram_contacto.py"
+SQL_018 = REPO / "db" / "migrations" / "018_telegram_contacto.sql"
+
 
 def _model_index_names() -> list[str]:
     return re.findall(r'Index\("([^"]+)"', MODELS.read_text(encoding="utf-8"))
@@ -65,7 +75,7 @@ def test_migracion_002_cubre_drift_y_fk_nuevas():
             continue
         # ...y salvo los nacidos en migraciones posteriores (tienen su propia cobertura).
         if n in POST_002 or n in POST_007 or n in POST_008 or n in POST_011 \
-                or n in POST_015 or n in POST_016:
+                or n in POST_015 or n in POST_016 or n in POST_017 or n in POST_018:
             continue
         assert n in mig, f"{n} falta en 002_alineacion_indices.py"
     # ...y las FK nuevas en ambos lados.
@@ -151,3 +161,35 @@ def test_migracion_016_cubre_indice_idempotencia():
         assert n in mig, f"{n} falta en 016_idempotency_keys.py"
         assert n in sql, f"{n} falta en 016_idempotency_keys.sql"
         assert n in schema, f"{n} falta en schema.sql"
+
+
+def test_migracion_017_cubre_indice_y_check_telegram():
+    """Bloque 1 fix: idx + CHECK de telegram_chat_id viven en la 017."""
+    mig = MIG_017.read_text(encoding="utf-8")
+    sql = SQL_017.read_text(encoding="utf-8")
+    schema = SCHEMA.read_text(encoding="utf-8")
+    assert "down_revision" in mig and "016_idempotency_keys" in mig
+    for n in POST_017:
+        assert n in mig, f"{n} falta en 017_telegram_chat_id_idx.py"
+        assert n in sql, f"{n} falta en 017_telegram_chat_id_idx.sql"
+        assert n in schema, f"{n} falta en schema.sql"
+    for pieza in ("chk_telegram_chat_fmt", "telegram_chat_id ~"):
+        assert pieza in mig, f"{pieza} falta en 017_telegram_chat_id_idx.py"
+        assert pieza in sql, f"{pieza} falta en 017_telegram_chat_id_idx.sql"
+        assert pieza in schema, f"{pieza} falta en schema.sql"
+
+
+def test_migracion_018_cubre_indice_pendiente():
+    """Opción A: idx_telegram_vinculos_chat + columna viven en la 018."""
+    mig = MIG_018.read_text(encoding="utf-8")
+    sql = SQL_018.read_text(encoding="utf-8")
+    schema = SCHEMA.read_text(encoding="utf-8")
+    assert "down_revision" in mig and "017_telegram_chat_id_idx" in mig
+    for n in POST_018:
+        assert n in mig, f"{n} falta en 018_telegram_contacto.py"
+        assert n in sql, f"{n} falta en 018_telegram_contacto.sql"
+        assert n in schema, f"{n} falta en schema.sql"
+    assert "chat_id_pendiente" in mig and "chat_id_pendiente" in sql
+    assert "chat_id_pendiente" in schema
+    modelos = MODELS.read_text(encoding="utf-8")
+    assert "chat_id_pendiente" in modelos, "columna ausente en modelos"
