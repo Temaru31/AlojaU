@@ -148,6 +148,42 @@
   .text-balance {
     text-wrap: balance;
   }
+
+  /* Bloque 5: zona segura iOS (notch / barra gestos). */
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+}
+
+/* Bloque 5 Safari iOS:
+ * - Safari hace zoom automático si un input tiene font-size < 16px.
+ *   En móvil se fuerza 16px (text-base) en todos los campos; en desktop
+ *   se conserva el diseño compacto (14px).
+ * - min-h-dvh con fallback a min-h-screen para navegadores viejos.
+ */
+@media (max-width: 767px) {
+  .input-field,
+  .select-field,
+  input[type='text'],
+  input[type='number'],
+  input[type='email'],
+  input[type='password'],
+  input[type='url'],
+  input[type='search'],
+  select,
+  textarea {
+    font-size: 16px !important;
+    line-height: 1.5;
+  }
+}
+
+@supports (min-height: 100dvh) {
+  .min-h-dvh {
+    min-height: 100dvh;
+  }
 }
 
 .leaflet-container {

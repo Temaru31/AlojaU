@@ -6,7 +6,10 @@ import Card from './components/Card'
 import Comparar from './pages/Comparar'
 import { api } from './services/api'
 
-vi.mock('./services/api', () => ({ api: { get: vi.fn() } }))
+vi.mock('./services/api', () => ({
+  api: { get: vi.fn() },
+  isCancelError: (e) => e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError',
+}))
 vi.mock('./contexts/CompararContext', () => ({
   useComparar: () => ({
     comparar: [1], clear: vi.fn(), toggle: vi.fn(), error: '',

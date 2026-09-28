@@ -23,6 +23,7 @@ import ColdStartBanner from './components/ColdStartBanner'
 import ErrorBoundary from './components/ErrorBoundary'
 import Toaster from './components/Toast'
 import BrandMark from './components/BrandMark'
+import useKeepAlive from './hooks/useKeepAlive'
 import { FavoritosProvider, useFavoritos } from './contexts/FavoritosContext'
 import { CompararProvider, useComparar } from './contexts/CompararContext'
 import { AuthProvider, useAuth, inicialesDe } from './contexts/AuthContext'
@@ -370,6 +371,9 @@ function Footer() {
 }
 
 function App() {
+  // Bloque 3: heartbeat ligero anti cold-start (solo pestaña visible).
+  // Nota: el hook vive aquí (raíz del Router) para cubrir toda la app.
+  useKeepAlive()
   return (
     <BrowserRouter>
       <ErrorBoundary>
@@ -377,7 +381,7 @@ function App() {
       <AuthProvider>
         <FavoritosProvider>
           <CompararProvider>
-            <div className="min-h-screen flex flex-col bg-neutral-50">
+            <div className="min-h-screen min-h-dvh flex flex-col bg-neutral-50 pb-safe">
               <Nav />
               <ColdStartBanner />
               <main className="flex-1">

@@ -57,7 +57,9 @@ app.add_middleware(
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    # Bloque 2B fix: el frontend envía Idempotency-Key en POST /publicaciones
+    # cross-origin (Vercel -> Render); sin allowlist el preflight falla.
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Request-ID"],
 )
 
 # Headers de seguridad básicos (OWASP)

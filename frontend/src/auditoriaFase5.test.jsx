@@ -3,7 +3,10 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
-vi.mock('./services/api', () => ({ api: { get: vi.fn(), post: vi.fn() } }))
+vi.mock('./services/api', () => ({
+  api: { get: vi.fn(), post: vi.fn() },
+  isCancelError: (e) => e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError',
+}))
 import { api } from './services/api'
 
 import MisPublicaciones from './pages/MisPublicaciones'
