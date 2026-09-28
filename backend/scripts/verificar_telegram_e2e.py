@@ -136,7 +136,7 @@ def main():
         return 2
     password = leer_password()
     if not password:
-        print(f"Sin password (define {ENV_PASSWORD} o escríbelo en el prompt).")
+        print("Sin credencial: no se puede verificar (falta variable de entorno).")
         return 2
 
     ok = True
