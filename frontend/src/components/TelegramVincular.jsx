@@ -150,7 +150,8 @@ export default function TelegramVincular({ token, vinculado, onVinculado }) {
             <span aria-hidden="true" className="shrink-0 w-5 h-5 rounded-full bg-navy-800 text-white text-[11px] font-bold flex items-center justify-center mt-0.5">2</span>
             <div className="flex-1">
               <p className="text-xs text-neutral-600 leading-relaxed">
-                Dentro de Telegram presiona el botón <code className="px-1.5 py-0.5 rounded bg-neutral-100 border border-neutral-200 font-mono text-[11px]">/start</code> para vincular (el enlace dura 5 min, un solo uso).
+                Dentro de Telegram presiona el botón <code className="px-1.5 py-0.5 rounded bg-neutral-100 border border-neutral-200 font-mono text-[11px]">/start</code> y
+                luego comparte tu número con <b>📱 Compartir mi número</b> para confirmar que la cuenta es tuya (debe ser el verificado en tu perfil).
               </p>
               {botAbierto && botUrl && (
                 <p className="text-[11px] text-neutral-500 mt-1 break-all">

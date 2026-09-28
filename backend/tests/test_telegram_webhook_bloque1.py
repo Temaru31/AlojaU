@@ -29,25 +29,25 @@ def test_webhook_formato_urlsafe_y_longitud():
     assert all(c.isalnum() or c in ("_", "-") for c in token)
 
 
-def test_webhook_start_vincula_chat_id():
-    from app.routers import auth as a
+def test_webhook_start_no_vincula_directo():
+    # Opción A: el /start SOLO registra pendiente (o rechaza sin teléfono
+    # verificado); jamás vincula directo. La vinculación exige el contacto.
     token = _inicio_token()
-    # Simula el update de Telegram en chat privado.
     r = client.post(
         "/api/auth/telegram/webhook",
-        json={"message": {"chat": {"id": 123456789, "type": "private"}, "text": f"/start {token}"}},
+        json={"message": {"chat": {"id": 123456789, "type": "private"},
+                          "from": {"id": 123456789}, "text": f"/start {token}"}},
     )
     assert r.status_code == 200
-    assert r.json().get("vinculado") is True
-    # Segundo consumo del mismo token: un solo uso.
+    assert r.json().get("vinculado") is not True
+    assert r.json().get("contacto_requerido") is True or "motivo" in r.json()
+    # Segundo /start con el mismo token: quemado o re-pendiente, nunca vincula.
     r2 = client.post(
         "/api/auth/telegram/webhook",
-        json={"message": {"chat": {"id": 123456789, "type": "private"}, "text": f"/start {token}"}},
+        json={"message": {"chat": {"id": 123456789, "type": "private"},
+                          "from": {"id": 123456789}, "text": f"/start {token}"}},
     )
     assert r2.json().get("vinculado") is not True
-    # Limpia el mock para no fugar estado entre tests.
-    for m in a.MOCK_USERS.values():
-        m.pop("telegram_chat_id", None)
 
 
 def test_webhook_ignora_grupos_y_no_start():
@@ -119,24 +119,31 @@ def test_webhook_throttle_anti_enumeracion():
     _tg.clear_throttle_for_tests()
 
 
-def test_webhook_quema_token_en_pg():
+def test_webhook_start_registra_pendiente_en_pg():
+    # Tras un /start válido el vínculo queda pendiente (usado=False) con el
+    # chat anotado; la quema ocurre al resolver el contacto.
     import asyncio
     token = _inicio_token()
-
-    async def _usado(nonce):
-        from app.db.session import AsyncSession
-        from app.models import TelegramVinculo
-        async with AsyncSession() as db:
-            return (await db.get(TelegramVinculo, nonce)).usado
-
     sep = "_" if "_" in token else "."
     nonce = token.split(sep)[2]
     r = client.post(
         "/api/auth/telegram/webhook",
-        json={"message": {"chat": {"id": 555666777, "type": "private"}, "text": f"/start {token}"}},
+        json={"message": {"chat": {"id": 444555666, "type": "private"},
+                          "from": {"id": 444555666}, "text": f"/start {token}"}},
     )
-    assert r.json().get("vinculado") is True
-    assert asyncio.run(_usado(nonce)) is True
-    from app.routers import auth as a
-    for m in a.MOCK_USERS.values():
-        m.pop("telegram_chat_id", None)
+    assert r.status_code == 200
+
+    async def _fila():
+        from app.db.session import AsyncSession
+        from app.models import TelegramVinculo
+        async with AsyncSession() as db:
+            return await db.get(TelegramVinculo, nonce)
+
+    row = asyncio.run(_fila())
+    assert row is not None
+    if r.json().get("contacto_requerido") is True:
+        assert row.usado is False
+        assert str(row.chat_id_pendiente) == "444555666"
+    else:
+        # Sin teléfono verificado el enlace se quema en el /start.
+        assert row.usado is True

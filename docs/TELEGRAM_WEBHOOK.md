@@ -3,6 +3,10 @@
 > Estado: webhook implementado (`POST /api/auth/telegram/webhook`) y
 > variables configuradas en Render. Esta guía verifica que Telegram
 > realmente esté entregando los `/start`.
+>
+> Opción A (vigente): el `/start` ya NO vincula directo. Registra el chat
+> como pendiente y pide el contacto (`request_contact`); solo vincula si el
+> número coincide con el teléfono VERIFICADO del perfil.
 
 ## 1. ¿El webhook está registrado en Telegram?
 
@@ -41,17 +45,20 @@ Cada cambio de `TELEGRAM_WEBHOOK_SECRET` exige re-registrar.
 
 ## 3. Prueba de punta a punta con cuenta real
 
-1. En la web (prod): Mi Perfil → Telegram → «Abrir Bot en Telegram».
-2. En Telegram: pulsar `/start` (el botón, no escribirlo a mano si es posible).
-3. Volver a la web y pulsar «Vincular cuenta» → badge «✓ Vinculado».
-4. Pedir un código: debe llegar **al DM del bot**, no al correo.
+1. En AlojaU → Mi Perfil → Datos: verifica tu número de teléfono (OTP).
+   Sin teléfono verificado el bot rechaza (diseño aprobado, nunca ciego).
+2. En la web (prod): Mi Perfil → Telegram → «Abrir Bot en Telegram».
+3. En Telegram: pulsar `/start` y luego **📱 Compartir mi número**
+   (debe ser el mismo número verificado).
+4. Volver a la web y pulsar «Vincular cuenta» → badge «✓ Vinculado».
+5. Pedir un código: debe llegar **al DM del bot**, no al correo.
 
-Equivalente automatizado (simula el update exacto de Telegram):
+Equivalente automatizado (simula los updates exactos de Telegram):
 
 ```bash
-python3 backend/scripts/verificar_telegram_e2e.py \
+ALOJAU_TEST_PASSWORD=<TU_PASSWORD> python3 backend/scripts/verificar_telegram_e2e.py \
   --base https://alojau-api.onrender.com \
-  --email tu@correo.com --password 'tu-clave' --chat-id 123456
+  --email <TU_CORREO> --chat-id <TU_CHAT_ID> --telefono +57<TU_NUMERO_VERIFICADO>
 ```
 
 ## 4. Si falla
@@ -60,6 +67,8 @@ python3 backend/scripts/verificar_telegram_e2e.py \
 |---|---|
 | `vincular-inicio` da 503 | `TELEGRAM_BOT_USERNAME` vacío en Render |
 | Siempre «no detectamos tu /start» | webhook no registrado o secret distinto (ver paso 1) |
+| «verifica tu número» tras /start | normal (Opción A): verifica el teléfono en Mi Perfil y genera otro enlace |
+| «número no coincide» | el Telegram usa otro número: verifica el correcto o cambia el de Mi Perfil |
 | Vincula pero el código llega por correo | `TELEGRAM_BOT_TOKEN` vacío/erróneo en Render |
 | Funciona en local pero no en prod | Render durmió el free tier a mitad del flujo: reintentar (el frontend ya reintenta 3 veces) |
 

@@ -385,15 +385,22 @@ class TelegramVinculo(Base):
 
     La memoria (_TELEGRAM_VINCULOS) queda como L1/dev; PG es la fuente de
     verdad que sobrevive redeploys e instancias múltiples.
+
+    Opción A (mig 018): `chat_id_pendiente` guarda QUÉ chat pidió el enlace
+    con /start. La vinculación solo se completa al recibir el contacto
+    compartido (request_contact) cuyo número coincida con el teléfono
+    verificado del usuario. NULL = aún sin /start.
     """
     __tablename__ = "telegram_vinculos"
     __table_args__ = (
         Index("idx_telegram_vinculos_expira", "expira_en"),
+        Index("idx_telegram_vinculos_chat", "chat_id_pendiente"),
     )
     nonce: Mapped[str] = mapped_column(String(32), primary_key=True)
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
     expira_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     usado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    chat_id_pendiente: Mapped[str | None] = mapped_column(String(32), nullable=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

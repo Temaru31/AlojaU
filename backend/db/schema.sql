@@ -133,14 +133,18 @@ CREATE TABLE IF NOT EXISTS vistas_dedup (
 CREATE INDEX IF NOT EXISTS idx_vistas_dedup_dia ON vistas_dedup(dia);
 
 -- Bloque 2 (mig 015): vinculación Telegram persistente (nonces HMAC).
+-- Opción A (mig 018): chat_id_pendiente guarda el chat del /start hasta
+-- verificar el contacto compartido contra el teléfono verificado.
 CREATE TABLE IF NOT EXISTS telegram_vinculos (
   nonce VARCHAR(32) PRIMARY KEY,
   usuario_id BIGINT NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
   expira_en TIMESTAMPTZ NOT NULL,
   usado BOOLEAN NOT NULL DEFAULT FALSE,
+  chat_id_pendiente VARCHAR(32),
   creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_telegram_vinculos_expira ON telegram_vinculos(expira_en);
+CREATE INDEX IF NOT EXISTS idx_telegram_vinculos_chat ON telegram_vinculos(chat_id_pendiente);
 
 -- Bloque 2 (mig 016): idempotencia de escrituras (replay seguro).
 CREATE TABLE IF NOT EXISTS idempotency_keys (
