@@ -112,16 +112,22 @@ export default function Buscar() {
   const snapRef = useRef(undefined)
   if (snapRef.current === undefined) snapRef.current = snapshotInicialBuscar(searchParams)
   const snap = snapRef.current
+  // El snapshot SOLO rige en el montaje (para sembrar estado/URL). Si se
+  // consultara en cada render, borrar un campo (URL sin param) resucitaría
+  // el valor viejo del snapshot y el efecto lo re-grabaría (bug: lo
+  // "limpiado" reaparecía solo). El restore de abajo lo invalida.
+  const snapVigenteRef = useRef(snap != null)
+  const snapVigente = snapVigenteRef.current
   // 004 POIs: sin ?campus_id= no hay filtro de cercanía (estado inicial vacío).
   // NaN-safe: un valor manual inválido (?campus_id=abc) equivale a "Todos".
-  const campusIdRaw = searchParams.get('campus_id') ?? snap?.campus_id ?? null
+  const campusIdRaw = searchParams.get('campus_id') ?? (snapVigente ? snap?.campus_id : null) ?? null
   const campusIdNum = campusIdRaw != null && campusIdRaw !== '' ? Number(campusIdRaw) : NaN
   const campusId = Number.isInteger(campusIdNum) && campusIdNum >= 1 ? campusIdNum : null
-  const ciudadId = parseCiudadId(searchParams) ?? (snap?.ciudad_id != null ? Number(snap.ciudad_id) || null : null)
+  const ciudadId = parseCiudadId(searchParams) ?? (snapVigente && snap?.ciudad_id != null ? Number(snap.ciudad_id) || null : null)
   // page saneado: ?page=abc o <=0 equivale a 1 (evita 422 y Paginacion rota).
   const pageRaw = Number(searchParams.get('page') || 1)
   const page = Number.isInteger(pageRaw) && pageRaw >= 1 ? pageRaw : 1
-  const q = searchParams.get('q') || snap?.q || ''
+  const q = searchParams.get('q') || (snapVigente ? snap?.q : '') || ''
   const [filtros, setFiltros] = useState({
     min: searchParams.get('precio_min') ?? snap?.filtros?.min ?? '',
     max: searchParams.get('precio_max') ?? snap?.filtros?.max ?? '',
@@ -131,10 +137,12 @@ export default function Buscar() {
 
   // Al montar con snapshot: deja la URL canónica (replace, sin historia).
   // El campus restaurado también se publica como filtro global (Comparar).
+  // Tras escribir, el snapshot caduca: la URL manda desde aquí.
   const restauradoRef = useRef(false)
   useEffect(() => {
     if (restauradoRef.current || !snap) return
     restauradoRef.current = true
+    snapVigenteRef.current = false
     const params = new URLSearchParams()
     if (snap.campus_id) { params.set('campus_id', snap.campus_id); guardarCampusFiltro(snap.campus_id) }
     if (snap.ciudad_id) params.set('ciudad_id', snap.ciudad_id)
@@ -565,7 +573,7 @@ export default function Buscar() {
             <div className="p-4 pt-3 border-t border-neutral-100 bg-white/95 backdrop-blur rounded-b-3xl shadow-[0_-8px_24px_rgba(12,20,38,0.08)] flex gap-2">
               <button
                 type="button"
-                onClick={() => setFiltros({ min: '', max: '', tipo: '', servicios: '' })}
+                onClick={limpiarTodo}
                 aria-label="Limpiar todos los filtros"
                 className="shrink-0 min-h-[52px] px-4 rounded-2xl border border-neutral-200 text-xs font-bold text-neutral-600 active:bg-neutral-50 transition"
               >
@@ -615,11 +623,13 @@ export default function Buscar() {
                 )}
                 <span aria-hidden="true" className={`text-[10px] transition-transform ${avanzadosAbiertos ? 'rotate-180' : ''}`}>▼</span>
               </button>
-              {/* Limpiar siempre a la vista (sin desplegar nada) cuando hay filtros. */}
+              {/* Limpiar siempre a la vista (sin desplegar nada) cuando hay filtros.
+                  Reseteo TOTAL (filtros + ubicación + texto): parcial dejaba
+                  valores huérfanos que el snapshot resucitaba. */}
               {numAvanzados > 0 && (
                 <button
                   type="button"
-                  onClick={() => setFiltros({ min: '', max: '', tipo: '', servicios: '' })}
+                  onClick={limpiarTodo}
                   aria-label="Limpiar filtros"
                   className="shrink-0 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-bold text-neutral-500 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-200 transition"
                 >
@@ -632,7 +642,7 @@ export default function Buscar() {
                 {/* M4: primarios inline (texto ya arriba + precio/tipo/principales aquí) */}
                 <PanelPrimario filtros={filtros} setFiltros={setFiltros} />
                 <div className="flex items-center gap-2">
-                  <MasFiltrosModal filtros={filtros} setFiltros={setFiltros} totalResultados={total} />
+                  <MasFiltrosModal filtros={filtros} setFiltros={setFiltros} totalResultados={total} onLimpiar={limpiarTodo} />
                 </div>
               </div>
             )}

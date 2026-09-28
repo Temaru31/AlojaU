@@ -247,7 +247,9 @@ export function PanelPrimario({ filtros, setFiltros }) {
 // Drawer "Más Filtros" desktop: espejo del bottom sheet móvil (mismos
 // bloques numerados y mismos componentes). Paridad total: lo que se puede
 // filtrar en móvil se puede en pantallas anchas y viceversa.
-export function MasFiltrosModal({ filtros, setFiltros, totalResultados = null }) {
+// `onLimpiar`: reseteo total (el padre suele pasar su limpiarTodo para que
+// no queden valores huérfanos); por defecto solo resetea el panel.
+export function MasFiltrosModal({ filtros, setFiltros, totalResultados = null, onLimpiar = null }) {
   const [abierto, setAbierto] = useState(false)
   // Bloque 3: Tab cicla dentro del drawer + foco vuelve al botón.
   const cajaRef = useRef(null)
@@ -255,7 +257,10 @@ export function MasFiltrosModal({ filtros, setFiltros, totalResultados = null })
   const activos = contarAvanzados(filtros)
 
   const cerrar = () => setAbierto(false)
-  const limpiar = () => setFiltros({ min: '', max: '', tipo: '', servicios: '' })
+  const limpiar = () => {
+    if (onLimpiar) onLimpiar()
+    else setFiltros({ min: '', max: '', tipo: '', servicios: '' })
+  }
 
   return (
     <>

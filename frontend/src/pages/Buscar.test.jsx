@@ -183,6 +183,44 @@ describe('Buscar Fase 4 Hero + multiciudad', () => {
     })
   })
 
+  it('volver a "Todos los lugares" no resucita el campus limpiado', async () => {
+    sessionStorage.setItem('alojau_buscar_filtros', JSON.stringify({
+      filtros: { min: '', max: '', tipo: '', servicios: '' },
+      campus_id: '1', ciudad_id: '', q: '',
+    }))
+    renderBuscar('/')
+    // El restore reinyecta el snapshot: primer fetch con campus.
+    await waitFor(() => {
+      const calls = api.get.mock.calls.filter((c) => c[0] === '/api/publicaciones')
+      expect(calls.length).toBeGreaterThan(0)
+      expect(calls[calls.length - 1][1].params.campus_id).toBe(1)
+    })
+    // El usuario elige "Todos los lugares" (default): debe quedar limpio.
+    // (Se localiza por contenido: el nombre accesible del selector incluye
+    // icono + sede y varía según catálogo.)
+    let selector = null
+    await waitFor(() => {
+      const cands = screen.getAllByRole('button').filter((b) =>
+        /Universidad del Cauca/.test((b.getAttribute('aria-label') || b.textContent) || ''))
+      expect(cands.length).toBeGreaterThanOrEqual(1)
+    }, { timeout: 3000 })
+    // Re-consulta en fresco: el nodo capturado en el polling puede estar
+    // obsoleto tras un re-render (clic en nodo detached no abre nada).
+    selector = screen.getAllByRole('button').filter((b) =>
+      /Universidad del Cauca/.test((b.getAttribute('aria-label') || b.textContent) || ''))[0]
+    fireEvent.click(selector)
+    // (name exacto no: incluye el emoji según cómputo; regex = parcial.)
+    fireEvent.click(screen.getByRole('option', { name: /Todos los lugares/ }))
+    fireEvent.click(selector)
+    fireEvent.click(screen.getByRole('option', { name: 'Todos los lugares' }))
+    await waitFor(() => {
+      const calls = api.get.mock.calls.filter((c) => c[0] === '/api/publicaciones')
+      expect(calls[calls.length - 1][1].params.campus_id).toBeUndefined()
+    })
+    // Y el snapshot de sesión también quedó limpio (no resucita al volver).
+    expect(JSON.parse(sessionStorage.getItem('alojau_buscar_filtros')).campus_id).toBe('')
+  })
+
   it('Limpiar en la barra desktop resetea sin abrir el drawer', async () => {
     renderBuscar('/?precio_min=400000')
     // Visible sin desplegar panel ni drawer.
