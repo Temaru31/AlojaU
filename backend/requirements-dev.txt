@@ -6,7 +6,7 @@
 # Runner de tests (backend/tests/ usa pytest + TestClient).
 pytest>=8,<9
 # Pedidos por la rúbrica CI (los tests actuales son sync; quedan fijados para futuro uso async).
-pytest-asyncio>=0.23,<1
+pytest-asyncio>=1.4.0,<2
 anyio>=4,<5
 # Cobertura con umbral mínimo 70 % (--cov-fail-under=70 en CI).
 pytest-cov>=5,<7
