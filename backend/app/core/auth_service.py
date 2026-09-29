@@ -6,7 +6,7 @@ Cognito, Firebase...) = implementar esta interfaz, sin tocar routers.
 
 Proveedores incluidos:
 - LocalAuthService: JWT HS256 propio (dev + fallback resiliente).
-- SupabaseAuthService: valida JWT RS256 de Supabase vía JWKS
+- SupabaseAuthService: valida JWT RS256/ES256 de Supabase vía JWKS
   (firma + iss + aud + exp). Solo se activa si hay SUPABASE_URL/JWKS
   configurado; si la JWKS no responde (cold start / caída), hace
   fail-closed 401 con mensaje claro y deja que el cliente reintente.
@@ -92,10 +92,47 @@ def clear_jwks_cache_for_tests() -> None:
     _JWKS_CACHE["ts"] = 0.0
 
 
-class SupabaseAuthService(AuthService):
-    """Valida JWT emitidos por Supabase Auth (RS256 vía JWKS).
+ALLOWED_SUPABASE_ALGORITHMS = ("RS256", "ES256")
 
-    Verifica: firma (kid del JWKS), iss (SUPABASE_URL/auth/v1),
+
+def _public_key_from_jwk(jwk: dict[str, Any]):
+    """Construye la clave pública desde un JWK (RSA/EC/OKP).
+
+    Supabase rotó de RS256 a ES256 (kid UUID, kty EC P-256): el código
+    anterior solo intentaba RSAAlgorithm y lanzaba excepción genérica
+    (=> "Token Supabase inválido"). Se resuelve por `kty` con fallback
+    a los 3 parsers. Lanza ValueError si el JWK no es usable.
+    """
+    kty = str((jwk or {}).get("kty") or "").upper()
+    parsers: list[Any] = []
+    if kty == "RSA":
+        parsers = [pyjwt.algorithms.RSAAlgorithm]
+    elif kty == "EC":
+        parsers = [pyjwt.algorithms.ECAlgorithm]
+    elif kty == "OKP":
+        parsers = [pyjwt.algorithms.OKPAlgorithm]
+    else:
+        # JWK sin kty (compat): prueba en orden.
+        parsers = [
+            pyjwt.algorithms.RSAAlgorithm,
+            pyjwt.algorithms.ECAlgorithm,
+            pyjwt.algorithms.OKPAlgorithm,
+        ]
+    last_err: Exception | None = None
+    for parser in parsers:
+        try:
+            return parser.from_jwk(jwk)
+        except Exception as e:  # noqa: BLE001 - se prueba el siguiente parser
+            last_err = e
+            continue
+    raise ValueError(f"JWK no soportada (kty={kty or '?'}): {last_err}")
+
+
+class SupabaseAuthService(AuthService):
+    """Valida JWT emitidos por Supabase Auth (RS256/ES256 vía JWKS).
+
+    Verifica: firma (kid del JWKS), alg allow-list (RS256/ES256),
+    iss (SUPABASE_URL/auth/v1, con sufijo /auth/v1 incluido),
     aud (SUPABASE_AUD, default "authenticated") y exp.
     """
 
@@ -126,6 +163,10 @@ class SupabaseAuthService(AuthService):
         kid = header.get("kid")
         if not kid:
             raise HTTPException(status_code=401, detail="Token inválido o expirado")
+        # Anti-confusión de algoritmo: solo RS256/ES256 (nunca none/HS256).
+        alg = str(header.get("alg") or "")
+        if alg not in ALLOWED_SUPABASE_ALGORITHMS:
+            raise HTTPException(status_code=401, detail="Token inválido o expirado")
         try:
             jwks = _fetch_jwks(self.jwks_url)
         except RuntimeError:
@@ -138,12 +179,18 @@ class SupabaseAuthService(AuthService):
         key = None
         for k in jwks.get("keys", []):
             if k.get("kid") == kid:
-                key = pyjwt.algorithms.RSAAlgorithm.from_jwk(k)
+                try:
+                    key = _public_key_from_jwk(k)
+                except Exception:
+                    key = None
                 break
         if key is None:
             raise HTTPException(status_code=401, detail="Token inválido o expirado")
         try:
-            kwargs: dict[str, Any] = {"algorithms": ["RS256"], "options": {"require": ["exp", "sub"]}}
+            kwargs: dict[str, Any] = {
+                "algorithms": list(ALLOWED_SUPABASE_ALGORITHMS),
+                "options": {"require": ["exp", "sub"]},
+            }
             if self.audience:
                 kwargs["audience"] = self.audience
             if self.issuer:
