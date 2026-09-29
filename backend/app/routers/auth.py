@@ -6,6 +6,7 @@ Compatibilidad: conserva todos los endpoints y contratos previos
 (/register, /login, /perfil, /perfil/password, solicitud-verificacion).
 Los tokens legacy sin scopes/jti siguen válidos (enriquecidos por rol).
 """
+import asyncio
 import hashlib
 import logging
 import os
@@ -16,7 +17,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, File, HTTPException, Depends, Request, Header, UploadFile
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,6 +65,20 @@ MOCK_USERS = {
 
 def _mock_enabled() -> bool:
     return bool(getattr(settings, "mock_enabled", False))
+
+
+async def _hash_password_async(pw: str) -> str:
+    """bcrypt fuera del event loop (CPU-bound ~100-300ms por hash).
+
+    Sin esto, cada login/registro bloquea el loop asyncio y serializa
+    todos los requests concurrentes del worker (autosaturación).
+    """
+    return await asyncio.to_thread(hash_password, pw)
+
+
+async def _verify_password_async(pw: str, h: str) -> bool:
+    """Verificación bcrypt fuera del event loop (ver _hash_password_async)."""
+    return await asyncio.to_thread(verify_password, pw, h)
 
 
 def _norm_email(email: str) -> str:
@@ -200,6 +215,10 @@ def _client_ip(request: Request | None) -> str:
 # Esquemas
 # ---------------------------------------------------------------------------
 class RegisterIn(BaseModel):
+    # Ingesta estricta: campos extra (rol, verificados...) se rechazan 422
+    # en vez de ignorarse en silencio (anti mass-assignment por sondeo).
+    model_config = ConfigDict(extra="forbid")
+
     email: EmailStr
     password: str = Field(min_length=8, max_length=72)
     nombre_completo: str = Field(min_length=3, max_length=150)
@@ -233,6 +252,11 @@ class PerfilOut(BaseModel):
 
 
 class PerfilUpdateIn(BaseModel):
+    # OLA2-M4: SIN extra="forbid" a propósito. El contrato probado exige que
+    # `telefono_verificado` enviado se IGNORE con 200 (test_patch_perfil_...,
+    # RT11): un 422 rompería clientes que reenvían el perfil completo.
+    # Los sensibles siguen sin efecto (el sanitizador solo lee claves lícitas).
+
     # OLA2-M4: telefono_verificado es SOLO-LECTURA (lo calcula/muestra el backend).
     nombre_completo: Optional[str] = Field(default=None, min_length=3, max_length=150)
     # v13.2: None/'' limpia el teléfono (NULL). Con dígitos se normaliza E.164.
@@ -243,18 +267,27 @@ class PerfilUpdateIn(BaseModel):
     preferencias: Optional[dict] = None
 
 
-def _verificar_jwt_google(data: "GoogleCallbackIn") -> None:
+async def _verificar_jwt_google(data: "GoogleCallbackIn") -> dict:
     """Valida el JWT de Supabase contra JWKS (fail-closed 401 si no pasa).
+
+    La verificación JWKS (red ≤8s en cache-miss) corre fuera del event loop.
+    Retorna los claims verificados: el callback deriva `supabase_id` de
+    ellos, nunca del valor que envía el cliente (anti-suplantación).
 
     Args:
         data: Payload del callback (requiere `supabase_jwt`).
+
+    Returns:
+        Claims verificados del token.
 
     Raises:
         HTTPException: 401 si el token es inválido o su email no coincide.
     """
     from ..core.auth_service import SupabaseAuthService
     try:
-        claims = SupabaseAuthService().decode_token(data.supabase_jwt)
+        claims = await asyncio.to_thread(
+            SupabaseAuthService().decode_token, data.supabase_jwt
+        )
     except HTTPException as e:
         # Observabilidad anti-manipulación: kid/alg del header para detectar
         # rotación de claves o tokens forjados. NUNCA token ni email (PII,
@@ -277,6 +310,7 @@ def _verificar_jwt_google(data: "GoogleCallbackIn") -> None:
     claim_email = _norm_email(claims.get("email", ""))
     if claim_email and claim_email != _norm_email(data.email):
         raise HTTPException(status_code=401, detail="El token Supabase no coincide con el email")
+    return claims
 
 
 def _sanitizar_cambios_perfil(data: "PerfilUpdateIn") -> dict:
@@ -405,6 +439,8 @@ class GoogleCallbackIn(BaseModel):
     + nombre para linking/creación. Si SUPABASE está configurado, el backend
     puede validar el supabase_jwt contra JWKS (fail-closed 401 si no pasa).
     """
+    model_config = ConfigDict(extra="forbid")
+
     email: EmailStr
     nombre_completo: str = Field(min_length=1, max_length=150)
     supabase_id: Optional[str] = Field(default=None, max_length=64)
@@ -639,7 +675,7 @@ async def register(data: RegisterIn, request: Request, db: AsyncSession = Depend
         nuevo = Usuario(
             nombre_completo=data.nombre_completo.strip(),
             email=email,
-            password_hash=hash_password(data.password),
+            password_hash=await _hash_password_async(data.password),
             telefono_whatsapp=tel,
             rol="ESTUDIANTE",
             telefono_verificado=False,
@@ -684,7 +720,7 @@ async def register(data: RegisterIn, request: Request, db: AsyncSession = Depend
         if email in MOCK_USERS or data.email in MOCK_USERS:
             raise HTTPException(status_code=400, detail="Email ya registrado (mock)")
         MOCK_USERS[email] = {
-            "password": hash_password(data.password),
+            "password": await _hash_password_async(data.password),
             "rol": "ESTUDIANTE",
             "id": 90 + len(MOCK_USERS),
             "nombre_completo": data.nombre_completo,
@@ -785,7 +821,7 @@ async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_
         if u_db is not None:
             # Sesión revocada globalmente -> el jti viejo ya no vale, pero el
             # login con credenciales sigue permitido (emite jti nuevo).
-            if not verify_password(data.password, u_db.password_hash):
+            if not await _verify_password_async(data.password, u_db.password_hash):
                 await _db_rate_record(db, f"login:ip:{ip}", False)
                 await _db_rate_record(db, f"login:user:{email}", False)
                 raise HTTPException(status_code=401, detail="Credenciales inválidas")
@@ -806,7 +842,7 @@ async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_
             await _db_rate_record(db, f"login:ip:{ip}", False)
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
         u = MOCK_USERS.get(email) or MOCK_USERS.get(data.email)
-        if not u or not verify_password(data.password, u["password"]):
+        if not u or not await _verify_password_async(data.password, u["password"]):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
         token = _issue_token(u["id"], email, u["rol"], True, bool(u.get("email_verificado", True)))
         return {"access_token": token, "token_type": "bearer",
@@ -822,7 +858,7 @@ async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         u = MOCK_USERS.get(email) or MOCK_USERS.get(data.email)
-        if not u or not verify_password(data.password, u["password"]):
+        if not u or not await _verify_password_async(data.password, u["password"]):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
         token = _issue_token(u["id"], email, u["rol"], True, bool(u.get("email_verificado", True)))
         return {"access_token": token, "token_type": "bearer",
@@ -912,9 +948,9 @@ async def cambiar_password(
             res = await db.execute(select(Usuario).where(Usuario.email == _norm_email(email)))
             u = res.scalars().first()
         if u:
-            if not verify_password(data.actual, u.password_hash):
+            if not await _verify_password_async(data.actual, u.password_hash):
                 raise HTTPException(status_code=403, detail="La contraseña actual no coincide")
-            u.password_hash = hash_password(data.nueva)
+            u.password_hash = await _hash_password_async(data.nueva)
             await db.commit()
             return {"mensaje": "Contraseña actualizada con éxito."}
         if not _mock_enabled():
@@ -939,9 +975,9 @@ async def cambiar_password(
                 break
     if not m:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    if not verify_password(data.actual, m["password"]):
+    if not await _verify_password_async(data.actual, m["password"]):
         raise HTTPException(status_code=403, detail="La contraseña actual no coincide")
-    m["password"] = hash_password(data.nueva)
+    m["password"] = await _hash_password_async(data.nueva)
     return {"mensaje": "Contraseña actualizada con éxito."}
 
 
@@ -1051,7 +1087,8 @@ async def _avatar_guardar(
         except Exception:
             pass
         filename = f"avatar-{_uuid.uuid4().hex}{ext}"
-        url = backend.save(content, filename, mime)
+        # Subida (disco/Cloudinary) fuera del event loop: puede tardar segundos.
+        url = await asyncio.to_thread(backend.save, content, filename, mime)
     except HTTPException:
         raise
     except Exception as e:
@@ -1231,7 +1268,7 @@ async def update_perfil(
                 break
     if not m:
         m = {
-            "password": hash_password("AlojaU123"),
+            "password": await _hash_password_async("AlojaU123"),
             "rol": user.get("rol", "ARRENDADOR"),
             "id": user_id or 1,
             "nombre_completo": "Arrendador Demo",
@@ -1334,7 +1371,9 @@ async def _crear_otp(db: AsyncSession, email: str, proposito: str) -> tuple[str,
             "expira": time.monotonic() + 600,
         }
     chat_id = await _telegram_chat_para_email(db, email)
-    canal = _enviar_codigo(email, codigo, proposito, chat_id=chat_id)
+    # I/O de red (Bot API ≤8s) fuera del event loop: el request responde sin
+    # bloquear a otros usuarios concurrentes del worker.
+    canal = await asyncio.to_thread(_enviar_codigo, email, codigo, proposito, chat_id)
     return codigo, canal
 
 
@@ -2191,7 +2230,7 @@ async def recovery_confirmar(data: RecoveryConfirmarIn, db: AsyncSession = Depen
             ures = await db.execute(select(Usuario).where(Usuario.email == email))
             u = ures.scalars().first()
             if u:
-                u.password_hash = hash_password(data.nueva_password)
+                u.password_hash = await _hash_password_async(data.nueva_password)
                 row.consumido = True
                 await db.commit()
                 # Revoca sesiones previas (el atacante con sesión vieja queda fuera).
@@ -2222,7 +2261,7 @@ async def recovery_confirmar(data: RecoveryConfirmarIn, db: AsyncSession = Depen
             _MOCK_RESETS.pop(email, None)
             m = MOCK_USERS.get(email)
             if m:
-                m["password"] = hash_password(data.nueva_password)
+                m["password"] = await _hash_password_async(data.nueva_password)
     if not ok:
         raise HTTPException(status_code=401, detail="Enlace inválido, expirado o ya usado")
     return {"mensaje": "Contraseña restablecida. Sesiones anteriores revocadas."}
@@ -2279,13 +2318,19 @@ async def oauth_google_callback(data: GoogleCallbackIn, request: Request,
     await _db_rate_check(db, f"oauth:ip:{ip}", limite=20, ventana_s=900)
     await _db_rate_check(db, f"oauth:email:{email}", limite=10, ventana_s=900)
     # Validación opcional del JWT Supabase contra JWKS (fail-closed si se envía).
+    # El supabase_id autoritativo sale de los claims verificados, nunca del
+    # valor que envía el cliente (un atacante podría fijar el de otro usuario).
+    # Sin JWT (dev/tests sin Supabase): se conserva data.supabase_id.
+    supabase_id_verificado: str | None = None
     try:
         if data.supabase_jwt and settings.supabase_configured:
-            _verificar_jwt_google(data)
+            _claims = await _verificar_jwt_google(data)
+            supabase_id_verificado = str(_claims.get("sub") or "")[:64] or None
     except HTTPException:
         await _db_rate_record(db, f"oauth:ip:{ip}", False)
         await _db_rate_record(db, f"oauth:email:{email}", False)
         raise
+    supabase_id = supabase_id_verificado or data.supabase_id
     es_nuevo = False
     try:
         from ..models import Usuario
@@ -2307,8 +2352,8 @@ async def oauth_google_callback(data: GoogleCallbackIn, request: Request,
                 prov = getattr(u, "auth_provider", "password") or "password"
                 if "google" not in prov:
                     u.auth_provider = f"{prov}+google" if prov else "google"
-                if data.supabase_id:
-                    u.supabase_id = data.supabase_id
+                if supabase_id:
+                    u.supabase_id = supabase_id
                 u.email_verificado = True
                 await db.commit()
                 await db.refresh(u)
@@ -2317,14 +2362,14 @@ async def oauth_google_callback(data: GoogleCallbackIn, request: Request,
             tel_g = normalizar_telefono(data.telefono_whatsapp) if data.telefono_whatsapp else None
             u = Usuario(                nombre_completo=data.nombre_completo.strip()[:150],
                 email=email,
-                password_hash=hash_password(secrets.token_urlsafe(24)),
+                password_hash=await _hash_password_async(secrets.token_urlsafe(24)),
                 telefono_whatsapp=tel_g,
                 foto_perfil_url=validar_foto_url(data.foto_perfil_url),
                 rol="ESTUDIANTE",
                 telefono_verificado=False,
                 email_verificado=True,
                 auth_provider="google",
-                supabase_id=data.supabase_id,
+                supabase_id=supabase_id,
                 acepto_tratamiento_datos=True,
                 fecha_consentimiento=datetime.now(timezone.utc),
                 ip_consentimiento=ip,
@@ -2341,8 +2386,8 @@ async def oauth_google_callback(data: GoogleCallbackIn, request: Request,
                 u = res2.scalars().first()
                 if not u:
                     raise
-                if data.supabase_id:
-                    u.supabase_id = data.supabase_id
+                if supabase_id:
+                    u.supabase_id = supabase_id
                 u.email_verificado = True
                 await db.commit()
             await db.refresh(u)
@@ -2373,7 +2418,7 @@ async def oauth_google_callback(data: GoogleCallbackIn, request: Request,
         if not m:
             es_nuevo_mock = True
             m = {
-                "password": hash_password(secrets.token_urlsafe(16)),
+                "password": await _hash_password_async(secrets.token_urlsafe(16)),
                 "rol": "ESTUDIANTE",
                 "id": 90 + len(MOCK_USERS),
                 "nombre_completo": data.nombre_completo,
@@ -2594,7 +2639,7 @@ async def eliminar_cuenta(data: CuentaEliminarIn,
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
         prov = getattr(u, "auth_provider", "password") or "password"
         if prov == "password":
-            if not data.password or not verify_password(data.password, u.password_hash):
+            if not data.password or not await _verify_password_async(data.password, u.password_hash):
                 raise HTTPException(status_code=403, detail="Contraseña incorrecta")
         u.eliminado_en = datetime.now(timezone.utc)
         await _revocar_sesiones_usuario(db, u.id)
@@ -2625,7 +2670,7 @@ async def eliminar_cuenta(data: CuentaEliminarIn,
         for em, m in MOCK_USERS.items():
             if m.get("id") == uid:
                 if (m.get("auth_provider", "password") == "password"
-                        and (not data.password or not verify_password(data.password, m["password"]))):
+                        and (not data.password or not await _verify_password_async(data.password, m["password"]))):
                     raise HTTPException(status_code=403, detail="Contraseña incorrecta")
                 m["eliminado_en"] = datetime.now(timezone.utc).isoformat()
                 break
@@ -2653,7 +2698,7 @@ async def restaurar_cuenta(data: CuentaRestaurarIn, request: Request,
             except Exception:
                 pass
             raise HTTPException(status_code=410, detail="Gracia vencida: la cuenta fue purgada")
-        if not verify_password(data.password, u.password_hash):
+        if not await _verify_password_async(data.password, u.password_hash):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
         u.eliminado_en = None
         await db.commit()
@@ -2680,7 +2725,7 @@ async def restaurar_cuenta(data: CuentaRestaurarIn, request: Request,
         m = MOCK_USERS.get(email)
         if not m or not m.get("eliminado_en"):
             raise HTTPException(status_code=404, detail="Cuenta no encontrada")
-        if not verify_password(data.password, m["password"]):
+        if not await _verify_password_async(data.password, m["password"]):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
         m.pop("eliminado_en", None)
         token = _issue_token(m["id"], email, m["rol"], False, True)

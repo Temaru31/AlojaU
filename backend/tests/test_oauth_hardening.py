@@ -113,9 +113,13 @@ def test_jwt_rechazado_loggea_warning_sin_pii(monkeypatch, caplog):
         email="alguien@ejemplo.com", nombre_completo="Alguien",
         supabase_jwt="encabezado.firma.roto",
     )
+    async def _run():
+        await _verificar_jwt_google(data)
+
+    import asyncio
     with caplog.at_level("WARNING", logger="alojau.auth"):
         with pytest.raises(HTTPException) as exc:
-            _verificar_jwt_google(data)
+            asyncio.run(_run())
     assert exc.value.status_code == 401
     assert any("JWT rechazado" in rec.message for rec in caplog.records)
     for rec in caplog.records:

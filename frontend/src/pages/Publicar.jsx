@@ -7,7 +7,7 @@ import UploadFotos from '../components/UploadFotos'
 import MapPicker from '../components/MapPicker'
 import ZonaSelect from '../components/ZonaSelect'
 import { notifyToast } from '../components/Toast'
-import { emitAuthChange, useAuth } from '../contexts/AuthContext'
+import { emitAuthChange, emitMiasChange, useAuth } from '../contexts/AuthContext'
 import ContadorCaracteres from '../components/ContadorCaracteres'
 import { LIMITES, estadoRango, RANGO_CLS } from '../constants'
 import { esHttpUrl } from '../utils/urls'
@@ -316,6 +316,8 @@ export default function Publicar() {
       setBorradorRestaurado(false)
       setForm({ ...FORM_INICIAL })
       setFotosPendientes(0)
+      // El navbar muestra "Mis publicaciones" tras el primer aviso.
+      emitMiasChange()
       // v13.2 reactividad de rol: si hubo promoción, re-sincroniza el perfil.
       if (r.data?.rol_actualizado) {
         try { await refresh?.() } catch { /* noop */ }

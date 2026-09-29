@@ -6,7 +6,9 @@ Persistencia (Strategy via services/storage.py):
 - Dev/test sin CLOUDINARY_*: disco local `backend/uploads/` (efímero en Render).
 - Prod con CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET: Cloudinary `secure_url` persistente.
 """
+import asyncio
 import os
+import time
 import uuid
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request, Path
@@ -68,12 +70,39 @@ class UploadOut(BaseModel):
     count: int
 
 
+# Anti-flood de almacenamiento/cómputo: 30 subidas/hora por usuario
+# (una publicación exige 3-10 fotos; el avatar ya tiene su propio 10/h).
+# Memoria por worker (Render free = 1 instancia); PG no aplica aquí porque
+# la tabla rate_limit_attempts solo cuenta fallidos, no intentos.
+_UPLOAD_ATTEMPTS: dict[str, list[float]] = {}
+UPLOAD_LIMIT = 30
+UPLOAD_WINDOW_S = 3600.0
+
+
+def clear_upload_rate_limit_for_tests() -> None:
+    _UPLOAD_ATTEMPTS.clear()
+
+
+def _check_upload_rate_limit(uid: int) -> None:
+    ahora = time.monotonic()
+    clave = f"upload:{uid}"
+    hist = [t for t in _UPLOAD_ATTEMPTS.get(clave, []) if ahora - t < UPLOAD_WINDOW_S]
+    if len(hist) >= UPLOAD_LIMIT:
+        raise HTTPException(status_code=429, detail="Demasiadas subidas, espera 1 hora")
+    hist.append(ahora)
+    _UPLOAD_ATTEMPTS[clave] = hist
+
+
 @router.post("", response_model=UploadOut, summary="HU-005 Upload 3-10 imágenes (solo ARRENDADOR)")
 async def upload_fotos(
     request: Request,
     files: List[UploadFile] = File(..., description="3-10 imágenes, cada una max 5MB, image/*"),
     user: dict = Depends(require_arrendador),
 ):
+    uid_t = user.get("id")
+    if not isinstance(uid_t, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    _check_upload_rate_limit(uid_t)
     if len(files) < MIN_FILES:
         raise HTTPException(status_code=422, detail=f"Mínimo {MIN_FILES} fotos (HU-005 C2), recibidas {len(files)}")
     if len(files) > MAX_FILES:
@@ -110,7 +139,8 @@ async def upload_fotos(
 
         # Nombre seguro uuid (evita path traversal y colisiones).
         filename = f"{uuid.uuid4().hex}{ext}"
-        url = backend.save(content, filename, mime)
+        # Subida (disco/Cloudinary, red de segundos) fuera del event loop.
+        url = await asyncio.to_thread(backend.save, content, filename, mime)
         urls.append(url)
 
     return {"urls": urls, "count": len(urls)}
@@ -126,6 +156,10 @@ async def upload_una_foto(
 
     Misma validación (MIME+magic+5MB+uuid). Respuesta compatible UploadOut.
     """
+    uid_1 = user.get("id")
+    if not isinstance(uid_1, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    _check_upload_rate_limit(uid_1)
     ext = _validate_mime_ext(file)
     mime = (file.content_type or "").lower()
     size = 0
@@ -147,17 +181,21 @@ async def upload_una_foto(
     base = str(request.base_url).rstrip("/")
     backend = get_storage_backend(base_url=base)
     filename = f"{uuid.uuid4().hex}{ext}"
-    url = backend.save(b"".join(chunks), filename, mime)
+    url = await asyncio.to_thread(backend.save, b"".join(chunks), filename, mime)
     return {"urls": [url], "count": 1}
 
 
-def _es_dueno_o_admin(user: dict | None, owner_id: int | None) -> bool:
-    if not user:
-        return False
-    if user.get("rol") == "ADMIN":
-        return True
+async def _es_dueno_o_admin(user: dict | None, owner_id: int | None) -> bool:
+    """Dueño por id, o ADMIN revalidado contra BD (anti-stale).
+
+    Delega en `publicaciones._is_owner_or_admin` (caché 10s, fail-closed):
+    un ADMIN democionado deja de operar fotos ajenas en ≤10s en vez de
+    conservar el acceso hasta que expire su JWT (~2h). Import lazy para
+    evitar ciclos entre routers (patrón del repo).
+    """
     try:
-        return int(user.get("id")) == int(owner_id) if owner_id is not None else False
+        from app.routers.publicaciones import _is_owner_or_admin as _check
+        return bool(await _check(user, owner_id))
     except Exception:
         return False
 
@@ -207,7 +245,7 @@ async def eliminar_foto(
         if not img:
             raise HTTPException(status_code=404, detail="Foto no encontrada")
         pub = await db.get(Publicacion, img.publicacion_id)
-        if not pub or not _es_dueno_o_admin(user, pub.usuario_id):
+        if not pub or not await _es_dueno_o_admin(user, pub.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede eliminar fotos")
         pid = img.publicacion_id
         await db.delete(img)
@@ -257,7 +295,7 @@ async def eliminar_foto(
     pub, idx = _mock_buscar_por_foto(foto_id)
     if not pub:
         raise HTTPException(status_code=404, detail="Foto no encontrada")
-    if not _es_dueno_o_admin(user, pub.get("usuario_id")):
+    if not await _es_dueno_o_admin(user, pub.get("usuario_id")):
         raise HTTPException(status_code=403, detail="Solo el dueño puede eliminar fotos")
     pub["fotos"].pop(idx)
     return {"id": foto_id, "eliminada": True, "fotos_restantes": len(pub["fotos"]), "mock": True}
@@ -295,7 +333,7 @@ async def reordenar_fotos(
         pub = await db.get(Publicacion, data.publicacion_id)
         if not pub:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not _es_dueno_o_admin(user, pub.usuario_id):
+        if not await _es_dueno_o_admin(user, pub.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede reordenar fotos")
         fotos = (await db.execute(
             select(ImagenPublicacion).where(
@@ -340,7 +378,7 @@ async def reordenar_fotos(
     pub = next((x for x in _MP if x.get("id") == data.publicacion_id), None)
     if not pub:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if not _es_dueno_o_admin(user, pub.get("usuario_id")):
+    if not await _es_dueno_o_admin(user, pub.get("usuario_id")):
         raise HTTPException(status_code=403, detail="Solo el dueño puede reordenar fotos")
     esperados = _mock_ids_para(pub)
     if set(data.orden_ids) != set(esperados):
@@ -378,7 +416,7 @@ async def vincular_fotos(
         pub = await db.get(Publicacion, data.publicacion_id)
         if not pub:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not _es_dueno_o_admin(user, pub.usuario_id):
+        if not await _es_dueno_o_admin(user, pub.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede agregar fotos")
         actuales = (await db.execute(
             select(ImagenPublicacion).where(
@@ -421,7 +459,7 @@ async def vincular_fotos(
     pub = next((x for x in _MP if x.get("id") == data.publicacion_id), None)
     if not pub:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if not _es_dueno_o_admin(user, pub.get("usuario_id")):
+    if not await _es_dueno_o_admin(user, pub.get("usuario_id")):
         raise HTTPException(status_code=403, detail="Solo el dueño puede agregar fotos")
     if len(pub.get("fotos", [])) + len(urls) > 10:
         raise HTTPException(status_code=422, detail="Máximo 10 fotos por aviso")

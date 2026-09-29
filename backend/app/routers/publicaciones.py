@@ -41,6 +41,30 @@ import re
 import time as _time
 logger = logging.getLogger("alojau.publicaciones")
 
+# Anti-flood de creación: 10 publicaciones/hora por usuario (memoria por
+# worker). Un aviso legítimo tarda minutos en redactarse; sin esto, una
+# cuenta verifica email+teléfono una vez e inunda la cola de moderación y
+# la tabla con INSERTs + FK checks. Memoria (no PG): la tabla
+# rate_limit_attempts solo cuenta fallidos; aquí se limitan intentos.
+_PUB_ATTEMPTS: dict[str, list[float]] = {}
+PUB_LIMIT = 10
+PUB_WINDOW_S = 3600.0
+
+
+def clear_pub_rate_limit_for_tests() -> None:
+    _PUB_ATTEMPTS.clear()
+
+
+def _check_pub_rate_limit(uid: int) -> None:
+    ahora = _time.monotonic()
+    clave = f"pub:{uid}"
+    hist = [t for t in _PUB_ATTEMPTS.get(clave, []) if ahora - t < PUB_WINDOW_S]
+    if len(hist) >= PUB_LIMIT:
+        raise HTTPException(status_code=429, detail="Demasiadas publicaciones, espera 1 hora")
+    hist.append(ahora)
+    _PUB_ATTEMPTS[clave] = hist
+
+
 # Bloque 2: idempotencia de POST /api/publicaciones (solo este endpoint;
 # el resto de escrituras sigue sin reintento por defecto en el cliente).
 IDEM_RUTA_CREAR = "POST /api/publicaciones"
@@ -1469,6 +1493,8 @@ async def crear_publicacion(
         previo = await _idem_replay(db, clave_idem, user["id"])
         if previo is not None:
             return previo["cuerpo"]
+    # Anti-flood (tras replay: los reintentos del cliente no queman cuota).
+    _check_pub_rate_limit(user["id"])
     # M2: valida tipo contra housing_types (esta_activo=true, caché 5min).
     try:
         from app.services import housing_types as _ht

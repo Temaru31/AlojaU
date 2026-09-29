@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 import logging
 import os
+import time
 import uuid
 from app.core.config import settings
 from app.routers import publicaciones, campus, auth, uploads, reportes, admin, ciudades, admin_automation, zonas, housing_types
@@ -87,6 +88,42 @@ async def request_id_middleware(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Request-ID"] = request_id
     return response
+
+# SecOps: detector de ráfagas 401/403/429 (fuerza bruta, sondeo IDOR, scrapers).
+# Solo contadores por minuto en memoria — sin IP, sin path, sin query, sin
+# PII (Ley 1581): si el umbral se cruza, un WARNING por minuto con el total.
+# Costo despreciable (un dict + int por respuesta denegada; /health es 200).
+_SEC_BURST: dict[int, int] = {}
+_SEC_BURST_WINDOW_S = 60
+_SEC_BURST_UMBRAL = 30
+_SEC_BURST_ULTIMO_AVISO = {"minuto": 0}
+
+
+def clear_security_burst_for_tests() -> None:
+    _SEC_BURST.clear()
+    _SEC_BURST_ULTIMO_AVISO["minuto"] = 0
+
+
+@app.middleware("http")
+async def security_burst_middleware(request: Request, call_next):
+    response = await call_next(request)
+    try:
+        if response.status_code in (401, 403, 429):
+            minuto = int(time.monotonic() // _SEC_BURST_WINDOW_S)
+            _SEC_BURST[minuto] = _SEC_BURST.get(minuto, 0) + 1
+            for k in [k for k in _SEC_BURST if k < minuto - 1]:
+                _SEC_BURST.pop(k, None)
+            total = _SEC_BURST.get(minuto, 0) + _SEC_BURST.get(minuto - 1, 0)
+            if total >= _SEC_BURST_UMBRAL and _SEC_BURST_ULTIMO_AVISO["minuto"] != minuto:
+                _SEC_BURST_ULTIMO_AVISO["minuto"] = minuto
+                logger.warning(
+                    "[secops] ráfaga de %s respuestas 401/403/429 en ~2min (posible sondeo)",
+                    total,
+                )
+    except Exception:
+        pass
+    return response
+
 
 # OLA5-M7: handler global 500 con traza estructurada + request_id.
 # HTTPException (401/403/404/...) pasa INTACTA (mismo status/detail/headers):

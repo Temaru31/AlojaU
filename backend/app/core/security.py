@@ -116,12 +116,15 @@ async def get_current_user(authorization: str = Header(None), db=None):
     # Fail-closed: mock solo si mock_enabled (flag True + ENV!=prod).
     if _mock_activo() and token in MOCK_TOKENS:
         return MOCK_TOKENS[token]
-    # Detalle #10: cablea AuthService agnóstico (Supabase RS256 si está
-    # configurado, si no local HS256). Sin Supabase el comportamiento es
-    # idéntico a decode_token (compat total con tokens legacy).
+    # Detalle #10: cablea AuthService agnóstico (Supabase RS256/ES256 si
+    # está configurado, si no local HS256). Sin Supabase el comportamiento
+    # es idéntico a decode_token (compat total con tokens legacy).
+    # La verificación Supabase incluye fetch JWKS (red ≤8s en cache-miss):
+    # corre fuera del event loop para no serializar el worker.
     try:
+        import asyncio as _aio
         from app.core.auth_service import decode_token_provider_agnostic as _agn
-        claims = _agn(token)
+        claims = await _aio.to_thread(_agn, token)
     except HTTPException:
         raise
     except Exception:
