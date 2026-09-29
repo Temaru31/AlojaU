@@ -181,11 +181,30 @@ def _limpiar_memoria() -> None:
         _pub.clear_admin_revalid_for_tests()
     except Exception:
         pass
+    try:
+        from app.routers import uploads as _up
+        _up.clear_upload_rate_limit_for_tests()
+    except Exception:
+        pass
+    try:
+        from app.routers import publicaciones as _pub2
+        _pub2.clear_pub_rate_limit_for_tests()
+    except Exception:
+        pass
+    try:
+        from app.main import clear_security_burst_for_tests as _clr_burst
+        _clr_burst()
+    except Exception:
+        pass
     for _mod, _nombres in (
         ("app.routers.auth", ("_TG_MEM", "_AVATAR_MEM", "_OTP_SOLICITAR",
                               "_OTP_VERIFICAR", "_MOCK_OTPS", "_MOCK_RESETS",
-                              "_TELEGRAM_VINCULOS", "_TELEGRAM_USADOS")),
-        ("app.routers.publicaciones", ("_VISTAS_MEM", "_VISTAS_MOCK_SET")),
+                              "_TELEGRAM_VINCULOS", "_TELEGRAM_USADOS",
+                              "_LOGIN_ATTEMPTS", "_PW_ATTEMPTS",
+                              "_OAUTH_ATTEMPTS")),
+        ("app.routers.publicaciones", ("_VISTAS_MEM", "_VISTAS_MOCK_SET",
+                                       "_PUB_ATTEMPTS", "_ADMIN_REVALID_MEM")),
+        ("app.routers.uploads", ("_UPLOAD_ATTEMPTS",)),
     ):
         try:
             import importlib as _il

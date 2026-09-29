@@ -1,8 +1,9 @@
 // M5: el callback respeta el destino post-login (ej. /publicar).
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, act } from '@testing-library/react'
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router-dom'
 import AuthCallback from './AuthCallback'
+import { AUTH_CALLBACK_TIMEOUT_MS } from './AuthCallback'
 import { api } from '../services/api'
 import { POST_LOGIN_REDIRECT_KEY } from '../services/supabaseClient'
 
@@ -87,5 +88,31 @@ describe('AuthCallback retorno post-login (M5)', () => {
     const verVista = renderEn('/auth/callback', `#access_token=${tok}`)
     await screen.findByText(/Bienvenido de nuevo/i)
     await waitFor(() => expect(verVista()).toBe('/'), { timeout: 3000 })
+  })
+
+  it('backend que nunca responde: el watchdog libera el spinner con guía (no carga eterna)', async () => {
+    vi.useFakeTimers()
+    try {
+      const tok = jwtFake({ email: 'g@x.co', sub: 'sup-1' })
+      api.post.mockReturnValue(new Promise(() => {})) // cuelgue total de red
+      renderEn('/auth/callback', `#access_token=${tok}`)
+      expect(screen.getByText(/Vinculando tu cuenta/i)).toBeInTheDocument()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(AUTH_CALLBACK_TIMEOUT_MS + 1000)
+      })
+      expect(screen.getByText(/tardando demasiado/i)).toBeInTheDocument()
+      expect(screen.getByRole('link', { name: /Mi Perfil/ })).toBeInTheDocument()
+      expect(api.post).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('caída de red sin respuesta muestra mensaje y salida (resiliencia)', async () => {
+    const tok = jwtFake({ email: 'g@x.co', sub: 'sup-1' })
+    api.post.mockRejectedValue({ code: 'ECONNABORTED', message: 'timeout of 55000ms exceeded' })
+    renderEn('/auth/callback', `#access_token=${tok}`)
+    expect(await screen.findByText(/No se pudo vincular tu cuenta/i)).toBeInTheDocument()
+    expect(localStorage.getItem('alojau_token')).toBeNull()
   })
 })

@@ -26,7 +26,8 @@ import BrandMark from './components/BrandMark'
 import useKeepAlive from './hooks/useKeepAlive'
 import { FavoritosProvider, useFavoritos } from './contexts/FavoritosContext'
 import { CompararProvider, useComparar } from './contexts/CompararContext'
-import { AuthProvider, useAuth, inicialesDe } from './contexts/AuthContext'
+import { AuthProvider, useAuth, inicialesDe, AUTH_EVENT, MIAS_EVENT } from './contexts/AuthContext'
+import { api } from './services/api'
 
 // UX: cada cambio de ruta abre arriba del todo (antes: abrir Perfil/Publicar
 // desde el fondo del home las dejaba scrolleadas abajo). Solo pathname:
@@ -59,6 +60,40 @@ function Nav() {
   const sesionActiva = !!token && !!user && !authLoading
   const verificando = !!token && (!user || authLoading)
   const displayName = user?.nombre_completo?.trim() || user?.email?.split('@')[0] || 'Mi cuenta'
+
+  // Contador de avisos propios: "Mis publicaciones" se oculta con 0 avisos
+  // confirmados (Usuario Base nuevo) y aparece tras la primera publicación
+  // (cualquier estado). Fail-open: desconocido/error -> visible (nunca
+  // castigar la UX por un fallo de red; sin token no se pide /mias).
+  const [totalMias, setTotalMias] = useState(null)
+  useEffect(() => {
+    let vivo = true
+    if (!sesionActiva) { setTotalMias(null); return undefined }
+    const cargar = async () => {
+      try {
+        const r = await api.get('/api/publicaciones/mias', {
+          params: { size: 1 },
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        // Solo un total numérico oculta el enlace; cualquier otra forma
+        // (error, mock, contrato futuro) mantiene visible (fail-open).
+        const t = r.data?.total
+        if (vivo) setTotalMias(typeof t === 'number' ? t : null)
+      } catch {
+        if (vivo) setTotalMias(null)
+      }
+    }
+    cargar()
+    const refrescar = () => { if (vivo) void cargar() }
+    window.addEventListener(AUTH_EVENT, refrescar)
+    window.addEventListener(MIAS_EVENT, refrescar)
+    return () => {
+      vivo = false
+      window.removeEventListener(AUTH_EVENT, refrescar)
+      window.removeEventListener(MIAS_EVENT, refrescar)
+    }
+  }, [sesionActiva, token])
+  const muestraMisPubs = totalMias !== 0
 
   // BUG-12: cierre del menú móvil con Esc (+ dropdown de usuario)
   useEffect(() => {
@@ -98,7 +133,7 @@ function Nav() {
               >
                 Comparar {compCount > 0 && <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full ml-1">{compCount}/{compMax}</span>}
               </Link>
-              {sesionActiva && (
+              {sesionActiva && muestraMisPubs && (
                 <Link
                   to="/mis-publicaciones"
                   className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive('/mis-publicaciones') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
@@ -171,9 +206,11 @@ function Nav() {
                       <Link to="/perfil" onClick={closeUser} role="menuitem" className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-xl text-neutral-600 hover:bg-neutral-100 active:bg-neutral-100 transition">
                         <span aria-hidden="true">👤</span> Mi Perfil
                       </Link>
-                      <Link to="/mis-publicaciones" onClick={closeUser} role="menuitem" className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-xl text-neutral-600 hover:bg-neutral-100 active:bg-neutral-100 transition">
-                        <span aria-hidden="true">📢</span> Mis Publicaciones
-                      </Link>
+                      {muestraMisPubs && (
+                        <Link to="/mis-publicaciones" onClick={closeUser} role="menuitem" className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-xl text-neutral-600 hover:bg-neutral-100 active:bg-neutral-100 transition">
+                          <span aria-hidden="true">📢</span> Mis Publicaciones
+                        </Link>
+                      )}
                       <Link to="/favoritos" onClick={closeUser} role="menuitem" className="flex items-center justify-between gap-2 px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-xl text-neutral-600 hover:bg-neutral-100 active:bg-neutral-100 transition">
                         <span><span aria-hidden="true">🧡</span> Favoritos</span>
                         {favCount > 0 && <span className="bg-red-100 text-red-700 text-[11px] font-bold px-1.5 py-0.5 rounded-full" aria-label={`${favCount} favoritos`}>{favCount}</span>}
@@ -285,14 +322,16 @@ function Nav() {
               <span>⚖️ Comparar</span>
               <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${compCount} de ${compMax} para comparar`}>{compCount}/{compMax}</span>
             </Link>
-            <Link
-              to="/mis-publicaciones"
-              onClick={closeMenu}
-              aria-current={isActive('/mis-publicaciones') ? 'page' : undefined}
-              className={mobileLinkCls(isActive('/mis-publicaciones'))}
-            >
-              📢 Mis Publicaciones
-            </Link>
+            {sesionActiva && muestraMisPubs && (
+              <Link
+                to="/mis-publicaciones"
+                onClick={closeMenu}
+                aria-current={isActive('/mis-publicaciones') ? 'page' : undefined}
+                className={mobileLinkCls(isActive('/mis-publicaciones'))}
+              >
+                📢 Mis Publicaciones
+              </Link>
+            )}
             {(user?.rol || '').toUpperCase() === 'ADMIN' && (
               <Link
                 to="/admin/dashboard"

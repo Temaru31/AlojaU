@@ -20,6 +20,19 @@ export const emitAuthChange = () => {
   }
 }
 
+// Contador de avisos propios para el navbar ("Mis publicaciones" se oculta
+// con 0 avisos). Evento dedicado — no reutilizar AUTH_EVENT (ese resincroniza
+// tokens en Perfil/Publicar y no debe dispararse por cada mutación de avisos).
+export const MIAS_EVENT = 'alojau:mias-change'
+
+export const emitMiasChange = () => {
+  try {
+    window.dispatchEvent(new Event(MIAS_EVENT))
+  } catch {
+    // SSR/tests sin window: noop
+  }
+}
+
 // M1 efecto fantasma: claves de sesión/datos locales de AlojaU. Centralizar
 // aquí evita que un logout deje favoritos, comparador, historial o perfil
 // de otro usuario visibles. No toca claves ajenas a la app ni cachés

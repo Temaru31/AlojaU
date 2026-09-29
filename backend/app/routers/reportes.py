@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,10 +25,24 @@ MotivoReporte = Literal["POSIBLE_ESTAFA", "DATOS_FALSOS", "INMUEBLE_ARRENDADO", 
 ESTADOS_REVISADOS = ("CONFIRMADO", "DESCARTADO")
 
 
+def _rechazar_html(v: Optional[str]) -> Optional[str]:
+    """Texto plano sin HTML ejecutable (defensa en profundidad: el frontend
+    React escapa por defecto, pero la API también la consumen terceros).
+    Mismo criterio que PublicacionCreate (cubre <img onerror>, <svg>...)."""
+    if v is not None and ("<" in v or ">" in v):
+        raise ValueError("no se permite HTML ni los caracteres < > (texto plano)")
+    return v
+
+
 class ReporteIn(BaseModel):
     publicacion_id: int = Field(gt=0, le=1000000)
     motivo: MotivoReporte
     detalle: Optional[str] = Field(default=None, min_length=0, max_length=500)
+
+    @field_validator("detalle")
+    @classmethod
+    def detalle_sin_html(cls, v):
+        return _rechazar_html(v)
 
 
 class ReporteOut(BaseModel):
@@ -143,15 +157,27 @@ async def listar_reportes(
     estado: Optional[str] = Query(None, pattern="^(PENDIENTE|CONFIRMADO|DESCARTADO)$"),
     db: AsyncSession = Depends(get_session),
     _admin: dict = Depends(require_admin),
+    # Al final a propósito: llamadas directas existentes usan (estado, db, admin)
+    # posicional. Cota defensiva sin cambiar el shape de respuesta.
+    limit: int = Query(200, ge=1, le=500, description="Cota defensiva: la bandeja crece sin paginar"),
 ):
-    """Lista reportes (filtro opcional por estado), más recientes primero."""
+    """Lista reportes (filtro opcional por estado), más recientes primero.
+
+    Sin paginación histórica: se acota con `limit` (mismo shape de respuesta,
+    sin romper el panel admin) para que la tabla no agote memoria del worker.
+    """
     from app.models import ReportePublicacion
 
+    # Llamadas directas (tests/CI) no resuelven el default Query: si llega el
+    # objeto Query en vez de int, se usa la cota por defecto (HTTP sí valida
+    # ge/le vía FastAPI y da 422 fuera de rango).
+    lim = limit if isinstance(limit, int) else 200
+    lim = max(1, min(lim, 500))
     try:
         stmt = select(ReportePublicacion).order_by(ReportePublicacion.id.desc())
         if estado:
             stmt = stmt.where(ReportePublicacion.estado == estado)
-        rows = (await db.execute(stmt)).scalars().all()
+        rows = (await db.execute(stmt.limit(lim))).scalars().all()
         return [_to_out(r) for r in rows]
     except HTTPException:
         raise

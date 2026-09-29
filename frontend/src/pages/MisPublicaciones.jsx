@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, isCancelError } from '../services/api'
-import { useAuth } from '../contexts/AuthContext'
+import { useAuth, emitMiasChange } from '../contexts/AuthContext'
 import { formatDistancia } from '../utils/formatters'
 import SmartImage from '../components/SmartImage'
 import Paginacion from '../components/Paginacion'
@@ -187,6 +187,8 @@ export default function MisPublicaciones() {
       setItems(prev => prev.filter(x => x.id !== p.id))
       setTotal(t => Math.max(0, t - 1))
       setAEliminar(null)
+      // El navbar oculta "Mis publicaciones" al llegar a 0 avisos.
+      emitMiasChange()
       // v13.2 reactividad de rol: si hubo democión, re-sincroniza el perfil.
       if (r.data?.rol_actualizado) {
         try { await refresh?.() } catch { /* noop */ }
