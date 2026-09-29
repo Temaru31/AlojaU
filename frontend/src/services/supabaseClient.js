@@ -109,24 +109,57 @@ export function leerRedirectPostLogin() {
   }
 }
 
-export async function signInWithGoogle(env = import.meta.env) {
+// Fail-safe timeouts (UI defense): ninguna promesa de red del flujo OAuth
+// puede quedar pendiente para siempre (botón "Conectando con Google…"
+// o callback "Vinculando…" eternos). Toda espera compite contra un
+// temporizador y rechaza con OAUTH_TIMEOUT accionable.
+export const OAUTH_CLIENT_TIMEOUT_MS = 25000
+export const OAUTH_EXCHANGE_TIMEOUT_MS = 20000
+
+export function withTimeout(promesa, ms, mensaje = 'La operación tardó demasiado. Revisa tu conexión e intenta de nuevo.') {
+  let temporizador = null
+  const espera = new Promise((_, rechazar) => {
+    temporizador = setTimeout(() => {
+      const err = new Error(mensaje)
+      err.code = 'OAUTH_TIMEOUT'
+      rechazar(err)
+    }, ms)
+  })
+  return Promise.race([promesa, espera]).then(
+    (valor) => { clearTimeout(temporizador); return valor },
+    (err) => { clearTimeout(temporizador); throw err },
+  )
+}
+
+export async function signInWithGoogle(env = import.meta.env, timeoutMs = OAUTH_CLIENT_TIMEOUT_MS) {
   const redirectTo = getOAuthRedirect(env)
   let sb = null
   try {
-    sb = await getSupabaseClient(env)
+    sb = await withTimeout(
+      getSupabaseClient(env),
+      timeoutMs,
+      'Conectar con Google está tardando demasiado. Revisa tu conexión e intenta de nuevo.',
+    )
   } catch (e) {
-    throw e // OAUTH_NOT_CONFIGURED con guía (no botón muerto)
+    throw e // OAUTH_NOT_CONFIGURED u OAUTH_TIMEOUT con guía (no botón muerto)
   }
   try {
     // El SDK gestiona PKCE (code_challenge + verifier en storage) o
     // implícito según el proyecto; ambas respuestas las entiende el callback.
-    const { error } = await sb.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo },
-    })
+    const { error } = await withTimeout(
+      sb.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo },
+      }),
+      timeoutMs,
+      'Google no respondió a tiempo. Revisa tu conexión e intenta de nuevo.',
+    )
     if (error) throw error
     return { via: 'sdk' }
-  } catch {
+  } catch (e) {
+    // Un timeout no se enmascara con redirect: el estado del SDK es
+    // desconocido y la UI debe mostrar reintento (no navegar a ciegas).
+    if (e?.code === 'OAUTH_TIMEOUT') throw e
     // Sin SDK operativo: redirect estándar (flujo implícito, cero deps).
     const { url } = getSupabaseConfig(env)
     window.location.href = buildGoogleAuthUrl(url, redirectTo)
@@ -137,14 +170,22 @@ export async function signInWithGoogle(env = import.meta.env) {
 // v13.1: intercambia ?code= (PKCE) por sesión. Requiere que el login lo haya
 // iniciado el SDK (guarda el code_verifier); si no hay verifier, el SDK lanza
 // error descriptivo (nunca "No se recibió token" genérico en la UI).
-export async function exchangeCodeForSession(code, env = import.meta.env) {
+export async function exchangeCodeForSession(code, env = import.meta.env, timeoutMs = OAUTH_EXCHANGE_TIMEOUT_MS) {
   if (!code) {
     const err = new Error('Falta el código de autorización de Google.')
     err.code = 'OAUTH_MISSING_CODE'
     throw err
   }
-  const sb = await getSupabaseClient(env)
-  const { data, error } = await sb.auth.exchangeCodeForSession(code)
+  const sb = await withTimeout(
+    getSupabaseClient(env),
+    timeoutMs,
+    'Conectar con Google está tardando demasiado. Revisa tu conexión e intenta de nuevo.',
+  )
+  const { data, error } = await withTimeout(
+    sb.auth.exchangeCodeForSession(code),
+    timeoutMs,
+    'Google tardó demasiado en responder. Vuelve a intentarlo.',
+  )
   if (error) throw error
   return data.session
 }

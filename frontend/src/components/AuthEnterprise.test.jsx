@@ -15,6 +15,7 @@ import {
   leerRedirectPostLogin,
   POST_LOGIN_REDIRECT_KEY,
   __resetSupabaseClientForTests,
+  withTimeout,
 } from '../services/supabaseClient'
 
 afterEach(() => {
@@ -162,6 +163,34 @@ describe('supabaseClient v13.1 (dual PKCE/implicit)', () => {
     }
     const env = { VITE_SUPABASE_URL: 'https://xxx.supabase.co', VITE_SUPABASE_ANON_KEY: 'anon' }
     await expect(exchangeCodeForSession('mal', env)).rejects.toThrow(/code verifier/)
+  })
+})
+
+describe('supabaseClient fail-safe timeouts (anti spinner eterno)', () => {
+  const env = { VITE_SUPABASE_URL: 'https://xxx.supabase.co', VITE_SUPABASE_ANON_KEY: 'anon' }
+  const colgada = () => new Promise(() => {})
+
+  it('withTimeout resuelve el valor si llega a tiempo', async () => {
+    await expect(withTimeout(Promise.resolve('ok'), 1000)).resolves.toBe('ok')
+  })
+
+  it('withTimeout rechaza con OAUTH_TIMEOUT si la red se cuelga', async () => {
+    await expect(withTimeout(colgada(), 30)).rejects.toMatchObject({ code: 'OAUTH_TIMEOUT' })
+  })
+
+  it('signInWithGoogle colgado rechaza con OAUTH_TIMEOUT (el botón sale de loading)', async () => {
+    window.supabase = { auth: { signInWithOAuth: vi.fn().mockImplementation(colgada) } }
+    await expect(signInWithGoogle(env, 30)).rejects.toMatchObject({ code: 'OAUTH_TIMEOUT' })
+  })
+
+  it('exchangeCodeForSession colgado rechaza con OAUTH_TIMEOUT (el callback no se queda en Vinculando)', async () => {
+    window.supabase = {
+      auth: {
+        signInWithOAuth: vi.fn(),
+        exchangeCodeForSession: vi.fn().mockImplementation(colgada),
+      },
+    }
+    await expect(exchangeCodeForSession('codigo-pkce', env, 30)).rejects.toMatchObject({ code: 'OAUTH_TIMEOUT' })
   })
 })
 

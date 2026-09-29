@@ -25,6 +25,14 @@ function decodeJwtPayload(token) {
   }
 }
 
+// Watchdog fail-safe: el callback nunca muestra "Vinculando…" más de este
+// tiempo. Cubre cuelgues fuera de los try/catch (red colgada en PKCE,
+// axios al límite de 55s en cold start de Render, rejections inesperadas).
+// Exportado para tests con fake timers.
+export const AUTH_CALLBACK_TIMEOUT_MS = 60000
+export const AUTH_CALLBACK_TIMEOUT_MENSAJE =
+  'La conexión está tardando demasiado (más de 1 minuto). Revisa tu señal e intenta de nuevo desde Mi Perfil.'
+
 export default function AuthCallback() {
   const navigate = useNavigate()
   const [estado, setEstado] = useState('procesando') // procesando|ok|error
@@ -34,17 +42,36 @@ export default function AuthCallback() {
   // Bloque 3: el redirect diferido se cancela al desmontar (el flag `vivo`
   // ya protege los setState, pero el navigate huérfano también se evita).
   const navTimer = useRef(null)
-  useEffect(() => () => window.clearTimeout(navTimer.current), [])
+  const watchdogTimer = useRef(null)
+  useEffect(() => () => {
+    window.clearTimeout(navTimer.current)
+    window.clearTimeout(watchdogTimer.current)
+  }, [])
 
   useEffect(() => {
     let vivo = true
+    let resuelto = false
+    // `fallar` es terminal: marca resuelto + desarma el watchdog para que
+    // nunca pise un error ya mostrado con el mensaje de timeout.
+    const fallar = (mensaje) => {
+      if (!vivo || resuelto) return
+      resuelto = true
+      window.clearTimeout(watchdogTimer.current)
+      setEstado('error'); setDetalle(mensaje)
+    }
+    // Watchdog independiente de los await: si algo se cuelga (PKCE sin
+    // timeout en versiones viejas, red colgada, promise que nunca resuelve),
+    // fuerza salida del estado `procesando` con guía accionable.
+    watchdogTimer.current = window.setTimeout(() => {
+      fallar(AUTH_CALLBACK_TIMEOUT_MENSAJE)
+    }, AUTH_CALLBACK_TIMEOUT_MS)
     const run = async () => {
       const params = new URLSearchParams(window.location.search || '')
       const frag = parseAuthCallbackHash()
       const err = frag.error_description || frag.error || params.get('error')
         || params.get('error_description')
       if (err) {
-        if (vivo) { setEstado('error'); setDetalle(String(err)) }
+        fallar(String(err))
         return
       }
       // v13.1 dual: PKCE (?code=) o implícito (#access_token=).
@@ -60,18 +87,12 @@ export default function AuthCallback() {
                 user_metadata: session.user.user_metadata || {} }
             : decodeJwtPayload(supabaseJwt)
         } catch (e) {
-          if (vivo) {
-            setEstado('error')
-            setDetalle(e?.message || 'No se pudo completar el inicio con Google (PKCE). Intenta de nuevo.')
-          }
+          fallar(e?.message || 'No se pudo completar el inicio con Google (PKCE). Intenta de nuevo.')
           return
         }
       }
       if (!supabaseJwt) {
-        if (vivo) {
-          setEstado('error')
-          setDetalle('Google no devolvió credenciales (sin token ni código). Revisa la configuración OAuth e intenta de nuevo.')
-        }
+        fallar('Google no devolvió credenciales (sin token ni código). Revisa la configuración OAuth e intenta de nuevo.')
         return
       }
       const email = claims.email || params.get('email') || ''
@@ -82,10 +103,7 @@ export default function AuthCallback() {
       const supabaseId = claims.sub || null
       const foto = claims.user_metadata?.avatar_url || claims.user_metadata?.picture || null
       if (!email) {
-        if (vivo) {
-          setEstado('error')
-          setDetalle('Google no devolvió un correo verificable.')
-        }
+        fallar('Google no devolvió un correo verificable.')
         return
       }
       try {
@@ -98,7 +116,9 @@ export default function AuthCallback() {
         })
         try { localStorage.setItem('alojau_token', r.data.access_token) } catch { /* noop */ }
         emitAuthChange()
-        if (vivo) {
+        if (vivo && !resuelto) {
+          resuelto = true
+          window.clearTimeout(watchdogTimer.current)
           // Login y registro con Google son el mismo flujo (crea-o-vincula):
           // el backend dice si la cuenta nació ahora para el mensaje correcto.
           setEsNuevo(!!r.data?.es_nuevo)
@@ -108,14 +128,23 @@ export default function AuthCallback() {
           navTimer.current = window.setTimeout(() => { if (vivo) navigate(destino) }, 900)
         }
       } catch (e) {
-        if (vivo) {
-          setEstado('error')
-          setDetalle(e?.response?.data?.detail || 'No se pudo vincular tu cuenta de Google.')
+        if (e?.code === 'OAUTH_TIMEOUT') {
+          fallar(e?.message || AUTH_CALLBACK_TIMEOUT_MENSAJE)
+        } else {
+          fallar(e?.response?.data?.detail || 'No se pudo vincular tu cuenta de Google.')
         }
       }
     }
-    run()
-    return () => { vivo = false }
+    // Cualquier throw fuera de los try internos (defensa en profundidad)
+    // termina en error visible, jamás en spinner eterno.
+    run().catch(() => {
+      window.clearTimeout(watchdogTimer.current)
+      fallar('Ocurrió un error inesperado al vincular tu cuenta. Intenta de nuevo desde Mi Perfil.')
+    })
+    return () => {
+      vivo = false
+      window.clearTimeout(watchdogTimer.current)
+    }
   }, [navigate])
 
   return (

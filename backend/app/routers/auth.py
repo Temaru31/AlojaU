@@ -255,9 +255,24 @@ def _verificar_jwt_google(data: "GoogleCallbackIn") -> None:
     from ..core.auth_service import SupabaseAuthService
     try:
         claims = SupabaseAuthService().decode_token(data.supabase_jwt)
-    except HTTPException:
+    except HTTPException as e:
+        # Observabilidad anti-manipulación: kid/alg del header para detectar
+        # rotación de claves o tokens forjados. NUNCA token ni email (PII,
+        # Ley 1581; CodeQL: sin secretos en logs).
+        try:
+            import jwt as _jwt
+            _hdr = _jwt.get_unverified_header(data.supabase_jwt or "")
+            logger.warning(
+                "[oauth google] JWT rechazado (status=%s kid=%s alg=%s)",
+                getattr(e, "status_code", "?"),
+                str(_hdr.get("kid"))[:36],
+                str(_hdr.get("alg"))[:10],
+            )
+        except Exception:
+            logger.warning("[oauth google] JWT rechazado (header ilegible)")
         raise
     except Exception:
+        logger.warning("[oauth google] JWT inválido (fallo interno de verificación)")
         raise HTTPException(status_code=401, detail="Token Supabase inválido")
     claim_email = _norm_email(claims.get("email", ""))
     if claim_email and claim_email != _norm_email(data.email):
@@ -503,6 +518,24 @@ def _check_login_rate_limit(request: Request):
         raise HTTPException(status_code=429, detail="Demasiados intentos de login, espera 1 minuto")
     hist.append(now)
     _LOGIN_ATTEMPTS[ip] = hist
+
+
+# OAuth Google: tienda SEPARADA del login (un NAT universitario comparte IP;
+# los fallos de password no deben bloquear el botón de Google y viceversa).
+# 10/min por IP en memoria + persistente 20/15min por IP y 10/15min por email.
+_OAUTH_ATTEMPTS: dict[str, list[float]] = {}
+OAUTH_LIMIT = 10
+OAUTH_WINDOW_S = 60.0
+
+
+def _check_oauth_rate_limit(request: Request) -> None:
+    ip = request.client.host if request.client and request.client.host else "unknown"
+    now = time.monotonic()
+    hist = [t for t in _OAUTH_ATTEMPTS.get(ip, []) if now - t < OAUTH_WINDOW_S]
+    if len(hist) >= OAUTH_LIMIT:
+        raise HTTPException(status_code=429, detail="Demasiados intentos con Google, espera 1 minuto")
+    hist.append(now)
+    _OAUTH_ATTEMPTS[ip] = hist
 
 
 def _password_fuerte_v13(pw: str) -> Optional[str]:
@@ -2239,10 +2272,20 @@ async def oauth_google_callback(data: GoogleCallbackIn, request: Request,
     - Carrera concurrente: UNIQUE(email) + IntegrityError -> re-lee y vincula.
     """
     email = _norm_email(data.email)
-    # Validación opcional del JWT Supabase contra JWKS (fail-closed si se envía).
-    if data.supabase_jwt and settings.supabase_configured:
-        _verificar_jwt_google(data)
+    # Anti-fuerza-bruta/DoS ANTES de la verificación JWKS (fetch de red) y la
+    # BD: memoria (rápido) + persistente PG (sobrevive reinicios Render).
+    _check_oauth_rate_limit(request)
     ip = _client_ip(request)
+    await _db_rate_check(db, f"oauth:ip:{ip}", limite=20, ventana_s=900)
+    await _db_rate_check(db, f"oauth:email:{email}", limite=10, ventana_s=900)
+    # Validación opcional del JWT Supabase contra JWKS (fail-closed si se envía).
+    try:
+        if data.supabase_jwt and settings.supabase_configured:
+            _verificar_jwt_google(data)
+    except HTTPException:
+        await _db_rate_record(db, f"oauth:ip:{ip}", False)
+        await _db_rate_record(db, f"oauth:email:{email}", False)
+        raise
     es_nuevo = False
     try:
         from ..models import Usuario
@@ -2310,6 +2353,8 @@ async def oauth_google_callback(data: GoogleCallbackIn, request: Request,
             await _registrar_sesion(db, u.id, jti, request)
         except Exception:
             pass
+        await _db_rate_record(db, f"oauth:ip:{ip}", True)
+        await _db_rate_record(db, f"oauth:email:{email}", True)
         return {"access_token": token, "token_type": "bearer",
                 "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": u.rol, "mock": False,
                 "es_nuevo": es_nuevo}
