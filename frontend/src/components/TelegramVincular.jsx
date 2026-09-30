@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
 import { notifyToast } from './Toast'
+import ConfirmDialog from './ConfirmDialog'
 
 export function esErrorSinBot(err) {
   return err?.response?.status === 503
@@ -26,7 +27,7 @@ export const TELEGRAM_POLL_MS = 3000
 export const TELEGRAM_POLL_MAX = 60 // 3 min
 
 export default function TelegramVincular({
-  token, vinculado, onVinculado,
+  token, vinculado, onVinculado, onDesvinculado,
   telefonoGuardado = true, telefonoVerificado = false,
 }) {
   const [cargando, setCargando] = useState(false)
@@ -38,6 +39,8 @@ export default function TelegramVincular({
   const [modoLocal, setModoLocal] = useState(false)
   const [pinSim, setPinSim] = useState('')
   const [pinOk, setPinOk] = useState(false)
+  const [confirmaDesvincular, setConfirmaDesvincular] = useState(false)
+  const [desvinculando, setDesvinculando] = useState(false)
 
   // Guard de desmontaje: los reintentos duermen hasta 3s; sin esto habría
   // setState sobre componente desmontado al navegar en mitad del check.
@@ -84,6 +87,16 @@ export default function TelegramVincular({
     setModoLocal(false)
     setPinSim('')
     setPinOk(false)
+    // Pre-abrir la pestaña EN el gesto del clic: los bloqueadores (y Safari
+    // móvil) solo permiten window.open sincrónico. Esperar al POST hacía que
+    // devolvieran null y el fallback a location.href sacaba al usuario de su
+    // página ADEMÁS de abrir la otra pestaña. La pestaña actual jamás navega.
+    let ventana = null
+    try {
+      ventana = window.open('', '_blank', 'noopener,noreferrer')
+    } catch {
+      ventana = null
+    }
     setCargando(true)
     try {
       const r = await api.post('/api/auth/telegram/vincular-inicio', {}, {
@@ -95,12 +108,17 @@ export default function TelegramVincular({
       }
       setBotUrl(url)
       // Consume directamente el bot_url del backend (sin construirlo aquí).
-      // window.open no lanza con bloqueador (retorna null): fallback a href.
-      const ventana = window.open(url, '_blank', 'noopener,noreferrer')
-      if (!ventana) window.location.href = url
+      if (ventana && !ventana.closed) {
+        ventana.location.href = url
+      } else {
+        // Bloqueador estricto: NO tocar la pestaña actual; el enlace
+        // copiable de abajo queda visible con la guía.
+        setError('Tu navegador bloqueó la ventana emergente. Usa el enlace de abajo para abrir Telegram (esta página queda intacta).')
+      }
       setBotAbierto(true)
       setIntentos(0)
     } catch (e) {
+      try { ventana?.close() } catch { /* la pestaña en blanco se cierra */ }
       if (esErrorSinBot(e)) {
         setModoLocal(true)
       } else {
@@ -108,6 +126,28 @@ export default function TelegramVincular({
       }
     } finally {
       setCargando(false)
+    }
+  }
+
+  // Libera el chat y el número para que otra cuenta pueda usarlos.
+  // La página actual no navega en ningún caso (POST + estado local).
+  const desvincular = async () => {
+    setError('')
+    setDesvinculando(true)
+    try {
+      await api.post('/api/auth/telegram/desvincular', {}, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      setBotAbierto(false)
+      setBotUrl('')
+      setConfirmaDesvincular(false)
+      onDesvinculado?.()
+      notifyToast('Telegram desvinculado y número liberado.')
+    } catch (e) {
+      setError(e?.response?.data?.detail || e?.message || 'No se pudo desvincular. Intenta de nuevo.')
+      setConfirmaDesvincular(false)
+    } finally {
+      if (vivoRef.current) setDesvinculando(false)
     }
   }
 
@@ -190,6 +230,29 @@ export default function TelegramVincular({
           ? 'Los códigos te llegan al chat de Telegram. Nunca pedimos códigos en grupos.'
           : 'Vincula tu cuenta para recibir los códigos en tu chat de Telegram. Si no vinculas, llegan por correo.'}
       </p>
+      {vinculado && (
+        <div className="pt-1">
+          <button
+            type="button"
+            onClick={() => { setError(''); setConfirmaDesvincular(true) }}
+            className="text-xs font-medium text-red-600 hover:text-red-700 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/40 rounded"
+          >
+            Desvincular Telegram y liberar mi número
+          </button>
+          {confirmaDesvincular && (
+            <ConfirmDialog
+              titulo="Desvincular Telegram"
+              descripcion="Se desvinculará tu chat y se liberará tu número para que otra cuenta pueda usarlo. Perderás la verificación telefónica (+20 pts) y no podrás publicar hasta registrar otro número."
+              cancelar="Cancelar"
+              confirmar="Sí, desvincular y liberar"
+              peligro
+              ocupado={desvinculando}
+              onCancelar={() => { if (!desvinculando) setConfirmaDesvincular(false) }}
+              onConfirmar={desvincular}
+            />
+          )}
+        </div>
+      )}
       {!vinculado && (
         <ol className="space-y-2.5 pt-1">
           <li className="flex items-start gap-2.5">

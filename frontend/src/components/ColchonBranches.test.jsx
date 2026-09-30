@@ -48,13 +48,18 @@ describe('colchón branches honesto (helpers + bordes UI)', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Sin bot'))
   })
 
-  it('TelegramVincular sin bot_url válida muestra error (no abre nada)', async () => {
+  it('TelegramVincular sin bot_url válida muestra error y cierra la pre-apertura', async () => {
     vi.spyOn(api, 'post').mockResolvedValue({ data: { bot_url: 'http://mal' } })
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const ventana = { closed: false, location: {}, close: vi.fn() }
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => ventana)
+    const hrefAntes = window.location.href
     render(<TelegramVincular token="t" vinculado={false} />)
     fireEvent.click(screen.getByRole('button', { name: /Abrir Bot en Telegram/ }))
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
-    expect(openSpy).not.toHaveBeenCalled()
+    // Solo la pre-apertura en blanco (anti-bloqueadores), cerrada al fallar.
+    expect(openSpy).toHaveBeenCalledWith('', '_blank', expect.anything())
+    expect(ventana.close).toHaveBeenCalled()
+    expect(window.location.href).toBe(hrefAntes)
     openSpy.mockRestore()
   })
 })

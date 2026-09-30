@@ -769,6 +769,13 @@ export default function Perfil() {
                       setPerfil((p) => (p ? { ...p, telegram_vinculado: true, telefono_verificado: true } : p))
                       notifyToast('¡Número verificado con éxito en AlojaU! 🎉 (+20 pts de confianza)')
                     }}
+                    onDesvinculado={() => {
+                      setPerfil((p) => (p ? {
+                        ...p, telegram_vinculado: false,
+                        telefono_verificado: false, telefono_whatsapp: null,
+                      } : p))
+                      setTelefono('')
+                    }}
                   />
                 </div>
               </div>

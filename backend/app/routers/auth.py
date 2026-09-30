@@ -1681,6 +1681,77 @@ async def telegram_vincular_inicio(
     return {"bot_url": f"https://t.me/{username}?start={token}", "expira_segundos": 600}
 
 
+@router.post("/telegram/desvincular", summary="M5: desvincular Telegram y liberar el número")
+async def telegram_desvincular(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Libera el chat y el número de la cuenta: `telegram_chat_id=NULL`,
+    `telefono_whatsapp=NULL`, `telefono_verificado=False` y quema los
+    vínculos pendientes del usuario (sus enlaces viejos dejan de valer).
+
+    Es una liberación TOTAL a propósito: con el número aún guardado (aunque
+    sin verificar) la regla anti-duplicados seguiría bloqueando a otra
+    cuenta que lo reclame. La UI exige confirmación explícita porque se
+    pierde la verificación (+20 pts) y la capacidad de publicar hasta
+    registrar otro número. Idempotente (repetirla no falla).
+    """
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    # Espejo en memoria (vale en ambos caminos: real y mock).
+    try:
+        for _k, _v in list(_TELEGRAM_VINCULOS.items()):
+            if _v.get("user_id") == uid and not _v.get("usado"):
+                _v["usado"] = True
+                _TELEGRAM_USADOS.add(_k)
+        for _c, _n in list(_TELEGRAM_PENDIENTES.items()):
+            _rec = _TELEGRAM_VINCULOS.get(_n)
+            if _rec is not None and _rec.get("user_id") == uid:
+                _TELEGRAM_PENDIENTES.pop(_c, None)
+    except Exception:
+        pass
+    try:
+        from ..models import Usuario, TelegramVinculo
+        u = await db.get(Usuario, uid)
+        if u:
+            u.telegram_chat_id = None
+            u.telefono_whatsapp = None
+            u.telefono_verificado = False
+            await db.execute(
+                TelegramVinculo.__table__.update().where(
+                    TelegramVinculo.usuario_id == uid,
+                    TelegramVinculo.usado.is_(False),
+                ).values(usado=True)
+            )
+            await db.commit()
+            await db.refresh(u)
+            return {"desvinculado": True,
+                    "mensaje": "Telegram desvinculado y número liberado."}
+        if not _mock_enabled():
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[telegram desvincular] DB falló: {exc_resumen(e)}", exc_info=True)
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    # Mock dev sin PG: libera sobre MOCK_USERS.
+    for _m in MOCK_USERS.values():
+        if _m.get("id") == uid:
+            _m["telegram_chat_id"] = None
+            _m["telefono_whatsapp"] = None
+            _m["telefono_verificado"] = False
+            break
+    return {"desvinculado": True,
+            "mensaje": "Telegram desvinculado y número liberado (mock).",
+            "mock": True}
+
+
 def _telegram_send_message(chat_id: str, texto: str) -> bool:
     """Envía un DM por Bot API. Retorna True si Telegram respondió 200/ok.
 

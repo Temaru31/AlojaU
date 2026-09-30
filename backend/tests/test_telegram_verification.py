@@ -232,6 +232,54 @@ def test_mismo_chat_en_otra_cuenta_rechaza(limpieza):
     assert r.json().get("motivo") == "duplicado"
 
 
+def _desvincular(h):
+    return client.post("/api/auth/telegram/desvincular", json={}, headers=h)
+
+
+def test_desvincular_libera_numero_para_otra_cuenta(limpieza):
+    if not _pg():
+        pytest.skip("sin PG real")
+    _, ha = _registrar("liba", telefono="573209993111")
+    ta = _inicio(ha)
+    assert _start(888999111, ta).json().get("contacto_requerido") is True
+    assert _contacto(888999111, "+573209993111").json().get("vinculado") is True
+    assert client.get("/api/auth/perfil", headers=ha).json().get("telefono_verificado") is True
+
+    r = _desvincular(ha)
+    assert r.status_code == 200
+    assert r.json().get("desvinculado") is True
+    pa = client.get("/api/auth/perfil", headers=ha).json()
+    assert pa.get("telegram_vinculado") is False
+    assert pa.get("telefono_verificado") is False
+    assert pa.get("telefono_whatsapp") in (None, "")
+
+    # Idempotente: repetir no falla.
+    assert _desvincular(ha).status_code == 200
+
+    # Otra cuenta reclama el mismo número sin trabas.
+    _, hb = _registrar("libb", telefono="573209993111")
+    tb = _inicio(hb)
+    assert _start(999111222, tb).json().get("contacto_requerido") is True
+    assert _contacto(999111222, "+573209993111").json().get("vinculado") is True
+    assert client.get("/api/auth/perfil", headers=hb).json().get("telefono_verificado") is True
+
+
+def test_desvincular_quema_pendientes(limpieza):
+    if not _pg():
+        pytest.skip("sin PG real")
+    _, h = _registrar("libq", telefono="573209993222")
+    token = _inicio(h)
+    assert _desvincular(h).status_code == 200
+    r = _start(111222333, token)
+    assert r.json().get("vinculado") is False
+    assert r.json().get("motivo") == "token-invalido"
+
+
+def test_desvincular_sin_auth_401():
+    r = client.post("/api/auth/telegram/desvincular", json={})
+    assert r.status_code == 401
+
+
 def test_numero_escrito_a_mano_se_rechaza_con_guia(limpieza):
     envi = Enviados()
     with patch("app.services.telegram.send_message", envi):
