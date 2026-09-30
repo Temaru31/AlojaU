@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import TelegramVincular from './TelegramVincular'
 import { api } from '../services/api'
 
@@ -63,6 +63,41 @@ describe('TelegramVincular (M5 bot_url directo)', () => {
     fireEvent.click(screen.getByRole('button', { name: /Abrir Bot en Telegram/ }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/Respuesta inválida del bot/)
     expect(openSpy).not.toHaveBeenCalled()
+  })
+
+  it('sin teléfono guardado la tarjeta se bloquea con guía (prerrequisito)', () => {
+    render(<TelegramVincular token="t" vinculado={false} telefonoGuardado={false} />)
+    expect(screen.getByText(/Ingresa y guarda tu número de WhatsApp/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Abrir Bot en Telegram/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Vincular cuenta' })).toBeDisabled()
+  })
+
+  it('verificado muestra badge verde con +20 pts', () => {
+    render(<TelegramVincular token="t" vinculado telefonoVerificado />)
+    expect(screen.getByText(/Teléfono y Telegram Verificados \(\+20 pts\)/)).toBeInTheDocument()
+  })
+
+  it('polling detecta la vinculación solo: toast + callback sin pulsar nada', async () => {
+    vi.useFakeTimers()
+    try {
+      const postSpy = vi.spyOn(api, 'post').mockResolvedValue({ data: { bot_url: 'https://t.me/B?start=x' } })
+      vi.spyOn(window, 'open').mockImplementation(() => ({}))
+      const getSpy = vi.spyOn(api, 'get')
+        .mockResolvedValueOnce({ data: { telegram_vinculado: false } })
+        .mockResolvedValue({ data: { telegram_vinculado: true } })
+      const onVinculado = vi.fn()
+      render(<TelegramVincular token="t" vinculado={false} onVinculado={onVinculado} />)
+      fireEvent.click(screen.getByRole('button', { name: /Abrir Bot en Telegram/ }))
+      // Flush de la cadena abrirBot (post -> setBotAbierto -> monta polling).
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(postSpy).toHaveBeenCalled()
+      // Dos ciclos: el 1º aún sin vincular, el 2º detecta y notifica.
+      await act(async () => { await vi.advanceTimersByTimeAsync(6500) })
+      expect(getSpy).toHaveBeenCalledWith('/api/auth/perfil', expect.anything())
+      expect(onVinculado).toHaveBeenCalledWith(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('doble clic en Vincular no duplica el check (botón se deshabilita)', async () => {

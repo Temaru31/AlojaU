@@ -83,11 +83,11 @@ async def send_message(bot_token: str, chat_id: str, texto: str,
 # --- Opción A: verificación por contacto (request_contact) ---------------
 
 TEXTO_PEDIR_CONTACTO = (
-    "Para confirmar que este Telegram es tuyo, comparte tu número "
-    "con el botón de abajo. Debe ser el mismo que verificaste en AlojaU."
+    "Para verificar tu número en AlojaU, comparte tu contacto "
+    "con el botón de abajo. Debe ser el mismo que guardaste en tu perfil."
 )
 
-TEXTO_BOTON_CONTACTO = "📱 Compartir mi número"
+TEXTO_BOTON_CONTACTO = "📱 Compartir mi número de teléfono para verificar"
 
 
 def teclado_pedir_contacto() -> dict:

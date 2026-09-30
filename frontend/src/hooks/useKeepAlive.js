@@ -1,8 +1,10 @@
 // useKeepAlive — Bloque 3: mitiga el cold start de Render Free.
 //
 // El plan gratuito suspende el backend tras inactividad; el primer request
-// tarda 15-45s. Este hook envía un ping ligero `GET /health` cada 11 min
-// ÚNICAMENTE mientras la pestaña está visible (`visibilityState`).
+// tarda 15-45s. Este hook envía un ping ligero `GET /api/v1/ping` cada
+// 11 min ÚNICAMENTE mientras la pestaña está visible (`visibilityState`).
+// Se usa el alias /api/v1/ping (no /health): algunos bloqueadores filtran
+// la ruta /health y ensucian la consola con net::ERR_BLOCKED_BY_CLIENT.
 // No se exige foco de ventana (hasFocus): con la pestaña visible basta;
 // exigir foco impediría el ping con devtools o split-screen activos.
 // (`document.visibilityState === 'visible'`). No usa setInterval ciego:
@@ -33,8 +35,8 @@ export default function useKeepAlive({ intervalMs = KEEPALIVE_INTERVAL_MS } = {}
       if (!vivo || !debePing()) return
       ultimoPing.current = Date.now()
       try {
-        // /health es liviano (sin DB) para despertar sin cargar el pool.
-        await api.get('/health', { timeout: 15000 })
+        // /api/v1/ping es liviano (sin DB) para despertar sin cargar el pool.
+        await api.get('/api/v1/ping', { timeout: 15000 })
       } catch {
         // Silencioso: el banner ColdStart + retry de api.js ya avisan.
       }

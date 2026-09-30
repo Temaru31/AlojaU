@@ -763,9 +763,11 @@ export default function Perfil() {
                   <TelegramVincular
                     token={token}
                     vinculado={!!perfil?.telegram_vinculado}
+                    telefonoGuardado={!!(perfil?.telefono_whatsapp || '').trim()}
+                    telefonoVerificado={!!perfil?.telefono_verificado}
                     onVinculado={() => {
-                      setPerfil((p) => (p ? { ...p, telegram_vinculado: true } : p))
-                      notifyToast('✓ Telegram vinculado: recibirás los códigos en tu chat')
+                      setPerfil((p) => (p ? { ...p, telegram_vinculado: true, telefono_verificado: true } : p))
+                      notifyToast('¡Número verificado con éxito en AlojaU! 🎉 (+20 pts de confianza)')
                     }}
                   />
                 </div>

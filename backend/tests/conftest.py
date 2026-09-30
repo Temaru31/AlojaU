@@ -200,6 +200,7 @@ def _limpiar_memoria() -> None:
         ("app.routers.auth", ("_TG_MEM", "_AVATAR_MEM", "_OTP_SOLICITAR",
                               "_OTP_VERIFICAR", "_MOCK_OTPS", "_MOCK_RESETS",
                               "_TELEGRAM_VINCULOS", "_TELEGRAM_USADOS",
+                              "_TELEGRAM_PENDIENTES",
                               "_LOGIN_ATTEMPTS", "_PW_ATTEMPTS",
                               "_OAUTH_ATTEMPTS")),
         ("app.routers.publicaciones", ("_VISTAS_MEM", "_VISTAS_MOCK_SET",

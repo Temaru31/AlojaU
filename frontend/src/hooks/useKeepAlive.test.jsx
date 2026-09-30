@@ -28,7 +28,7 @@ describe('useKeepAlive (Bloque 3)', () => {
     Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
     document.dispatchEvent(new Event('visibilitychange'))
     await new Promise((r) => setTimeout(r, 120))
-    expect(api.get).toHaveBeenCalledWith('/health', expect.anything())
+    expect(api.get).toHaveBeenCalledWith('/api/v1/ping', expect.anything())
   })
 
   it('respeta el gap mínimo: dos visibles seguidos no duplican ping', async () => {
