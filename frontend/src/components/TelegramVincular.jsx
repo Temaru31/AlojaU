@@ -1,6 +1,7 @@
 // TelegramVincular — M5 vinculación $0.
-// El botón "Abrir Bot de Telegram" consume DIRECTAMENTE `bot_url` del
-// endpoint POST /api/auth/telegram/vincular-inicio (token HMAC 1 uso, 10min).
+// El enlace "Abrir Bot en Telegram" es un <a> nativo con el `bot_url`
+// pre-generado del endpoint GET /api/auth/telegram/enlace (token HMAC
+// 1 uso, 10min): ningún bloqueador lo intercepta (cero window.open).
 // F5 modo local: si el backend responde 503 (bot sin configurar en dev), se
 // ofrece una simulación de interfaz claramente etiquetada que NUNCA marca la
 // cuenta como vinculada (solo demuestra el flujo visual del PIN de 6).
@@ -20,8 +21,12 @@ export function esErrorSinBot(err) {
 // No existe endpoint de "verificar PIN": inventarlo sería placebo.
 // Verificación gratuita: compartir el contacto NATIVO en el bot marca
 // telefono_verificado=true en BD (sin SMS de pago).
-// Polling suave: tras abrir el bot se sondea el perfil cada 3s (máx 3min);
-// al detectar telegram_vinculado se avisa con toast y se actualiza solo.
+// Enlace pre-generado: el deep link t.me se pide al montar (GET
+// /api/auth/telegram/enlace) y el botón es un <a> nativo con target=_blank:
+// ningún bloqueador lo intercepta ni hay pestañas about:blank ni
+// window.open/location.href en todo el flujo.
+// Polling suave: tras pulsar el enlace se sondea el perfil cada 3s (máx
+// 3min); al detectar telegram_vinculado se avisa con toast y se actualiza.
 // Uso: <TelegramVincular token vinculado onVinculado telefonoGuardado telefonoVerificado />
 export const TELEGRAM_POLL_MS = 3000
 export const TELEGRAM_POLL_MAX = 60 // 3 min
@@ -30,11 +35,12 @@ export default function TelegramVincular({
   token, vinculado, onVinculado, onDesvinculado,
   telefonoGuardado = true, telefonoVerificado = false,
 }) {
-  const [cargando, setCargando] = useState(false)
+  const [cargandoEnlace, setCargandoEnlace] = useState(false)
   const [comprobando, setComprobando] = useState(false)
   const [error, setError] = useState('')
   const [botAbierto, setBotAbierto] = useState(false)
-  const [botUrl, setBotUrl] = useState('')
+  const [enlace, setEnlace] = useState('')
+  const [expiraSeg, setExpiraSeg] = useState(0)
   const [intentos, setIntentos] = useState(0)
   const [modoLocal, setModoLocal] = useState(false)
   const [pinSim, setPinSim] = useState('')
@@ -82,52 +88,60 @@ export default function TelegramVincular({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [botAbierto, vinculado, token])
 
-  const abrirBot = async () => {
-    setError('')
-    setModoLocal(false)
-    setPinSim('')
-    setPinOk(false)
-    // Pre-abrir la pestaña EN el gesto del clic: los bloqueadores (y Safari
-    // móvil) solo permiten window.open sincrónico. Esperar al POST hacía que
-    // devolvieran null y el fallback a location.href sacaba al usuario de su
-    // página ADEMÁS de abrir la otra pestaña. La pestaña actual jamás navega.
-    let ventana = null
-    try {
-      ventana = window.open('', '_blank', 'noopener,noreferrer')
-    } catch {
-      ventana = null
+  // Enlace pre-generado (deep link firmado por el backend). Se pide al
+  // montar y se refresca solo antes de expirar: cuando el usuario pulsa,
+  // el <a> ya tiene href válido y el navegador abre Telegram sin
+  // intermediarios (cero window.open, cero about:blank, cero bloqueos).
+  const pedirEnlace = async (silencioso = false) => {
+    if (!token || !telefonoGuardado || vinculado) return
+    if (!silencioso) {
+      setError('')
+      setModoLocal(false)
+      setPinSim('')
+      setPinOk(false)
+      setCargandoEnlace(true)
     }
-    setCargando(true)
     try {
-      const r = await api.post('/api/auth/telegram/vincular-inicio', {}, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      const r = await api.get('/api/auth/telegram/enlace', {
+        headers: { Authorization: `Bearer ${token}` },
       })
       const url = r.data?.bot_url
       if (!url || !url.startsWith('https://t.me/')) {
         throw new Error('Respuesta inválida del bot')
       }
-      setBotUrl(url)
-      // Consume directamente el bot_url del backend (sin construirlo aquí).
-      if (ventana && !ventana.closed) {
-        ventana.location.href = url
-      } else {
-        // Bloqueador estricto: NO tocar la pestaña actual; el enlace
-        // copiable de abajo queda visible con la guía.
-        setError('Tu navegador bloqueó la ventana emergente. Usa el enlace de abajo para abrir Telegram (esta página queda intacta).')
-      }
-      setBotAbierto(true)
-      setIntentos(0)
+      if (!vivoRef.current) return
+      setEnlace(url)
+      setExpiraSeg(r.data?.expira_segundos || 600)
     } catch (e) {
-      try { ventana?.close() } catch { /* la pestaña en blanco se cierra */ }
+      if (!vivoRef.current) return
       if (esErrorSinBot(e)) {
         setModoLocal(true)
-      } else {
-        setError(e?.response?.data?.detail || e?.message || 'No se pudo abrir el bot. Intenta por correo.')
+      } else if (!silencioso) {
+        setError(e?.response?.data?.detail || e?.message || 'No se pudo preparar el enlace. Reintenta.')
       }
+      // Silencioso: conserva el enlace anterior hasta que expire.
     } finally {
-      setCargando(false)
+      if (vivoRef.current && !silencioso) setCargandoEnlace(false)
     }
   }
+
+  // Pedido inicial al montar / cambiar de cuenta o de teléfono.
+  useEffect(() => {
+    setEnlace('')
+    setExpiraSeg(0)
+    pedirEnlace(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, telefonoGuardado, vinculado])
+
+  // Refresco transparente 30s antes de expirar (el backend reutiliza el
+  // vínculo vigente, así que normalmente no acuña nada nuevo ni invalida).
+  useEffect(() => {
+    if (!enlace || !expiraSeg || vinculado || !telefonoGuardado) return undefined
+    const ms = Math.max(30000, expiraSeg * 1000 - 30000)
+    const t = window.setTimeout(() => { pedirEnlace(true) }, ms)
+    return () => window.clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enlace, expiraSeg, vinculado, telefonoGuardado])
 
   // Libera el chat y el número para que otra cuenta pueda usarlos.
   // La página actual no navega en ningún caso (POST + estado local).
@@ -139,7 +153,8 @@ export default function TelegramVincular({
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
       setBotAbierto(false)
-      setBotUrl('')
+      setEnlace('')
+      setExpiraSeg(0)
       setConfirmaDesvincular(false)
       onDesvinculado?.()
       notifyToast('Telegram desvinculado y número liberado.')
@@ -258,14 +273,27 @@ export default function TelegramVincular({
           <li className="flex items-start gap-2.5">
             <span aria-hidden="true" className="shrink-0 w-5 h-5 rounded-full bg-navy-800 text-white text-[11px] font-bold flex items-center justify-center mt-2">1</span>
             <div className="flex-1">
-              <button
-                type="button"
-                onClick={abrirBot}
-                disabled={cargando || bloqueado}
-                className="w-full sm:w-auto px-4 py-2 min-h-[44px] text-sm font-semibold text-white bg-navy-800 rounded-lg hover:bg-navy-900 active:bg-navy-900 transition disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy-800/40"
-              >
-                {cargando ? 'Abriendo…' : 'Abrir Bot en Telegram'}
-              </button>
+              {enlace ? (
+                <a
+                  href={enlace}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => { setError(''); setBotAbierto(true); setIntentos(0) }}
+                  className={`inline-flex items-center justify-center w-full sm:w-auto px-4 py-2 min-h-[44px] text-sm font-semibold text-white bg-navy-800 rounded-lg hover:bg-navy-900 active:bg-navy-900 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy-800/40 ${bloqueado ? 'pointer-events-none opacity-50' : ''}`}
+                  aria-disabled={bloqueado || undefined}
+                >
+                  Abrir Bot en Telegram
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => pedirEnlace(false)}
+                  disabled={cargandoEnlace || bloqueado}
+                  className="w-full sm:w-auto px-4 py-2 min-h-[44px] text-sm font-semibold text-white bg-navy-800 rounded-lg hover:bg-navy-900 active:bg-navy-900 transition disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy-800/40"
+                >
+                  {cargandoEnlace ? 'Preparando enlace…' : 'Reintentar enlace'}
+                </button>
+              )}
             </div>
           </li>
           <li className="flex items-start gap-2.5">
@@ -275,10 +303,10 @@ export default function TelegramVincular({
                 Dentro de Telegram presiona el botón <code className="px-1.5 py-0.5 rounded bg-neutral-100 border border-neutral-200 font-mono text-[11px]">/start</code> y
                 luego comparte tu número con <b>📱 Compartir mi número de teléfono para verificar</b> para confirmar que la cuenta es tuya (debe ser el guardado en tu perfil).
               </p>
-              {botAbierto && botUrl && (
+              {enlace && (
                 <p className="text-[11px] text-neutral-500 mt-1 break-all">
                   Si el botón no abrió Telegram, copia este enlace:{' '}
-                  <a href={botUrl} target="_blank" rel="noreferrer" className="text-navy-700 underline">{botUrl}</a>
+                  <a href={enlace} target="_blank" rel="noreferrer" className="text-navy-700 underline">{enlace}</a>
                 </p>
               )}
             </div>

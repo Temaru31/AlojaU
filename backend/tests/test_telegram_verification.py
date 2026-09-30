@@ -280,6 +280,93 @@ def test_desvincular_sin_auth_401():
     assert r.status_code == 401
 
 
+def _enlace(h):
+    return client.get("/api/auth/telegram/enlace", headers=h)
+
+
+def _contar_vinculos(email):
+    async def _go():
+        import asyncpg
+        conn = await asyncpg.connect(
+            "postgresql://alojau:alojau123@localhost:5432/alojau")
+        try:
+            return await conn.fetchval(
+                """SELECT count(*) FROM telegram_vinculos v
+                   JOIN usuarios u ON u.id = v.usuario_id
+                   WHERE u.email = $1 AND v.usado IS FALSE""", email)
+        finally:
+            await conn.close()
+    return asyncio.run(_go())
+
+
+def test_enlace_sin_telefono_422(limpieza):
+    if not _pg():
+        pytest.skip("sin PG real")
+    _, h = _registrar("en0")
+    r = _enlace(h)
+    assert r.status_code == 422
+    assert "WhatsApp" in r.json()["detail"]
+
+
+def test_enlace_reutiliza_sin_acuñar(limpieza):
+    if not _pg():
+        pytest.skip("sin PG real")
+    email, h = _registrar("en1", telefono="573209994111")
+    r1 = _enlace(h)
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["bot_url"].startswith("https://t.me/")
+    assert r1.json()["expira_segundos"] <= 600
+    n1 = _contar_vinculos(email)
+    r2 = _enlace(h)
+    assert r2.status_code == 200
+    assert r2.json()["bot_url"] == r1.json()["bot_url"]  # mismo enlace
+    assert _contar_vinculos(email) == n1  # sin filas nuevas
+
+
+def test_enlace_nuevo_tras_expirar(limpieza):
+    if not _pg():
+        pytest.skip("sin PG real")
+    _, h = _registrar("en2", telefono="573209994222")
+    viejo = _enlace(h).json()["bot_url"]
+
+    async def _vencer():
+        from app.db.session import AsyncSession
+        from app.models import TelegramVinculo
+        import datetime as _dt
+        async with AsyncSession() as db:
+            res = await db.execute(select_vinculos())
+            for row in res.scalars().all():
+                row.expira_en = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(seconds=1)
+            await db.commit()
+
+    def select_vinculos():
+        from sqlalchemy import select as _sel
+        from app.models import TelegramVinculo
+        return _sel(TelegramVinculo)
+    asyncio.run(_vencer())
+    nuevo = _enlace(h).json()["bot_url"]
+    assert nuevo.startswith("https://t.me/")
+    assert nuevo != viejo
+
+
+def test_enlace_sin_bot_503(limpieza):
+    if not _pg():
+        pytest.skip("sin PG real")
+    from app.core.config import settings as _s
+    _, h = _registrar("en3", telefono="573209994333")
+    viejo = _s.TELEGRAM_BOT_USERNAME
+    _s.TELEGRAM_BOT_USERNAME = ""
+    try:
+        r = _enlace(h)
+        assert r.status_code == 503
+    finally:
+        _s.TELEGRAM_BOT_USERNAME = viejo
+
+
+def test_enlace_sin_auth_401():
+    assert client.get("/api/auth/telegram/enlace").status_code == 401
+
+
 def test_numero_escrito_a_mano_se_rechaza_con_guia(limpieza):
     envi = Enviados()
     with patch("app.services.telegram.send_message", envi):
