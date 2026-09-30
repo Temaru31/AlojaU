@@ -9,15 +9,30 @@ beforeEach(() => {
 })
 
 describe('TelegramVincular (M5 bot_url directo)', () => {
-  it('botón consume bot_url del endpoint (sin construirlo en frontend)', async () => {
+  it('botón pre-abre la pestaña en el gesto y navega ESA pestaña (la actual intacta)', async () => {
     const postSpy = vi.spyOn(api, 'post').mockResolvedValue({ data: { bot_url: 'https://t.me/TestBot?start=abc.123' } })
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const ventana = { closed: false, location: {}, close: vi.fn() }
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => ventana)
     render(<TelegramVincular token="t" vinculado={false} />)
     fireEvent.click(screen.getByRole('button', { name: /Abrir Bot en Telegram/ }))
     await waitFor(() => expect(postSpy).toHaveBeenCalledWith(
       '/api/auth/telegram/vincular-inicio', {}, expect.anything()))
-    expect(openSpy).toHaveBeenCalledWith('https://t.me/TestBot?start=abc.123', '_blank', expect.anything())
+    // Pre-apertura en blanco dentro del gesto (anti-bloqueadores).
+    expect(openSpy).toHaveBeenCalledWith('', '_blank', expect.anything())
+    // La navegación cae sobre la pestaña nueva, jamás location.href.
+    await waitFor(() => expect(ventana.location.href).toBe('https://t.me/TestBot?start=abc.123'))
     openSpy.mockRestore()
+  })
+
+  it('popup bloqueado: guía al enlace copiable sin navegar la página actual', async () => {
+    vi.spyOn(api, 'post').mockResolvedValue({ data: { bot_url: 'https://t.me/B?start=x' } })
+    vi.spyOn(window, 'open').mockImplementation(() => null)
+    const hrefAntes = window.location.href
+    render(<TelegramVincular token="t" vinculado={false} />)
+    fireEvent.click(screen.getByRole('button', { name: /Abrir Bot en Telegram/ }))
+    expect(await screen.findByText(/bloqueó la ventana emergente/)).toBeInTheDocument()
+    expect(window.location.href).toBe(hrefAntes)
+    expect(screen.getByRole('link', { name: /https:\/\/t\.me\/B/ })).toHaveAttribute('href', 'https://t.me/B?start=x')
   })
 
   it('vinculado muestra badge y no ofrece abrir', () => {
@@ -56,13 +71,37 @@ describe('TelegramVincular (M5 bot_url directo)', () => {
     expect(screen.queryByText(/Vinculado/)).not.toBeInTheDocument()
   })
 
-  it('bot_url inválida del backend muestra error (no navega)', async () => {
+  it('bot_url inválida del backend muestra error y cierra la pre-apertura', async () => {
     vi.spyOn(api, 'post').mockResolvedValue({ data: { bot_url: 'https://evil.com/x' } })
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+    const ventana = { closed: false, location: {}, close: vi.fn() }
+    vi.spyOn(window, 'open').mockImplementation(() => ventana)
+    const hrefAntes = window.location.href
     render(<TelegramVincular token="t" vinculado={false} />)
     fireEvent.click(screen.getByRole('button', { name: /Abrir Bot en Telegram/ }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/Respuesta inválida del bot/)
-    expect(openSpy).not.toHaveBeenCalled()
+    expect(ventana.close).toHaveBeenCalled()
+    expect(window.location.href).toBe(hrefAntes)
+  })
+
+  it('desvincular pide confirmación y libera (callback + toast)', async () => {
+    const postSpy = vi.spyOn(api, 'post').mockResolvedValue({ data: { desvinculado: true } })
+    const onDesvinculado = vi.fn()
+    render(<TelegramVincular token="t" vinculado telefonoVerificado onDesvinculado={onDesvinculado} />)
+    fireEvent.click(screen.getByRole('button', { name: /Desvincular Telegram/ }))
+    expect(screen.getByRole('dialog', { name: 'Desvincular Telegram' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Sí, desvincular y liberar' }))
+    await waitFor(() => expect(postSpy).toHaveBeenCalledWith(
+      '/api/auth/telegram/desvincular', {}, expect.anything()))
+    expect(onDesvinculado).toHaveBeenCalled()
+  })
+
+  it('desvincular cancelado no llama al backend', () => {
+    const postSpy = vi.spyOn(api, 'post')
+    render(<TelegramVincular token="t" vinculado telefonoVerificado />)
+    fireEvent.click(screen.getByRole('button', { name: /Desvincular Telegram/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    expect(postSpy).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 
   it('sin teléfono guardado la tarjeta se bloquea con guía (prerrequisito)', () => {
@@ -81,7 +120,7 @@ describe('TelegramVincular (M5 bot_url directo)', () => {
     vi.useFakeTimers()
     try {
       const postSpy = vi.spyOn(api, 'post').mockResolvedValue({ data: { bot_url: 'https://t.me/B?start=x' } })
-      vi.spyOn(window, 'open').mockImplementation(() => ({}))
+      vi.spyOn(window, 'open').mockImplementation(() => ({ closed: false, location: {}, close: vi.fn() }))
       const getSpy = vi.spyOn(api, 'get')
         .mockResolvedValueOnce({ data: { telegram_vinculado: false } })
         .mockResolvedValue({ data: { telegram_vinculado: true } })
