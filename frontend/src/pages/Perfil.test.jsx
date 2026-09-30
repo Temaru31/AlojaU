@@ -24,6 +24,9 @@ const PERFIL_BASE = {
 function mockPerfil(data = PERFIL_BASE) {
   vi.spyOn(api, 'get').mockImplementation((url) => {
     if (url === '/api/publicaciones/mias') return Promise.resolve({ data: { total: 0 } })
+    if (url === '/api/auth/telegram/enlace') {
+      return Promise.resolve({ data: { bot_url: 'https://t.me/B?start=x', expira_segundos: 600 } })
+    }
     return Promise.resolve({ data })
   })
 }
@@ -61,7 +64,10 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
     // R1: sin botón de auto-verificación ni bloque huérfano de admin; la vía es Telegram
     expect(screen.queryByRole('button', { name: /Verificar teléfono/i })).not.toBeInTheDocument()
     expect(screen.queryByText(/Un administrador debe verificar tu línea/i)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Abrir Bot en Telegram/ })).toBeInTheDocument()
+    // El deep link pre-generado es un anchor nativo (anti-bloqueadores).
+    const enlace = await screen.findByRole('link', { name: /Abrir Bot en Telegram/ })
+    expect(enlace).toHaveAttribute('href', 'https://t.me/B?start=x')
+    expect(enlace).toHaveAttribute('target', '_blank')
   })
 
   it('al guardar NO envía telefono_verificado al backend (solo-lectura OLA2-M4)', async () => {

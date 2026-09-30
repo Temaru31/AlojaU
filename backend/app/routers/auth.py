@@ -1600,30 +1600,15 @@ async def validar_token_vinculo_db(db: AsyncSession, token: str,
         return uid
 
 
-@router.post("/telegram/vincular-inicio", summary="M5: iniciar vinculación Telegram (bot_url HMAC 10min)")
-async def telegram_vincular_inicio(
-    user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(get_session),
-):
-    """Requiere sesión autenticada. Retorna bot_url t.me con token HMAC
-    de un solo uso (10min). El frontend abre ese bot_url directamente.
+async def _acuñar_vinculo(db: AsyncSession, uid: int) -> tuple[str, int]:
+    """Crea un token de vinculación (memoria + PG) y anula los previos.
 
-    Al generar uno nuevo se anulan los previos del mismo usuario (un solo
-    enlace vivo a la vez: si el anterior se filtró, deja de valer).
+    Retorna (token, exp). Fuente única para POST vincular-inicio y GET
+    enlace: un solo enlace vivo por usuario.
     """
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
-    # Bloque 1: throttle 5/15min por usuario (memoria en dev + PG en prod).
-    _check_otp_mem(_TG_MEM, f"tg:{uid}", TG_LIMIT, TG_WINDOW_S,
-                   "Demasiadas vinculaciones de Telegram, espera 15 minutos")
-    await _db_rate_check(db, f"tg:{uid}", limite=TG_LIMIT, ventana_s=int(TG_WINDOW_S))
-    username = (settings.TELEGRAM_BOT_USERNAME or "").strip().lstrip("@")
-    if not username:
-        raise HTTPException(status_code=503, detail="Telegram no configurado (TELEGRAM_BOT_USERNAME). Vincula por correo.")
     exp = int(time.time()) + 600
-    # Bloque 1 fix: nonce corto (8 hex) para que el token total quede <= 64
-    # chars (límite de Telegram para `?start=`). Formato URL-safe con "_".
+    # Nonce corto (8 hex) para que el token total quede <= 64 chars
+    # (límite de Telegram para `?start=`). Formato URL-safe con "_".
     nonce = secrets.token_hex(4)
     token = _firmar_vinculo(uid, exp, nonce)
     _TELEGRAM_VINCULOS[nonce] = {"user_id": uid, "exp": exp, "usado": False}
@@ -1635,7 +1620,7 @@ async def telegram_vincular_inicio(
                 _TELEGRAM_USADOS.add(_k)
     except Exception:
         pass
-    # Bloque 2: espejo persistente (fuente de verdad ante redeploys).
+    # Espejo persistente (fuente de verdad ante redeploys).
     # Best-effort en dev sin PG: la memoria sigue cubriendo.
     try:
         from ..models import TelegramVinculo
@@ -1658,6 +1643,79 @@ async def telegram_vincular_inicio(
         except Exception:
             pass
         logger.warning(f"[telegram inicio] PG no disponible, solo memoria: {exc_resumen(e)}")
+    return token, exp
+
+
+async def _enlace_vigente(db: AsyncSession, uid: int, username: str) -> tuple[str, int] | None:
+    """Reutiliza el vínculo vigente del usuario sin acuñar uno nuevo.
+
+    Retorna (bot_url, segundos_restantes) o None si no hay ninguno válido.
+    El token se reconstruye del registro (nonce + exp firmados): no se
+    invalida nada ni se ensucia la tabla en cada lectura del perfil.
+    """
+    ahora = datetime.now(timezone.utc)
+    bd_ok = True
+    try:
+        from ..models import TelegramVinculo
+        res = await db.execute(
+            select(TelegramVinculo).where(
+                TelegramVinculo.usuario_id == uid,
+                TelegramVinculo.usado.is_(False),
+                TelegramVinculo.expira_en > ahora,
+            ).order_by(TelegramVinculo.expira_en.desc())
+        )
+        row = res.scalars().first()
+        if row is not None:
+            exp_dt = row.expira_en
+            if getattr(exp_dt, "tzinfo", None) is None:
+                exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+            exp = int(exp_dt.timestamp())
+            segundos = max(1, int((exp_dt - ahora).total_seconds()))
+            return (f"https://t.me/{username}?start={_firmar_vinculo(uid, exp, row.nonce)}",
+                    segundos)
+    except Exception:
+        bd_ok = False
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+    # Espejo en memoria solo sin PG (dev): con BD la tabla manda (si no, se
+    # podría entregar un enlace ya quemado en PG pero vivo en memoria).
+    if not bd_ok and _mock_enabled():
+        try:
+            for _k, _v in _TELEGRAM_VINCULOS.items():
+                if (_v.get("user_id") == uid and not _v.get("usado")
+                        and _v.get("exp", 0) > time.time()):
+                    segundos = max(1, int(_v["exp"] - time.time()))
+                    return (f"https://t.me/{username}?start={_firmar_vinculo(uid, int(_v['exp']), _k)}",
+                            segundos)
+        except Exception:
+            pass
+    return None
+
+
+@router.post("/telegram/vincular-inicio", summary="M5: iniciar vinculación Telegram (bot_url HMAC 10min)")
+async def telegram_vincular_inicio(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Requiere sesión autenticada. Retorna bot_url t.me con token HMAC
+    de un solo uso (10min). El frontend abre ese bot_url directamente.
+
+    Al generar uno nuevo se anulan los previos del mismo usuario (un solo
+    enlace vivo a la vez: si el anterior se filtró, deja de valer).
+    """
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    # Bloque 1: throttle 5/15min por usuario (memoria en dev + PG en prod).
+    _check_otp_mem(_TG_MEM, f"tg:{uid}", TG_LIMIT, TG_WINDOW_S,
+                   "Demasiadas vinculaciones de Telegram, espera 15 minutos")
+    await _db_rate_check(db, f"tg:{uid}", limite=TG_LIMIT, ventana_s=int(TG_WINDOW_S))
+    username = (settings.TELEGRAM_BOT_USERNAME or "").strip().lstrip("@")
+    if not username:
+        raise HTTPException(status_code=503, detail="Telegram no configurado (TELEGRAM_BOT_USERNAME). Vincula por correo.")
+    token, exp = await _acuñar_vinculo(db, uid)
     await _db_rate_record(db, f"tg:{uid}", False)
     # Limpieza best-effort de expirados (memoria acotada + PG).
     try:
@@ -1678,6 +1736,64 @@ async def telegram_vincular_inicio(
             await db.rollback()
         except Exception:
             pass
+    return {"bot_url": f"https://t.me/{username}?start={token}", "expira_segundos": 600}
+
+
+@router.get("/telegram/enlace", summary="M5: enlace pre-generado del bot (deep link para <a>)")
+async def telegram_enlace(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Entrega el deep link `t.me/...?start=TOKEN` ya firmado.
+
+    Diseñado para el anchor nativo del frontend (`<a target=_blank>`): como
+    el enlace existe ANTES del clic, ningún bloqueador lo intercepta ni hay
+    pestañas `about:blank`. Reutiliza el vínculo vigente (no acuña ni
+    invalida en cada lectura); solo acuña uno nuevo si no hay ninguno
+    válido (con el mismo throttle de vincular-inicio). Exige teléfono
+    guardado (422 si no hay nada que verificar) y bot configurado (503).
+    """
+    uid = user.get("id")
+    if not isinstance(uid, int):
+        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    username = (settings.TELEGRAM_BOT_USERNAME or "").strip().lstrip("@")
+    if not username:
+        raise HTTPException(status_code=503, detail="Telegram no configurado (TELEGRAM_BOT_USERNAME). Vincula por correo.")
+    # Prerrequisito: número guardado (el frontend también bloquea la tarjeta).
+    tiene_fono = False
+    try:
+        from ..models import Usuario
+        u = await db.get(Usuario, uid)
+        if u is not None:
+            tiene_fono = bool((u.telefono_whatsapp or "").strip())
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+    if not tiene_fono and _mock_enabled():
+        try:
+            for _m in MOCK_USERS.values():
+                if _m.get("id") == uid and (_m.get("telefono_whatsapp") or "").strip():
+                    tiene_fono = True
+                    break
+        except Exception:
+            pass
+    if not tiene_fono:
+        raise HTTPException(
+            status_code=422,
+            detail="Guarda tu número de WhatsApp en tu perfil antes de generar el enlace.",
+        )
+    vigente = await _enlace_vigente(db, uid, username)
+    if vigente is not None:
+        bot_url, segundos = vigente
+        return {"bot_url": bot_url, "expira_segundos": segundos}
+    # Sin vínculo vigente: acuñar (con throttle, igual que vincular-inicio).
+    _check_otp_mem(_TG_MEM, f"tg:{uid}", TG_LIMIT, TG_WINDOW_S,
+                   "Demasiadas vinculaciones de Telegram, espera 15 minutos")
+    await _db_rate_check(db, f"tg:{uid}", limite=TG_LIMIT, ventana_s=int(TG_WINDOW_S))
+    token, _exp = await _acuñar_vinculo(db, uid)
+    await _db_rate_record(db, f"tg:{uid}", False)
     return {"bot_url": f"https://t.me/{username}?start={token}", "expira_segundos": 600}
 
 

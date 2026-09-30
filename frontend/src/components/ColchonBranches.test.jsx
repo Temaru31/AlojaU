@@ -41,25 +41,21 @@ describe('colchón branches honesto (helpers + bordes UI)', () => {
     expect(screen.getByText('Panel Admin')).toBeInTheDocument()
   })
 
-  it('TelegramVincular error de red muestra alerta honesta', async () => {
-    vi.spyOn(api, 'post').mockRejectedValue({ response: { data: { detail: 'Sin bot' } } })
+  it('TelegramVincular error de red muestra alerta honesta y Reintentar', async () => {
+    const getSpy = vi.spyOn(api, 'get').mockRejectedValue({ response: { data: { detail: 'Sin bot' } } })
     render(<TelegramVincular token="t" vinculado={false} />)
-    fireEvent.click(screen.getByRole('button', { name: /Abrir Bot en Telegram/ }))
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Sin bot'))
+    expect(screen.queryByRole('link', { name: /Abrir Bot en Telegram/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Reintentar enlace/ }))
+    await waitFor(() => expect(getSpy).toHaveBeenCalledTimes(2))
   })
 
-  it('TelegramVincular sin bot_url válida muestra error y cierra la pre-apertura', async () => {
-    vi.spyOn(api, 'post').mockResolvedValue({ data: { bot_url: 'http://mal' } })
-    const ventana = { closed: false, location: {}, close: vi.fn() }
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => ventana)
+  it('TelegramVincular sin bot_url válida muestra error sin enlace', async () => {
+    vi.spyOn(api, 'get').mockResolvedValue({ data: { bot_url: 'http://mal' } })
     const hrefAntes = window.location.href
     render(<TelegramVincular token="t" vinculado={false} />)
-    fireEvent.click(screen.getByRole('button', { name: /Abrir Bot en Telegram/ }))
-    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
-    // Solo la pre-apertura en blanco (anti-bloqueadores), cerrada al fallar.
-    expect(openSpy).toHaveBeenCalledWith('', '_blank', expect.anything())
-    expect(ventana.close).toHaveBeenCalled()
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/Respuesta inválida del bot/))
+    expect(screen.queryByRole('link', { name: /Abrir Bot en Telegram/ })).not.toBeInTheDocument()
     expect(window.location.href).toBe(hrefAntes)
-    openSpy.mockRestore()
   })
 })
