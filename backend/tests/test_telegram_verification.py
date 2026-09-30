@@ -39,6 +39,17 @@ def limpieza():
     auth_router._TELEGRAM_PENDIENTES.clear()
 
 
+@pytest.fixture(autouse=True)
+def _bot_configurado(monkeypatch):
+    """Hermeticidad CI: el bot se configura por fixture, jamás del .env.
+
+    Sin esto, en local el TELEGRAM_BOT_USERNAME del .env enmascara el 503
+    y en GitHub Actions (sin .env) el endpoint cae a 503 y tumba 3 tests.
+    """
+    from app.core.config import settings as _s
+    monkeypatch.setattr(_s, "TELEGRAM_BOT_USERNAME", "AlojaU_test_bot")
+
+
 def _registrar(tag, telefono=None):
     from conftest import generar_password_prueba
     pw = generar_password_prueba()
