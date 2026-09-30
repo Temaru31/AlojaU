@@ -8,10 +8,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from fastapi.staticfiles import StaticFiles
+import asyncio
 import logging
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.routers import publicaciones, campus, auth, uploads, reportes, admin, ciudades, admin_automation, zonas, housing_types
 
@@ -43,11 +45,68 @@ CSP_DOCS = (
 )
 PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=()"
 
+def _registrar_webhook_telegram() -> bool:
+    """Registra setWebhook de Telegram (Bot API) de forma best-effort.
+
+    Solo tiene efecto si TELEGRAM_BOT_TOKEN + TELEGRAM_WEBHOOK_URL están
+    configurados. Retorna True si Telegram respondió ok. Nunca lanza
+    (el arranque del servidor jamás depende de Telegram).
+    """
+    import json as _json
+    import urllib.request as _url
+    try:
+        token = (getattr(settings, "TELEGRAM_BOT_TOKEN", "") or "").strip()
+        url = (getattr(settings, "TELEGRAM_WEBHOOK_URL", "") or "").strip()
+        if not token or not url:
+            return False
+        cuerpo: dict = {"url": url}
+        secreto = (getattr(settings, "TELEGRAM_WEBHOOK_SECRET", "") or "").strip()
+        if secreto:
+            cuerpo["secret_token"] = secreto
+        req = _url.Request(
+            f"https://api.telegram.org/bot{token}/setWebhook",
+            data=_json.dumps(cuerpo).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with _url.urlopen(req, timeout=10) as resp:  # noqa: S310
+            rta = _json.loads(resp.read().decode("utf-8") or "{}")
+            return bool(rta.get("ok", False))
+    except Exception as e:
+        logger.warning("[telegram webhook] auto-registro falló: %s", e)
+        return False
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup: registra el webhook de Telegram solo en prod con URL+token.
+
+    Fire-and-forget en background: un Telegram caído o mal configurado no
+    retrasa ni tumba el arranque (el endpoint sigue respondiendo y los logs
+    muestran el resultado). En dev/test no hace nada.
+    """
+    try:
+        if (getattr(settings, "ENV", "dev") or "dev") == "prod":
+            async def _fondo():
+                try:
+                    ok = await asyncio.to_thread(_registrar_webhook_telegram)
+                    if ok:
+                        logger.info("[telegram webhook] auto-registro ok")
+                    else:
+                        logger.warning("[telegram webhook] omitido (sin URL/token) o rechazado")
+                except Exception as e:
+                    logger.warning("[telegram webhook] auto-registro falló: %s", e)
+            asyncio.get_running_loop().create_task(_fondo())
+    except Exception:
+        pass
+    yield
+
+
 app = FastAPI(
     title="AlojaU API",
     version="0.1.0",
     description="MVP vivienda universitaria Popayán - Sprint1: búsqueda por campus, filtros, detalle, publicar PENDIENTE, índice confianza, WhatsApp",
     docs_url=None,  # F1: /docs custom con favicon AlojaU (ver abajo)
+    lifespan=lifespan,
 )
 
 # CORS restringido (DoD-5): nunca "*" con credentials
@@ -148,6 +207,17 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 def health():
     """Para SLA 98% Tabla18 - Render/Railway lo usa para cold start check (15s)"""
     return {"status": "ok", "service": "AlojaU API", "version": "0.1.0", "sprint": "Sprint1 HU-001,002,003,005,007,008"}
+
+
+@app.get("/api/v1/ping", tags=["infra"])
+def ping():
+    """Alias del healthcheck para el keep-alive del frontend.
+
+    Algunos bloqueadores (Brave Shields/AdBlock) filtran la ruta /health y
+    ensucian la consola con net::ERR_BLOCKED_BY_CLIENT. /health se conserva
+    para Render (healthCheckPath) y tests; el cliente usa este alias.
+    """
+    return {"status": "ok", "service": "AlojaU API"}
 
 # Static uploads (HU-005) - sirve /uploads/{uuid}.jpg
 # AUDITORÍA PRE-PUSH: makedirs tolerante (contenedor read-only no debe tumbar

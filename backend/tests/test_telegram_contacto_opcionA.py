@@ -1,5 +1,6 @@
-"""Opción A: /start registra pendiente; solo el contacto con el número
-verificado vincula. Sin teléfono verificado no hay flujo ciego.
+"""Verificación gratuita: /start registra pendiente; el contacto nativo
+VERIFICA el teléfono guardado (sin SMS de pago). Sin teléfono guardado
+no hay flujo ciego.
 """
 import asyncio
 import os
@@ -160,24 +161,34 @@ def test_start_pide_contacto_y_no_vincula(limpieza):
     assert perfil.get("telegram_vinculado") is False
 
 
-def test_start_sin_telefono_verificado_bloquea(limpieza):
+def test_start_sin_telefono_guardado_guia_sin_quemar(limpieza):
     if not _pg():
         pytest.skip("sin PG real")
     _, h = _usuario_limpio(limpieza, "b", telefono=None, verificado=False)
     token = _vincular_inicio(h)
     r = _start(222333444, token)
     assert r.json().get("vinculado") is False
-    assert r.json().get("motivo") == "no-phone-verificado"
+    assert r.json().get("motivo") == "sin-telefono"
     assert r.json().get("contacto_requerido") is not True
-    # El enlace quedó quemado (un solo uso): ni el contacto posterior sirve.
-    r2 = _contacto(222333444, "+573009991234")
-    assert r2.json().get("vinculado") is not True
+    # El enlace NO se quema: tras guardar el número en la web, el mismo
+    # token sigue vivo y el contacto posterior verifica.
+    assert client.patch("/api/auth/perfil", json={"telefono_whatsapp": "3009991234"},
+                        headers=h).status_code == 200
+    r2 = _start(222333444, token)
+    assert r2.json().get("contacto_requerido") is True
+    r3 = _contacto(222333444, "+573009991234")
+    assert r3.json().get("vinculado") is True
+    perfil = client.get("/api/auth/perfil", headers=h).json()
+    assert perfil.get("telegram_vinculado") is True
+    assert perfil.get("telefono_verificado") is True
 
 
-def test_contacto_valido_vincula_y_quita_teclado(limpieza):
+def test_contacto_valido_verifica_y_vincula_y_quita_teclado(limpieza):
     if not _pg():
         pytest.skip("sin PG real")
-    _, h = _usuario_limpio(limpieza, "c")
+    # Teléfono guardado pero SIN verificar: el contacto ES la verificación.
+    _, h = _usuario_limpio(limpieza, "c", verificado=False)
+    assert client.get("/api/auth/perfil", headers=h).json().get("telefono_verificado") is False
     token = _vincular_inicio(h)
     assert _start(333444555, token).json().get("contacto_requerido") is True
     envi = Enviados()
@@ -185,7 +196,10 @@ def test_contacto_valido_vincula_y_quita_teclado(limpieza):
         r = _contacto(333444555, "+573009991234")
     assert r.json().get("vinculado") is True
     assert any((m or {}).get("remove_keyboard") is True for m in envi.markups() if m)
-    assert client.get("/api/auth/perfil", headers=h).json().get("telegram_vinculado") is True
+    perfil = client.get("/api/auth/perfil", headers=h).json()
+    assert perfil.get("telegram_vinculado") is True
+    assert perfil.get("telefono_verificado") is True
+    assert any("verificado con éxito" in t for t in envi.textos())
     # Segundo contacto con el mismo pendiente: ya quemado.
     r2 = _contacto(333444555, "+573009991234")
     assert r2.json().get("vinculado") is not True
@@ -198,7 +212,7 @@ def test_contacto_numero_distinto_rechaza_y_quema(limpieza):
     token = _vincular_inicio(h)
     assert _start(444555666, token).json().get("contacto_requerido") is True
     # Atacante comparte SU propio contacto (user_id consistente) pero el
-    # número no es el verificado: se rechaza y se quema el pendiente.
+    # número no es el guardado: se rechaza y se quema el pendiente.
     r = _contacto(444555666, "+573009998877")
     assert r.json().get("vinculado") is False
     assert r.json().get("motivo") == "numero-distinto"
@@ -231,11 +245,15 @@ def test_contacto_sin_start_previo_se_ignora(limpieza):
 
 
 def test_normalizacion_coincide_formatos():
-    from app.routers.auth import _contacto_coincide
-    assert _contacto_coincide("+573009991234", "573009991234", True) is True
-    assert _contacto_coincide("+57 300 999 1234", "573009991234", True) is True
-    assert _contacto_coincide("3009991234", "573009991234", True) is True
-    assert _contacto_coincide("+573009991234", "573009991234", False) is False
-    assert _contacto_coincide("+573009998877", "573009991234", True) is False
-    assert _contacto_coincide("basura", "573009991234", True) is False
-    assert _contacto_coincide("+573009991234", None, True) is False
+    from app.routers.auth import _contacto_coincide, digitos_nacionales
+    # Últimos 10 dígitos: con/sin 57, espacios, paréntesis y guiones coinciden.
+    assert digitos_nacionales("+57 (312) 651-6881") == "3126516881"
+    assert digitos_nacionales("573126516881") == "3126516881"
+    assert digitos_nacionales("3126516881") == "3126516881"
+    assert digitos_nacionales("corto123") is None
+    assert _contacto_coincide("+573009991234", "573009991234") is True
+    assert _contacto_coincide("+57 300 999 1234", "573009991234") is True
+    assert _contacto_coincide("3009991234", "573009991234") is True
+    assert _contacto_coincide("+573009998877", "573009991234") is False
+    assert _contacto_coincide("basura", "573009991234") is False
+    assert _contacto_coincide("+573009991234", None) is False

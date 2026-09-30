@@ -30,8 +30,8 @@ def test_webhook_formato_urlsafe_y_longitud():
 
 
 def test_webhook_start_no_vincula_directo():
-    # Opción A: el /start SOLO registra pendiente (o rechaza sin teléfono
-    # verificado); jamás vincula directo. La vinculación exige el contacto.
+    # El /start SOLO registra pendiente (o guía si no hay teléfono guardado);
+    # jamás vincula directo. La vinculación exige el contacto nativo.
     token = _inicio_token()
     r = client.post(
         "/api/auth/telegram/webhook",

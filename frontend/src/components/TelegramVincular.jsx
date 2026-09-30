@@ -1,12 +1,13 @@
 // TelegramVincular — M5 vinculación $0.
 // El botón "Abrir Bot de Telegram" consume DIRECTAMENTE `bot_url` del
-// endpoint POST /api/auth/telegram/vincular-inicio (token HMAC 1 uso, 5min).
+// endpoint POST /api/auth/telegram/vincular-inicio (token HMAC 1 uso, 10min).
 // F5 modo local: si el backend responde 503 (bot sin configurar en dev), se
 // ofrece una simulación de interfaz claramente etiquetada que NUNCA marca la
 // cuenta como vinculada (solo demuestra el flujo visual del PIN de 6).
 // Uso: <TelegramVincular token={token} vinculado={perfil?.telegram_vinculado} />
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
+import { notifyToast } from './Toast'
 
 export function esErrorSinBot(err) {
   return err?.response?.status === 503
@@ -16,7 +17,18 @@ export function esErrorSinBot(err) {
 // 3) comprobar aquí. La confirmación es REAL: re-lee el perfil y solo marca
 // vinculado si el backend ya registró el chat (el bot lo hace al /start).
 // No existe endpoint de "verificar PIN": inventarlo sería placebo.
-export default function TelegramVincular({ token, vinculado, onVinculado }) {
+// Verificación gratuita: compartir el contacto NATIVO en el bot marca
+// telefono_verificado=true en BD (sin SMS de pago).
+// Polling suave: tras abrir el bot se sondea el perfil cada 3s (máx 3min);
+// al detectar telegram_vinculado se avisa con toast y se actualiza solo.
+// Uso: <TelegramVincular token vinculado onVinculado telefonoGuardado telefonoVerificado />
+export const TELEGRAM_POLL_MS = 3000
+export const TELEGRAM_POLL_MAX = 60 // 3 min
+
+export default function TelegramVincular({
+  token, vinculado, onVinculado,
+  telefonoGuardado = true, telefonoVerificado = false,
+}) {
   const [cargando, setCargando] = useState(false)
   const [comprobando, setComprobando] = useState(false)
   const [error, setError] = useState('')
@@ -31,8 +43,41 @@ export default function TelegramVincular({ token, vinculado, onVinculado }) {
   // setState sobre componente desmontado al navegar en mitad del check.
   const vivoRef = useRef(true)
   useEffect(() => () => { vivoRef.current = false }, [])
+  // Ref al callback (inline en el padre): el polling no debe reiniciarse
+  // en cada render por identidad nueva de la función.
+  const onVinculadoRef = useRef(onVinculado)
+  onVinculadoRef.current = onVinculado
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+  // Polling suave tras abrir el bot: detecta la verificación sin que el
+  // usuario pulse nada. Se detiene al vincular, al desmontar o a los 3min.
+  useEffect(() => {
+    if (!botAbierto || vinculado) return undefined
+    let cancelado = false
+    const sondear = async () => {
+      for (let i = 0; i < TELEGRAM_POLL_MAX; i += 1) {
+        await sleep(TELEGRAM_POLL_MS)
+        if (cancelado || !vivoRef.current) return
+        try {
+          const r = await api.get('/api/auth/perfil', {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          })
+          if (cancelado || !vivoRef.current) return
+          if (r.data?.telegram_vinculado) {
+            onVinculadoRef.current?.(true)
+            notifyToast('¡Número verificado con éxito en AlojaU! 🎉')
+            return
+          }
+        } catch {
+          // Sigue sondeando hasta el tope (cold start de Render).
+        }
+      }
+    }
+    sondear()
+    return () => { cancelado = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [botAbierto, vinculado, token])
 
   const abrirBot = async () => {
     setError('')
@@ -101,7 +146,7 @@ export default function TelegramVincular({ token, vinculado, onVinculado }) {
         if (vivoRef.current) setIntentos(i + 1)
       }
       if (!vivoRef.current) return
-      setError('Aún no detectamos tu /start. Abre el bot, pulsa /start y vuelve a intentarlo. Si el enlace expiró (5 min), genera uno nuevo con «Abrir Bot».')
+      setError('Aún no detectamos tu /start. Abre el bot, pulsa /start y vuelve a intentarlo. Si el enlace expiró (10 min), genera uno nuevo con «Abrir Bot».')
     } catch {
       if (!vivoRef.current) return
       setError('No se pudo comprobar (el servidor puede estar despertando). Espera unos segundos e intenta de nuevo.')
@@ -112,20 +157,34 @@ export default function TelegramVincular({ token, vinculado, onVinculado }) {
 
   // El simulador solo existe en desarrollo local (nunca en producción).
   const esDev = typeof import.meta !== 'undefined' && !!import.meta.env?.DEV
+  // Prerrequisito: sin número guardado en el perfil no hay nada que
+  // verificar (el backend también lo exige). Tarjeta opaca y bloqueada.
+  const bloqueado = !telefonoGuardado && !vinculado
   return (
-    <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4 space-y-2">
+    <div className={`rounded-lg border border-neutral-200 bg-neutral-50 p-4 space-y-2 ${bloqueado ? 'opacity-60' : ''}`}>
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-xs sm:text-sm font-semibold text-navy-900">Telegram gratis (opcional)</h3>
         {vinculado ? (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
-            ✓ Vinculado
-          </span>
+          telefonoVerificado ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
+              ✓ Teléfono y Telegram Verificados (+20 pts)
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
+              ✓ Vinculado
+            </span>
+          )
         ) : (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-neutral-100 text-neutral-600 border border-neutral-200">
             Sin vincular
           </span>
         )}
       </div>
+      {bloqueado && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md p-2" role="note">
+          Ingresa y guarda tu número de WhatsApp arriba para habilitar la vinculación.
+        </p>
+      )}
       <p className="text-xs text-neutral-500 leading-relaxed">
         {vinculado
           ? 'Los códigos te llegan al chat de Telegram. Nunca pedimos códigos en grupos.'
@@ -139,7 +198,7 @@ export default function TelegramVincular({ token, vinculado, onVinculado }) {
               <button
                 type="button"
                 onClick={abrirBot}
-                disabled={cargando}
+                disabled={cargando || bloqueado}
                 className="w-full sm:w-auto px-4 py-2 min-h-[44px] text-sm font-semibold text-white bg-navy-800 rounded-lg hover:bg-navy-900 active:bg-navy-900 transition disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy-800/40"
               >
                 {cargando ? 'Abriendo…' : 'Abrir Bot en Telegram'}
@@ -151,7 +210,7 @@ export default function TelegramVincular({ token, vinculado, onVinculado }) {
             <div className="flex-1">
               <p className="text-xs text-neutral-600 leading-relaxed">
                 Dentro de Telegram presiona el botón <code className="px-1.5 py-0.5 rounded bg-neutral-100 border border-neutral-200 font-mono text-[11px]">/start</code> y
-                luego comparte tu número con <b>📱 Compartir mi número</b> para confirmar que la cuenta es tuya (debe ser el verificado en tu perfil).
+                luego comparte tu número con <b>📱 Compartir mi número de teléfono para verificar</b> para confirmar que la cuenta es tuya (debe ser el guardado en tu perfil).
               </p>
               {botAbierto && botUrl && (
                 <p className="text-[11px] text-neutral-500 mt-1 break-all">
@@ -167,7 +226,7 @@ export default function TelegramVincular({ token, vinculado, onVinculado }) {
               <button
                 type="button"
                 onClick={comprobarVinculacion}
-                disabled={comprobando}
+                disabled={comprobando || bloqueado}
                 className="w-full sm:w-auto px-4 py-2 min-h-[44px] text-sm font-semibold text-navy-800 bg-white border-2 border-navy-800 rounded-lg hover:bg-navy-50 active:bg-navy-100 transition disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy-800/40"
               >
                 {comprobando ? `Comprobando${intentos ? ` (intento ${intentos + 1}/3)…` : '…'}` : 'Vincular cuenta'}
