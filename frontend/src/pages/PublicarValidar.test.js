@@ -1,7 +1,7 @@
 // Detalle #2: validate() usa LIMITES (fuente única, sin hardcode).
 // Detalle #8: el gate de teléfono enlaza a /perfil#datos (tab directo).
 import { describe, it, expect } from 'vitest'
-import { validarPublicar } from './Publicar'
+import { validarPublicar, esFotoEjemplo } from './Publicar'
 import { LIMITES } from '../constants'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -41,6 +41,23 @@ describe('validarPublicar usa LIMITES', () => {
     expect(
       validarPublicar({ ...base, canon_mensual: String(LIMITES.canonMax + 1) }).canon_mensual,
     ).toBeTruthy()
+  })
+})
+
+describe('esFotoEjemplo (CodeQL: host parseado, nunca subcadena)', () => {
+  it('detecta el host exacto y subdominios (insensible a mayúsculas)', () => {
+    expect(esFotoEjemplo('https://images.unsplash.com/photo-123?w=800')).toBe(true)
+    expect(esFotoEjemplo('https://IMAGES.UNSPLASH.COM/photo-123')).toBe(true)
+    expect(esFotoEjemplo('https://foo.unsplash.com/x')).toBe(true)
+  })
+
+  it('no marca falso positivo en query ni en otros hosts', () => {
+    expect(esFotoEjemplo('https://evil.com/?x=images.unsplash.com')).toBe(false)
+    expect(esFotoEjemplo('https://a.com/1.jpg')).toBe(false)
+    expect(esFotoEjemplo('images.unsplash.com/photo-123')).toBe(true) // relativa con host real
+    expect(esFotoEjemplo('/uploads/abc.jpg')).toBe(false)
+    expect(esFotoEjemplo('')).toBe(false)
+    expect(esFotoEjemplo(null)).toBe(false)
   })
 })
 

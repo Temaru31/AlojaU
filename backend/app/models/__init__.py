@@ -460,7 +460,7 @@ class Notificacion(Base):
     __table_args__ = (
         UniqueConstraint("usuario_id", "evento_id", name="uq_notif_usuario_evento"),
         CheckConstraint(
-            "tipo IN ('nuevo_arriendo','moderacion','vencimiento')",
+            "tipo IN ('nuevo_arriendo','moderacion','vencimiento','telegram')",
             name="chk_notif_tipo",
         ),
         # idx_notif_bandeja se declara bajo la clase (necesita created_at.desc()).

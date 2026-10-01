@@ -19,4 +19,22 @@ describe('parseAuthCallbackHash (anti prototype-pollution)', () => {
     expect(parseAuthCallbackHash('')).toEqual({})
     expect(parseAuthCallbackHash(null)).toEqual({})
   })
+
+  it('__proto__ exacto no contamina el prototipo (whitelist CodeQL)', () => {
+    const out = parseAuthCallbackHash('#access_token=x&__proto__=polluted&constructor=evil&desconocida=1')
+    expect(out.access_token).toBe('x')
+    expect(out.desconocida).toBeUndefined()
+    expect(Object.getPrototypeOf(out)).toBe(Object.prototype)
+    expect({}.polluted).toBeUndefined()
+    expect(Object.prototype.polluted).toBeUndefined()
+  })
+
+  it('conserva las claves legítimas del flujo OAuth', () => {
+    const out = parseAuthCallbackHash(
+      '#access_token=a&refresh_token=r&token_type=bearer&expires_in=3600&error_description=denegado')
+    expect(out).toMatchObject({
+      access_token: 'a', refresh_token: 'r', token_type: 'bearer',
+      expires_in: '3600', error_description: 'denegado',
+    })
+  })
 })

@@ -229,6 +229,16 @@ async def cambiar_estado(
                 )
             except Exception:
                 pass
+        # Rediseño campanita: aviso in-app al dueño ante cualquier cambio
+        # (aprueba/rechaza/pausa). Helper con savepoint: nunca tumba el flujo.
+        try:
+            from app.services import notifications_matcher as _nm2
+            await _nm2.notificar_moderacion(
+                db, usuario_id=int(p.usuario_id), publicacion_id=pub_id,
+                titulo_pub=p.titulo, estado=payload.estado,
+            )
+        except Exception:
+            pass
         await db.commit()
         dueno_id, titulo = p.usuario_id, p.titulo
         stmt = (
@@ -463,6 +473,12 @@ async def _bulk_cambiar_estado(db: AsyncSession, admin: dict, ids: list[int],
                             zona_id=_p.zona_barrio_id, tipo=_p.tipo_inmueble,
                             servicios_ids=[s.id for s in (_p.servicios or [])],
                         )
+                        if estado in ("ACTIVO", "RECHAZADO", "PAUSADO"):
+                            await _nm.notificar_moderacion(
+                                db, usuario_id=int(_p.usuario_id),
+                                publicacion_id=_p.id, titulo_pub=_p.titulo,
+                                estado=estado,
+                            )
                     except Exception:
                         pass
             except Exception:

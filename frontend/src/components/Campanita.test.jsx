@@ -57,8 +57,29 @@ describe('Campanita (Fase 3)', () => {
     const btn = await screen.findByRole('button', { name: 'Notificaciones' })
     expect(btn.textContent).not.toMatch(/\d/)
     fireEvent.click(btn)
-    expect(await screen.findByText(/Sin notificaciones/)).toBeInTheDocument()
+    expect(await screen.findByText(/No tienes notificaciones por ahora/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Configurar alertas de búsqueda/ })).toHaveAttribute('href', '/alertas')
     expect(screen.queryByRole('button', { name: /Marcar todas/ })).not.toBeInTheDocument()
+  })
+
+  it('moderación navega a mis-publicaciones y telegram a perfil', async () => {
+    api.get.mockResolvedValue({
+      data: {
+        items: [
+          { id: 3, tipo: 'moderacion', titulo: 'Aprobado', cuerpo: '', publicacion_id: 9, leida: false, created_at: new Date().toISOString() },
+          { id: 4, tipo: 'telegram', titulo: 'Verificado', cuerpo: '', publicacion_id: null, leida: false, created_at: new Date().toISOString() },
+        ],
+        total: 2, no_leidas: 2, page: 1, size: 20, pages: 1,
+      },
+    })
+    api.patch.mockResolvedValue({ data: {} })
+    const verVista = renderEn()
+    fireEvent.click(await screen.findByRole('button', { name: /Notificaciones/ }))
+    fireEvent.click(await screen.findByText('Aprobado'))
+    await waitFor(() => expect(verVista()).toBe('/mis-publicaciones'))
+    fireEvent.click(screen.getByRole('button', { name: /Notificaciones/ }))
+    fireEvent.click(await screen.findByText('Verificado'))
+    await waitFor(() => expect(verVista()).toBe('/perfil'))
   })
 
   it('clic en aviso marca leída y navega al detalle', async () => {

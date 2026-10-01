@@ -358,7 +358,7 @@ CREATE TABLE IF NOT EXISTS notificaciones (
   publicacion_id BIGINT NULL REFERENCES publicaciones(id) ON DELETE CASCADE,
   busqueda_id BIGINT NULL REFERENCES busquedas_guardadas(id) ON DELETE SET NULL,
   evento_id TEXT NOT NULL,
-  tipo TEXT NOT NULL CHECK (tipo IN ('nuevo_arriendo','moderacion','vencimiento')),
+  tipo TEXT NOT NULL CONSTRAINT chk_notif_tipo CHECK (tipo IN ('nuevo_arriendo','moderacion','vencimiento','telegram')),
   titulo TEXT NOT NULL,
   cuerpo TEXT NOT NULL DEFAULT '',
   canal TEXT NOT NULL DEFAULT 'app',
