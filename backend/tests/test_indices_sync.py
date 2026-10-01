@@ -53,6 +53,11 @@ POST_018 = ["idx_telegram_vinculos_chat"]
 MIG_018 = REPO / "alembic" / "versions" / "018_telegram_contacto.py"
 SQL_018 = REPO / "db" / "migrations" / "018_telegram_contacto.sql"
 
+# Fase 1 notificaciones: índices nacidos en la 019.
+POST_019 = ["idx_bg_matching", "idx_notif_bandeja", "idx_notif_noleidas"]
+MIG_019 = REPO / "alembic" / "versions" / "019_notificaciones_y_busquedas.py"
+SQL_019 = REPO / "db" / "migrations" / "019_notificaciones_y_busquedas.sql"
+
 
 def _model_index_names() -> list[str]:
     return re.findall(r'Index\("([^"]+)"', MODELS.read_text(encoding="utf-8"))
@@ -75,7 +80,8 @@ def test_migracion_002_cubre_drift_y_fk_nuevas():
             continue
         # ...y salvo los nacidos en migraciones posteriores (tienen su propia cobertura).
         if n in POST_002 or n in POST_007 or n in POST_008 or n in POST_011 \
-                or n in POST_015 or n in POST_016 or n in POST_017 or n in POST_018:
+                or n in POST_015 or n in POST_016 or n in POST_017 or n in POST_018 \
+                or n in POST_019:
             continue
         assert n in mig, f"{n} falta en 002_alineacion_indices.py"
     # ...y las FK nuevas en ambos lados.
@@ -193,3 +199,22 @@ def test_migracion_018_cubre_indice_pendiente():
     assert "chat_id_pendiente" in schema
     modelos = MODELS.read_text(encoding="utf-8")
     assert "chat_id_pendiente" in modelos, "columna ausente en modelos"
+
+
+def test_migracion_019_cubre_indices_notificaciones():
+    """Fase 1: idx_bg_matching + idx_notif_* viven en la 019."""
+    mig = MIG_019.read_text(encoding="utf-8")
+    sql = SQL_019.read_text(encoding="utf-8")
+    schema = SCHEMA.read_text(encoding="utf-8")
+    assert "down_revision" in mig and "018_telegram_contacto" in mig
+    for n in POST_019:
+        assert n in mig, f"{n} falta en 019_notificaciones_y_busquedas.py"
+        assert n in sql, f"{n} falta en 019_notificaciones_y_busquedas.sql"
+        assert n in schema, f"{n} falta en schema.sql"
+    for pieza in ("busquedas_guardadas", "notificaciones", "evento_id",
+                  "uq_notif_usuario_evento", "chk_bg_rango"):
+        assert pieza in mig, f"{pieza} falta en 019_notificaciones_y_busquedas.py"
+        assert pieza in sql, f"{pieza} falta en 019_notificaciones_y_busquedas.sql"
+        assert pieza in schema, f"{pieza} falta en schema.sql"
+    modelos = MODELS.read_text(encoding="utf-8")
+    assert "class BusquedaGuardada" in modelos and "class Notificacion" in modelos
