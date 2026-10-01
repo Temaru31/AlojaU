@@ -1528,6 +1528,19 @@ async def crear_publicacion(
                 mod_info = _res.to_dict()
         except Exception as _e:
             logger.warning(f"[automod] no aplicada, sigue flujo manual: {exc_resumen(_e)}")
+        # Fase 2: la auto-aprobación también alerta. Va tras el commit del
+        # automod (ya persistido): savepoint propio, fail-safe total.
+        if nueva.estado == "ACTIVO":
+            try:
+                from app.services import notifications_matcher as _nm
+                await _nm.evaluar_y_crear_notificaciones(
+                    db, publicacion_id=nueva.id, dueno_id=user["id"],
+                    titulo=nueva.titulo, canon=payload.canon_mensual,
+                    campus_ids=list(campus_ids), zona_id=payload.zona_barrio_id,
+                    tipo=payload.tipo_inmueble, servicios_ids=list(servicios_ids),
+                )
+            except Exception:
+                pass
         resp = {"id": nueva.id, "estado": nueva.estado, "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "mensaje": "Publicación en PENDIENTE, pendiente de moderación" if nueva.estado == "PENDIENTE" else "Publicación aprobada automáticamente", "rol": user.get("rol"), "rol_actualizado": rol_actualizado, "moderacion": mod_info}
         # Bloque 2: guarda la respuesta para replays (carrera -> replay ganador).
         if clave_idem:

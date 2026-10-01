@@ -9,7 +9,7 @@
 | Fase | Contenido | Estado |
 |---|---|---|
 | Fase 1 | BD y modelos: `busquedas_guardadas` + `notificaciones` (DDL v2), ORM, tests | ✅ Completada y validada (backend 446/446 incl. 9 tests nuevos + cobertura POST_019) |
-| Fase 2 | Matcher + endpoints (`GET /api/notificaciones`, `PATCH .../leer`, `.../leer-todas`) + enqueue al aprobar con savepoint | ⬜ Pendiente |
+| Fase 2 | Matcher + endpoints (`GET /api/notificaciones`, `PATCH .../leer`, `.../leer-todas`) + enqueue al aprobar con savepoint | ✅ Completada y validada (backend 446+/446; suites `test_notifications_matcher` 11/11 y `test_notificaciones_endpoints` 14/14) |
 | Fase 3 | Frontend: campanita navbar + página Alertas (CRUD búsquedas) | ⬜ Pendiente |
 
 ## Decisiones de Arquitectura Tomadas (no reabrir sin arbitraje)
@@ -54,15 +54,24 @@
 - Orden inverso al aplicar; verificar con
   `pytest tests/test_notificaciones_modelos.py tests/test_indices_sync.py`.
 
-## Notas para Fase 2 (no empezar sin leer)
+## Notas de Fase 2 (implementado; leer antes de Fase 3)
 
-- Enganchar SOLO transiciones a `ACTIVO`: `PATCH /api/admin/publicaciones/{id}`,
-  `POST .../bulk-approve` y auto-moderación (`evaluar_y_aplicar`).
-- Endpoints: `GET /api/notificaciones` (paginado ≤50, `solo_no_leidas`, retorna
-  `no_leidas`), `PATCH /{id}/leer` (403 si ajena), `PATCH /leer-todas`.
-- `GET` jamás escribe (ni purga: ya corre en el bloque de enqueue).
-- Tests Fase 2: fan-out (1 aviso → N filas), dedupe por `evento_id` ante doble
-  approve, 403 IDOR, `servicios @>` con caso vacío y exigente.
+- Servicio `app/services/notifications_matcher.py`: `evaluar_y_crear_notificaciones`
+  con primitivas (testeable, sin flush hazards), INSERT..SELECT set-based +
+  `ON CONFLICT DO NOTHING`, savepoint interno, purga TTL en escritura.
+  **Nunca lanza** (retorna 0 con warning); los hooks llevan try/except propio.
+- Hooks: admin `cambiar_estado` y `_bulk_cambiar_estado` (pre-commit, con
+  savepoint) + `crear_publicacion` post-commit del automod (ya persistido;
+  savepoint propio). Asimetría documentada y deliberada: fail-safe en ambos.
+- Router `app/routers/notificaciones.py` (bandeja + busquedas), registrado en
+  `main.py`. `PATCH /leer-todas` declarada ANTES de `/{id}/leer` (orden rutas).
+- Semántica fijada: 1 fila por (usuario, aviso) aunque casen varias alertas
+  (`busqueda_id` ilustrativa, anti-spam); `in_([])` saltado (siempre-falso);
+  `contained_by` con `cardinality()==0` como comodín.
+- Sin stores mock (503 honesto sin PG, precedente POST /reportes).
+- Tests: `test_notifications_matcher.py` (matriz, dedupe, savepoint con canon
+  basura, purga) + `test_notificaciones_endpoints.py` (contratos, IDOR 403,
+  tope 10, approve→notificación, doble approve, matcher roto→approve 200).
 
 ## Pendientes abiertos (Fase 3+)
 
