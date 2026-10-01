@@ -178,9 +178,24 @@ function mezclarBorrador(base, draft) {
   // Higiene: borradores viejos podían traer fotos de ejemplo (unsplash);
   // se descartan para no publicar fotos ajenas por accidente.
   if (Array.isArray(out.fotos)) {
-    out.fotos = out.fotos.filter((u) => u && !String(u).includes('images.unsplash.com'))
+    out.fotos = out.fotos.filter((u) => u && !esFotoEjemplo(u))
   }
   return out
+}
+
+// Foto de ejemplo/placeholder: solo si el HOST parseado es de Unsplash
+// (comparación exacta + sufijo, nunca subcadena: evita falsos positivos
+// como https://evil.com/?x=images.unsplash.com). Sin esquema se asume
+// https para el parseo (conserva el filtrado legacy de borradores viejos).
+export function esFotoEjemplo(url) {
+  try {
+    const texto = String(url || '').trim()
+    const normalizada = /^[a-z][a-z0-9+.-]*:/i.test(texto) ? texto : `https://${texto}`
+    const host = new URL(normalizada).hostname.toLowerCase()
+    return host === 'images.unsplash.com' || host.endsWith('.unsplash.com')
+  } catch {
+    return false
+  }
 }
 
 export default function Publicar() {

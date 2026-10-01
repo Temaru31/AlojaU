@@ -35,15 +35,19 @@ export function buildGoogleAuthUrl(supabaseUrl, redirectTo) {
 }
 
 // Extrae tokens del fragmento (#access_token=...) que Supabase devuelve.
-// Anti prototype-pollution (CodeQL): un hash manipulado con __proto__/
-// constructor contaminaría Object.prototype; esas claves se ignoran.
-const CLAVES_PROHIBIDAS = new Set(['__proto__', 'constructor', 'prototype']);
+// Anti prototype-pollution (CodeQL js/prototype-polluting-assignment):
+// whitelist explícita de claves del flujo OAuth — cualquier otra clave
+// (incluido __proto__/constructor exactos) se descarta sin asignar.
+const CLAVES_OAUTH_PERMITIDAS = new Set([
+  'access_token', 'refresh_token', 'provider_token', 'token_type',
+  'expires_in', 'expires_at', 'error', 'error_description', 'error_code',
+]);
 export function parseAuthCallbackHash(hash = window.location.hash) {
   const out = {}
   try {
     const h = String(hash || '').replace(/^#/, '')
     for (const [k, v] of new URLSearchParams(h)) {
-      if (CLAVES_PROHIBIDAS.has(k)) continue
+      if (!CLAVES_OAUTH_PERMITIDAS.has(k)) continue
       out[k] = v
     }
   } catch { /* noop */ }
