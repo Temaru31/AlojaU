@@ -31,7 +31,7 @@
    jamás en GET (endpoints de lectura estrictamente puros; réplicas futuras).
 5. **Matcher con `@>`**: `busq.servicios_ids <@ pub_servicios` (vacío = todo);
    `campus_id` contra campus autovinculados por trigger; `zona_barrio_id`
-   exacto-o-NULL. Tope: 10 alertas activas por usuario (anti-abuso).
+   exacto-o-NULL. Tope: 5 alertas activas por usuario + mínimo 1 filtro (zona/campus/precio/tipo/servicios) — endurecido anti-spam post-Fase 2.
 6. **Convención repo**: cada migración Alembic tiene espejo SQL en
    `db/migrations/`, tablas en `db/schema.sql` (CI inicializa PG desde ahí) e
    índices registrados en `tests/test_indices_sync.py`.
@@ -82,7 +82,7 @@
   móvil, Esc/backdrop/navegar cierran, clic marca y va a `/publicacion/:id`,
   footer a `/alertas`. Fail-open: sin total numérico no oculta nada.
 - `pages/Alertas.jsx` + `utils/alertas.js` (`filtrosABusqueda` compartido con
-  Buscar vía botón `GuardarAlerta`): crear (tope 10 con mensaje), eliminar
+  Buscar vía botón `GuardarAlerta`): crear (tope 5 con mensaje, mínimo 1 filtro), eliminar
   con ConfirmDialog. Sin `PATCH activa` a propósito (fuera del alcance
   aprobado: desactivar = eliminar).
 - `App.jsx`: ruta `/alertas` (lazy) + campanita junto al avatar/hamburguesa.
@@ -98,7 +98,7 @@
    `/alertas` la muestra. Sin sesión el botón lleva a `/perfil`.
 3. Arrendador → Publicar → admin aprueba → campanita del estudiante con
    badge 1 → clic lleva al detalle y apaga el badge → `Marcar todas`.
-4. Tope: crear 10 alertas → la 11ª bloqueada con mensaje (front + 422 back).
+4. Tope: crear 5 alertas → la 6ª bloqueada con mensaje (front + 422 back); alerta vacía → 422 con guía (front + back).
 5. IDOR: PATCH leer de otro usuario → 403 (cubierto en tests).
 
 ## Despliegue a main (cuando se apruebe)
