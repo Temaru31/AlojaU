@@ -6,7 +6,7 @@
 // Buscar + Alertas compartan la misma normalización testeada.
 import { parseServicios } from '../components/Filtros'
 
-export const MAX_ALERTAS = 5
+export const MAX_ALERTAS = 10
 
 export const MENSAJE_SIN_FILTROS =
   '⚠️️ Selecciona al menos un filtro (zona, precio o tipo) para crear una alerta relevante.'

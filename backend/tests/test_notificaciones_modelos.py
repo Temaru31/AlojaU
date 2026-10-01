@@ -70,13 +70,31 @@ async def _ejecutar(stmts):
         await conn.close()
 
 
+async def _truncate_seguro():
+    """TRUNCATE tolerante: no falla si un test dropeó las tablas (downgrade)
+    ni si la BD está fresca. Hermético en cualquier orden de ejecución."""
+    import asyncpg
+    conn = await asyncio.wait_for(asyncpg.connect(_dsn()), timeout=10)
+    try:
+        hay = await conn.fetchval(
+            "SELECT count(*) FROM pg_tables WHERE tablename IN "
+            "('notificaciones','busquedas_guardadas')")
+        if hay == 2:
+            await conn.execute("TRUNCATE notificaciones, busquedas_guardadas")
+    finally:
+        await conn.close()
+
+
 @pytest.fixture()
 def tablas():
+    # Intencionalmente SIN teardown destructivo: el downgrade se prueba dentro
+    # de test_mirror_downgrade_limpio (autocontenido). Aquí solo se trunca para
+    # no dejarle tablas rotas a otros archivos si cambia el orden.
     if not _pg():
         pytest.skip("sin PG real")
     asyncio.run(_ejecutar(_upgrade_sql()))
     yield
-    asyncio.run(_ejecutar(_downgrade_sql()))
+    asyncio.run(_truncate_seguro())
 
 
 # --- Espejo: upgrade crea, downgrade revierte --------------------------------

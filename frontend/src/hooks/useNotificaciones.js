@@ -40,19 +40,27 @@ export default function useNotificaciones({ token } = {}) {
   useEffect(() => () => { vivoRef.current = false }, [])
   // 401/403 = sesión muerta o sin permiso: se pausa el polling para no
   // saturar la pestaña de red con fallidas repetitivas. Se reanuda solo
-  // al cambiar el token (nuevo login) o con un 200 posterior.
+  // al cambiar el token (nuevo login), con un 200 posterior o por acción
+  // manual del usuario (abrir la campanita = intent explícito).
   const authBloqueadaRef = useRef(false)
+  // Identidad del token que disparó cada fetch: si cambia (logout/login)
+  // antes de resolver, la respuesta vieja se descarta (anti stale/privacidad).
+  // Se actualiza en efecto (nunca en render) para no violar react/refs.
+  const tokenRef = useRef(token)
 
-  const cargar = useCallback(async (silencioso = false) => {
+  const cargar = useCallback(async (silencioso = false, forzar = false) => {
     if (!token) {
       if (vivoRef.current) {
         setItems([])
         setTotal(0)
         setNoLeidas(0)
+        setLoading(false)
         setError('')
       }
       return
     }
+    if (authBloqueadaRef.current && !forzar) return
+    const identidad = token
     if (!silencioso && vivoRef.current) {
       setLoading(true)
       setError('')
@@ -61,28 +69,31 @@ export default function useNotificaciones({ token } = {}) {
       const r = await api.get('/api/notificaciones', {
         params: { size: 20 }, headers: headers(token),
       })
-      if (!vivoRef.current) return
+      if (!vivoRef.current || tokenRef.current !== identidad) return
       authBloqueadaRef.current = false
       setItems(r.data?.items || [])
       setTotal(r.data?.total || 0)
       setNoLeidas(r.data?.no_leidas || 0)
       setError('')
     } catch (e) {
+      if (!vivoRef.current || tokenRef.current !== identidad) return
       const status = e?.response?.status
       if (status === 401 || status === 403) authBloqueadaRef.current = true
-      if (vivoRef.current && !silencioso) setError('No se pudieron cargar las notificaciones.')
+      if (!silencioso) setError('No se pudieron cargar las notificaciones.')
     } finally {
-      if (vivoRef.current && !silencioso) setLoading(false)
+      if (vivoRef.current && tokenRef.current === identidad && !silencioso) setLoading(false)
     }
   }, [token])
 
   useEffect(() => {
     authBloqueadaRef.current = false
+    tokenRef.current = token
     cargar(false)
     const refrescar = () => {
       if (authBloqueadaRef.current) return
       cargar(true)
     }
+
     const refrescarSiVisible = () => {
       try {
         if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
@@ -93,7 +104,10 @@ export default function useNotificaciones({ token } = {}) {
       window.addEventListener(NOTIF_EVENT, refrescar)
       window.addEventListener('focus', refrescarSiVisible)
     } catch { /* SSR/tests */ }
-    const timer = window.setInterval ? window.setInterval(refrescarSiVisible, NOTIF_POLL_MS) : null
+    // Sin token no hay intervalo vivo (ahorra timers inútiles en anónimo).
+    const timer = token && window.setInterval
+      ? window.setInterval(refrescarSiVisible, NOTIF_POLL_MS)
+      : null
     return () => {
       try {
         window.removeEventListener(NOTIF_EVENT, refrescar)
@@ -101,7 +115,7 @@ export default function useNotificaciones({ token } = {}) {
       } catch { /* noop */ }
       if (timer) window.clearInterval(timer)
     }
-  }, [cargar])
+  }, [cargar, token])
 
   const marcarLeida = useCallback(async (id) => {
     if (!token) return
@@ -138,5 +152,7 @@ export default function useNotificaciones({ token } = {}) {
     }
   }, [token])
 
-  return { items, total, noLeidas, loading, error, recargar: () => cargar(false), marcarLeida, marcarTodas }
+  // recargar es acción manual (abrir la campanita): fuerza el intento aunque
+  // haya pausa; un 200 la levanta y un 401 la vuelve a pausar. Sin F5.
+  return { items, total, noLeidas, loading, error, recargar: () => cargar(false, true), marcarLeida, marcarTodas }
 }

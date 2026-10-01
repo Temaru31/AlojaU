@@ -31,7 +31,10 @@
    jamás en GET (endpoints de lectura estrictamente puros; réplicas futuras).
 5. **Matcher con `@>`**: `busq.servicios_ids <@ pub_servicios` (vacío = todo);
    `campus_id` contra campus autovinculados por trigger; `zona_barrio_id`
-   exacto-o-NULL. Tope: 5 alertas activas por usuario + mínimo 1 filtro (zona/campus/precio/tipo/servicios) — endurecido anti-spam post-Fase 2.
+   exacto-o-NULL. Tope: 10 activas/usuario (especificación aprobada; se evaluó
+   bajar a 5 y se restituyó por compatibilidad: lecturas y borrado nunca se
+   limitan, solo la creación; la UI muestra el conteo real si supera el tope)
+   + mínimo 1 filtro anti-spam (zona/campus/precio/tipo/servicios).
 6. **Convención repo**: cada migración Alembic tiene espejo SQL en
    `db/migrations/`, tablas en `db/schema.sql` (CI inicializa PG desde ahí) e
    índices registrados en `tests/test_indices_sync.py`.
@@ -82,7 +85,7 @@
   móvil, Esc/backdrop/navegar cierran, clic marca y va a `/publicacion/:id`,
   footer a `/alertas`. Fail-open: sin total numérico no oculta nada.
 - `pages/Alertas.jsx` + `utils/alertas.js` (`filtrosABusqueda` compartido con
-  Buscar vía botón `GuardarAlerta`): crear (tope 5 con mensaje, mínimo 1 filtro), eliminar
+  Buscar vía botón `GuardarAlerta`): crear (tope 10 con mensaje y conteo real, mínimo 1 filtro), eliminar
   con ConfirmDialog. Sin `PATCH activa` a propósito (fuera del alcance
   aprobado: desactivar = eliminar).
 - `App.jsx`: ruta `/alertas` (lazy) + campanita junto al avatar/hamburguesa.
@@ -98,7 +101,7 @@
    `/alertas` la muestra. Sin sesión el botón lleva a `/perfil`.
 3. Arrendador → Publicar → admin aprueba → campanita del estudiante con
    badge 1 → clic lleva al detalle y apaga el badge → `Marcar todas`.
-4. Tope: crear 5 alertas → la 6ª bloqueada con mensaje (front + 422 back); alerta vacía → 422 con guía (front + back).
+4. Tope: crear 10 alertas → la 11ª bloqueada con mensaje y conteo real (front + 422 back); alerta vacía → 422 con guía (front + back). Usuarios sobre el tope (heredados): leen, listan y borran sin romper; la UI muestra "Tienes X alertas".
 5. IDOR: PATCH leer de otro usuario → 403 (cubierto en tests).
 
 ## Despliegue a main (cuando se apruebe)
@@ -127,6 +130,16 @@
 - Incidentes reales corregidos: CHECK duplicado por nombre autogenerado
   (020 tumba ambos nombres), `in_([])`, commit antes de contar en tests,
   e interferencia al correr ambas suites contra el mismo PG local.
+
+## Endurecimiento post-revisión (misma rama)
+
+- Fixtures herméticas: espejo 019 idempotente + `TRUNCATE` tolerante en los 4
+  archivos (orden-inverso y BD fresca verificados); teardown de modelos ya no
+  dropea tablas (el downgrade se prueba autocontenido).
+- Hook: pausa 401/403 con reanudación por token nuevo, por apertura manual y
+  descarte anti-stale tras logout; sin timer sin token.
+- Validación formal en paralelo (backend+frontend a la vez): 481 + 607 verde.
+- Price-drop en Favoritos: NO-GO (favoritos 100% localStorage, sin tabla).
 
 ## Pendientes abiertos (futuro multicanal, FUERA DE ALCANCE)
 - Futuro multicanal (FUERA DE ALCANCE): drenar por `canal` + estado de envío

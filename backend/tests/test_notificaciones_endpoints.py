@@ -3,7 +3,7 @@
 - GET puro (sin escrituras), paginado + no_leidas + filtro.
 - PATCH leer: 404 ajeno-inexistente, 403 ajeno-existente (IDOR).
 - PATCH leer-todas.
-- POST busquedas: mínimo 1 filtro, tope 5 activas, FKs y rango validados.
+- POST busquedas: mínimo 1 filtro, tope 10 activas, FKs y rango validados.
 - DELETE propio/ajeno/inexistente.
 Requiere PG real; si no, skip (igual que los tests de Telegram).
 """
@@ -42,13 +42,41 @@ async def _sql(sql, *args):
         await conn.close()
 
 
+def _aplicar_espejo_019():
+    """Crea las tablas si faltan (BD fresca u orden alterado). Idempotente."""
+    import pathlib
+    mirror = pathlib.Path(__file__).resolve().parent.parent / "db" / "migrations" \
+        / "019_notificaciones_y_busquedas.sql"
+    texto = mirror.read_text(encoding="utf-8").split("-- DOWNGRADE")[0]
+    for chunk in texto.split(";"):
+        stmt = "\n".join(ln for ln in chunk.splitlines()
+                         if ln.strip() and not ln.strip().startswith("--")).strip()
+        if stmt:
+            asyncio.run(_sql(stmt))
+
+
+async def _truncate_seguro():
+    """TRUNCATE tolerante a BD fresca u orden alterado (nunca falla)."""
+    import asyncpg
+    conn = await asyncio.wait_for(asyncpg.connect(_dsn()), timeout=10)
+    try:
+        hay = await conn.fetchval(
+            "SELECT count(*) FROM pg_tables WHERE tablename IN "
+            "('notificaciones','busquedas_guardadas')")
+        if hay == 2:
+            await conn.execute("TRUNCATE notificaciones, busquedas_guardadas")
+    finally:
+        await conn.close()
+
+
 @pytest.fixture()
 def limpias():
     if not _pg():
         pytest.skip("sin PG real")
-    asyncio.run(_sql("TRUNCATE notificaciones, busquedas_guardadas"))
+    _aplicar_espejo_019()
+    asyncio.run(_truncate_seguro())
     yield
-    asyncio.run(_sql("TRUNCATE notificaciones, busquedas_guardadas"))
+    asyncio.run(_truncate_seguro())
 
 
 def _notif(uid, evento=None, titulo="Aviso"):
@@ -131,7 +159,7 @@ def test_bandeja_sin_auth_401(limpias):
 
 
 # --- Búsquedas -----------------------------------------------------------------
-def test_busquedas_crud_y_tope(limpias):
+def test_busquedas_crud(limpias):
     r = client.post("/api/busquedas-guardadas",
                     json={"nombre": "Cerca U", "campus_id": 1,
                           "servicios_ids": [1, 2]}, headers=ARR)
@@ -146,12 +174,38 @@ def test_busquedas_crud_y_tope(limpias):
     assert client.get("/api/busquedas-guardadas", headers=ARR).json() == []
 
 
-def test_busquedas_tope_5_activas(limpias):
-    for _ in range(5):
+def test_busquedas_tope_10_activas(limpias):
+    for _ in range(10):
         assert _alerta_post(ARR).status_code == 201
-    r6 = _alerta_post(ARR)
-    assert r6.status_code == 422
-    assert "5" in r6.json()["detail"]
+    r11 = _alerta_post(ARR)
+    assert r11.status_code == 422
+    assert "10" in r11.json()["detail"]
+
+
+def test_sobre_limite_heredado_lee_y_borra_sin_romper(limpias):
+    """Compat hacia atrás: con 12 activas (límite anterior), leer/listar/
+    borrar siguen intactos; solo crear se bloquea con guía."""
+    # Las 12 se crean directo en BD (simula herencia de otro límite).
+    import asyncio as _aio
+
+    async def _doce():
+        import asyncpg
+        conn = await _aio.wait_for(asyncpg.connect(_dsn()), timeout=10)
+        try:
+            for _ in range(12):
+                await conn.execute(
+                    "INSERT INTO busquedas_guardadas (usuario_id) VALUES (1)")
+        finally:
+            await conn.close()
+    _aio.run(_doce())
+    mias = client.get("/api/busquedas-guardadas", headers=ARR).json()
+    assert len(mias) == 12
+    assert client.post("/api/busquedas-guardadas",
+                       json={"precio_min": 100}, headers=ARR).status_code == 422
+    primera = mias[0]["id"]
+    assert client.delete(f"/api/busquedas-guardadas/{primera}",
+                         headers=ARR).status_code == 200
+    assert len(client.get("/api/busquedas-guardadas", headers=ARR).json()) == 11
 
 
 def test_busquedas_sin_filtros_422(limpias):

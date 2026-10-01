@@ -79,7 +79,7 @@ function textoBadge(n) {
 }
 
 export default function Campanita({ token }) {
-  const { items, noLeidas, loading, error, marcarLeida, marcarTodas } =
+  const { items, noLeidas, loading, error, marcarLeida, marcarTodas, recargar } =
     useNotificaciones({ token })
   const [abierto, setAbierto] = useState(false)
   const navigate = useNavigate()
@@ -108,7 +108,13 @@ export default function Campanita({ token }) {
     <div className="relative inline-block">
       <button
         type="button"
-        onClick={() => setAbierto((v) => !v)}
+        onClick={() => {
+          const vaAAbrir = !abierto
+          setAbierto(vaAAbrir)
+          // Intent explícito: refresca aunque el polling esté pausado por
+          // 401 (un 200 reanuda solo; un 401 repausa). Sin F5.
+          if (vaAAbrir) recargar()
+        }}
         aria-label={badge ? `Notificaciones, ${noLeidas} sin leer` : 'Notificaciones'}
         aria-expanded={abierto}
         aria-haspopup="menu"

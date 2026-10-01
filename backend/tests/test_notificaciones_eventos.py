@@ -55,14 +55,28 @@ async def _sql(sql, *args):
         await conn.close()
 
 
+async def _truncate_seguro():
+    """TRUNCATE tolerante a BD fresca u orden alterado (nunca falla)."""
+    import asyncpg
+    conn = await asyncio.wait_for(asyncpg.connect(_dsn()), timeout=10)
+    try:
+        hay = await conn.fetchval(
+            "SELECT count(*) FROM pg_tables WHERE tablename IN "
+            "('notificaciones','busquedas_guardadas')")
+        if hay == 2:
+            await conn.execute("TRUNCATE notificaciones, busquedas_guardadas")
+    finally:
+        await conn.close()
+
+
 @pytest.fixture()
 def limpias():
     if not _pg():
         pytest.skip("sin PG real")
     asyncio.run(_asegurar_020())
-    asyncio.run(_sql("TRUNCATE notificaciones, busquedas_guardadas"))
+    asyncio.run(_truncate_seguro())
     yield
-    asyncio.run(_sql("TRUNCATE notificaciones, busquedas_guardadas"))
+    asyncio.run(_truncate_seguro())
 
 
 async def _asegurar_020():

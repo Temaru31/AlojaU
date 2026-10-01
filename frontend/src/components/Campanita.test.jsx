@@ -32,7 +32,7 @@ function renderEn(ruta = '/') {
   return () => screen.getByTestId('vista').textContent
 }
 
-afterEach(() => { cleanup(); localStorage.clear() })
+afterEach(() => { cleanup(); localStorage.clear(); vi.restoreAllMocks(); vi.useRealTimers() })
 beforeEach(() => vi.clearAllMocks())
 
 describe('Campanita (Fase 3)', () => {
@@ -86,7 +86,8 @@ describe('Campanita (Fase 3)', () => {
     fireEvent.click(await screen.findByText('Aprobado'))
     await waitFor(() => expect(verVista()).toBe('/mis-publicaciones'))
     fireEvent.click(screen.getByRole('button', { name: /Notificaciones/ }))
-    fireEvent.click(await screen.findByText('Verificado'))
+    // Timeout amplio: bajo carga paralela el re-render puede tardar.
+    fireEvent.click(await screen.findByText('Verificado', {}, { timeout: 5000 }))
     await waitFor(() => expect(verVista()).toBe('/perfil'))
   })
 

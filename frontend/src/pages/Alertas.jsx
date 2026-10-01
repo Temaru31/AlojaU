@@ -182,7 +182,7 @@ export default function Alertas() {
         <h2 className="text-sm font-bold text-navy-800">Nueva alerta</h2>
         {topeAlcanzado && (
           <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md p-2" role="note">
-            Tienes {MAX_ALERTAS} alertas activas (máximo). Elimina una para crear otra.
+            Tienes {activas} alertas activas (máximo {MAX_ALERTAS}). Elimina una para crear otra.
           </p>
         )}
         <form onSubmit={crear} className="grid grid-cols-1 sm:grid-cols-2 gap-3">

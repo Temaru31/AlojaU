@@ -59,10 +59,21 @@ def limpias():
                 await conn.execute(s)
         finally:
             await conn.close()
+    async def _truncate_seguro():
+        import asyncpg
+        conn = await asyncio.wait_for(asyncpg.connect(_dsn()), timeout=10)
+        try:
+            hay = await conn.fetchval(
+                "SELECT count(*) FROM pg_tables WHERE tablename IN "
+                "('notificaciones','busquedas_guardadas')")
+            if hay == 2:
+                await conn.execute("TRUNCATE notificaciones, busquedas_guardadas")
+        finally:
+            await conn.close()
     asyncio.run(_aplicar())
-    asyncio.run(_sql("TRUNCATE notificaciones, busquedas_guardadas"))
+    asyncio.run(_truncate_seguro())
     yield
-    asyncio.run(_sql("TRUNCATE notificaciones, busquedas_guardadas"))
+    asyncio.run(_truncate_seguro())
 
 
 def _nueva_sesion():

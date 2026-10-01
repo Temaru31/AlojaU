@@ -23,7 +23,7 @@ function renderAlerta() {
   return render(<MemoryRouter><Alertas /></MemoryRouter>)
 }
 
-afterEach(() => { cleanup(); vi.restoreAllMocks() })
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers() })
 beforeEach(() => vi.clearAllMocks())
 
 describe('filtrosABusqueda (mapeo Buscar -> alerta)', () => {
@@ -73,15 +73,30 @@ describe('Alertas (Fase 3)', () => {
 
   it(`tope de ${MAX_ALERTAS}: bloquea crear con mensaje amigable`, async () => {
     mockAuth(CON_TOKEN)
-    const cinco = Array.from({ length: 5 }, (_, i) => ({ id: i + 1, nombre: `A${i}`, activa: true, servicios_ids: [] }))
+    const diez = Array.from({ length: 10 }, (_, i) => ({ id: i + 1, nombre: `A${i}`, activa: true, servicios_ids: [] }))
     api.get.mockImplementation((url) => {
-      if (url === '/api/busquedas-guardadas') return Promise.resolve({ data: cinco })
+      if (url === '/api/busquedas-guardadas') return Promise.resolve({ data: diez })
       return Promise.resolve({ data: [] })
     })
     renderAlerta()
-    await waitFor(() => expect(screen.getByText(/5 alertas activas/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/10 alertas activas/)).toBeInTheDocument())
     expect(screen.getByRole('button', { name: /Crear alerta/ })).toBeDisabled()
     expect(api.post).not.toHaveBeenCalled()
+  })
+
+  it('sobre el tope heredado muestra el conteo real y permite gestionar', async () => {
+    mockAuth(CON_TOKEN)
+    const doce = Array.from({ length: 12 }, (_, i) => ({ id: i + 1, nombre: `A${i}`, activa: true, servicios_ids: [] }))
+    api.get.mockImplementation((url) => {
+      if (url === '/api/busquedas-guardadas') return Promise.resolve({ data: doce })
+      return Promise.resolve({ data: [] })
+    })
+    renderAlerta()
+    // Estado degradado elegante: dice 12 (no el tope) y bloquea crear.
+    await waitFor(() => expect(screen.getByText(/Tienes 12 alertas activas/)).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: /Crear alerta/ })).toBeDisabled()
+    // Leer y borrar siguen intactos.
+    expect(screen.getAllByRole('button', { name: /Eliminar alerta/ })).toHaveLength(12)
   })
 
   it('sin ningún filtro bloquea con guía y no postea', async () => {

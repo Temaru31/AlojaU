@@ -2,7 +2,7 @@
 
 - GET /api/notificaciones: lectura PURA (sin escrituras, sin purga).
 - PATCH .../leer y .../leer-todas: únicos escritores de `leida`.
-- /api/busquedas-guardadas: POST (mínimo 1 filtro, tope 5 activas), GET mías, DELETE propia.
+- /api/busquedas-guardadas: POST (mínimo 1 filtro, tope 10 activas), GET mías, DELETE propia.
 - Sin PG (mock/dev): 503 honesto (sin stores mock: es módulo nuevo con
   fuente única en BD, igual que POST /api/reportes en dev sin PG).
 """
@@ -26,7 +26,7 @@ logger = logging.getLogger("alojau.notificaciones")
 router = APIRouter(prefix="/api/notificaciones", tags=["notificaciones"])
 router_busquedas = APIRouter(prefix="/api/busquedas-guardadas", tags=["busquedas"])
 
-MAX_ALERTAS_ACTIVAS = 5
+MAX_ALERTAS_ACTIVAS = 10
 
 MENSAJE_SIN_FILTROS = (
     "⚠️️ Selecciona al menos un filtro (zona, precio o tipo) "
