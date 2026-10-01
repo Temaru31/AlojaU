@@ -9,6 +9,7 @@ const Detalle = lazy(() => import('./pages/Detalle'))
 const Publicar = lazy(() => import('./pages/Publicar'))
 const Comparar = lazy(() => import('./pages/Comparar'))
 const Favoritos = lazy(() => import('./pages/Favoritos'))
+const Alertas = lazy(() => import('./pages/Alertas'))
 const AdminReportes = lazy(() => import('./pages/AdminReportes'))
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'))
 const AdminTipos = lazy(() => import('./pages/AdminTipos'))
@@ -23,6 +24,7 @@ import ColdStartBanner from './components/ColdStartBanner'
 import ErrorBoundary from './components/ErrorBoundary'
 import Toaster from './components/Toast'
 import BrandMark from './components/BrandMark'
+import Campanita from './components/Campanita'
 import useKeepAlive from './hooks/useKeepAlive'
 import { FavoritosProvider, useFavoritos } from './contexts/FavoritosContext'
 import { CompararProvider, useComparar } from './contexts/CompararContext'
@@ -68,8 +70,14 @@ function Nav() {
   const [totalMias, setTotalMias] = useState(null)
   useEffect(() => {
     let vivo = true
-    if (!sesionActiva) { setTotalMias(null); return undefined }
+    // Sin sesión, cargar() resetea a null (fail-open); no hay setState
+    // léxico aquí para no añadir ruido al linter (patrón del repo).
     const cargar = async () => {
+      // Sin sesión se resetea a null y no se pide /mias (fail-open).
+      if (!sesionActiva || !token) {
+        if (vivo) setTotalMias(null)
+        return
+      }
       try {
         const r = await api.get('/api/publicaciones/mias', {
           params: { size: 1 },
@@ -236,6 +244,7 @@ function Nav() {
               Publicar
             </Link>
           </div>
+          {sesionActiva && <Campanita token={token} />}
           <button type="button"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-label={mobileOpen ? 'Cerrar menú' : 'Abrir menú'}
@@ -446,6 +455,7 @@ function App() {
                     <Route path="/restablecer" element={<Restablecer />} />
                     <Route path="/terminos" element={<Terminos />} />
                     <Route path="/privacidad" element={<Privacidad />} />                    <Route path="/mis-publicaciones" element={<MisPublicaciones />} />
+                    <Route path="/alertas" element={<Alertas />} />
                     <Route path="/admin/dashboard" element={<ProtectedAdminRoute><AdminDashboard /></ProtectedAdminRoute>} />
                     <Route path="/admin/reportes" element={<ProtectedAdminRoute><AdminReportes /></ProtectedAdminRoute>} />
                     <Route path="/admin/tipos-vivienda" element={<ProtectedAdminRoute><AdminTipos /></ProtectedAdminRoute>} />

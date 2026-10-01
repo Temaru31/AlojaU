@@ -10,7 +10,7 @@
 |---|---|---|
 | Fase 1 | BD y modelos: `busquedas_guardadas` + `notificaciones` (DDL v2), ORM, tests | ✅ Completada y validada (backend 446/446 incl. 9 tests nuevos + cobertura POST_019) |
 | Fase 2 | Matcher + endpoints (`GET /api/notificaciones`, `PATCH .../leer`, `.../leer-todas`) + enqueue al aprobar con savepoint | ✅ Completada y validada (backend 446+/446; suites `test_notifications_matcher` 11/11 y `test_notificaciones_endpoints` 14/14) |
-| Fase 3 | Frontend: campanita navbar + página Alertas (CRUD búsquedas) | ⬜ Pendiente |
+| Fase 3 | Frontend: campanita navbar + página Alertas (CRUD búsquedas) | ✅ Completada y validada (frontend 91/91 archivos, 592/592 tests; lint 0 errores; build OK) |
 
 ## Decisiones de Arquitectura Tomadas (no reabrir sin arbitraje)
 
@@ -73,10 +73,43 @@
   basura, purga) + `test_notificaciones_endpoints.py` (contratos, IDOR 403,
   tope 10, approve→notificación, doble approve, matcher roto→approve 200).
 
-## Pendientes abiertos (Fase 3+)
+## Notas de Fase 3 (implementado)
 
-- Campanita navbar (desktop dropdown / móvil sheet) + `useNotificaciones`
-  (fetch al montar + `alojau:notificaciones-change` + intervalo 5 min visible).
-- Página Alertas con CRUD de `busquedas_guardadas` (tope 10 activas/usuario).
+- `hooks/useNotificaciones.js`: bandeja + badge + marcar(optimista con
+  rollback)/todas + evento `alojau:notificaciones-change` + polling 5 min
+  solo visible. Sin token no pide la bandeja (regla MisPublicaciones).
+- `components/Campanita.jsx`: bell + badge 99+, dropdown desktop / sheet
+  móvil, Esc/backdrop/navegar cierran, clic marca y va a `/publicacion/:id`,
+  footer a `/alertas`. Fail-open: sin total numérico no oculta nada.
+- `pages/Alertas.jsx` + `utils/alertas.js` (`filtrosABusqueda` compartido con
+  Buscar vía botón `GuardarAlerta`): crear (tope 10 con mensaje), eliminar
+  con ConfirmDialog. Sin `PATCH activa` a propósito (fuera del alcance
+  aprobado: desactivar = eliminar).
+- `App.jsx`: ruta `/alertas` (lazy) + campanita junto al avatar/hamburguesa.
+- Lint: 0 errores; quedan 3 warnings `set-state-in-effect` del mismo patrón
+  fetch/close que el baseline ya trae (~10 instancias preexistentes).
+- Tests: `useNotificaciones` (6), `Campanita` (7), `Alertas` (8).
+
+## Probar E2E (manual, 5 min)
+
+1. Dev: backend con mig 019 aplicada (`alembic upgrade head` o espejo SQL),
+   frontend `npm run dev`. Dos usuarios (arrendador + estudiante).
+2. Estudiante → Buscar → ajusta filtros → `🔔 Guardar alerta` (toast OK) →
+   `/alertas` la muestra. Sin sesión el botón lleva a `/perfil`.
+3. Arrendador → Publicar → admin aprueba → campanita del estudiante con
+   badge 1 → clic lleva al detalle y apaga el badge → `Marcar todas`.
+4. Tope: crear 10 alertas → la 11ª bloqueada con mensaje (front + 422 back).
+5. IDOR: PATCH leer de otro usuario → 403 (cubierto en tests).
+
+## Despliegue a main (cuando se apruebe)
+
+1. Merge de `feature/notificaciones-inapp` a `main` (PR, CI en verde).
+2. Render hace redeploy solo del backend; Vercel del frontend.
+3. Aplicar `db/migrations/019_notificaciones_y_busquedas.sql` en Supabase
+   SQL Editor UNA vez (o `alembic upgrade head` donde corresponda).
+4. Verificar: `GET /api/notificaciones` 401 sin token; campanita visible
+   con sesión; publicar→aprobar genera fila (tabla `notificaciones`).
+
+## Pendientes abiertos (futuro multicanal, FUERA DE ALCANCE)
 - Futuro multicanal (FUERA DE ALCANCE): drenar por `canal` + estado de envío
   por canal (columnas nuevas, sin reescribir nada de Fase 1).
