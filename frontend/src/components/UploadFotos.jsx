@@ -1,42 +1,76 @@
-// UploadFotos - HU-005 + F3 Subida 3-10 imágenes con preview + drag-drop.
-// Backend: POST /api/publicaciones/upload (multipart, solo ARRENDADOR, 5MB, JPEG/PNG/WebP/GIF).
-//   - Dev sin CLOUDINARY_*: retorna http://.../uploads/{uuid} (efímero en Render).
-//   - Prod con CLOUDINARY_*: retorna https://res.cloudinary.com/.../secure_url (persistente).
-// El componente es agnóstico: solo muestra las URLs que devuelve el backend.
-//
-// Uso: <UploadFotos token={token} onUrls={(urls) => setForm(...)} initialUrls={[]} endpoint="/api/publicaciones/upload" />
-// Ejemplo: onUrls(["https://res.cloudinary.com/demo/.../a.jpg", ...]) -> Publicar las usa en POST /api/publicaciones.
-//
-// Buenas prácticas aplicadas:
-// - Patrón Controlled-ish: el padre es dueño de `fotos` finales vía `onUrls`; aquí solo estado efímero (File + previews).
-// - Sin memory leaks: cada preview crea 1 objectURL y se revoca al eliminar/limpiar/desmontar (ver BUG-F3-01).
-// - Keys estables únicas (crypto.randomUUID), no `name+size` que colisiona con duplicados.
-// - Accesibilidad: dropzone con role=button + teclado Enter/Espacio, errores con role=alert, aria-live.
+/**
+ * Subida de 3-10 imágenes con preview y drag-drop.
+ *
+ * El padre es dueño de las `fotos` finales vía `onUrls`; aquí solo vive estado
+ * efímero (File + previews). Cada preview crea un objectURL que se revoca al
+ * eliminar/limpiar/desmontar. Accesible por teclado (Enter/Espacio en la zona).
+ */
 import { useState, useRef, useEffect } from 'react'
 import { api } from '../services/api'
+import { comprimirImagen } from '../utils/compressImage'
 
 export const UPLOAD_MIN_FILES = 3
 export const UPLOAD_MAX_FILES = 10
 export const UPLOAD_MAX_SIZE = 5 * 1024 * 1024 // 5MB (igual que backend uploads.py MAX_SIZE)
+// Formatos permitidos en cliente (JPG, PNG, WEBP; el backend valida además magia binaria).
+export const UPLOAD_ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp']
+export const UPLOAD_ACCEPT = 'image/jpeg,image/png,image/webp'
+// Bloque 5: iPhone guarda en HEIC/HEIF por defecto. Se detecta por extensión
+// y MIME para dar guía accionable (o convertir con heic2any si está disponible).
+export const HEIC_MIMES = ['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence']
+export const HEIC_EXTS = ['.heic', '.heif']
 
-// BUG-F3-01 (fix): antes `removeFile` revocaba solo el eliminado y RECREABA objectURLs
-// para los restantes sin revocar los viejos -> leak. Ahora cada archivo tiene su propia
-// entrada {key, file, url} y solo se revoca la eliminada. Además cleanup al desmontar.
+export function esArchivoHeic(file) {
+  if (!file) return false
+  const mime = String(file.type || '').toLowerCase()
+  if (HEIC_MIMES.includes(mime)) return true
+  const name = String(file.name || '').toLowerCase()
+  return HEIC_EXTS.some((ext) => name.endsWith(ext))
+}
+
+export const MENSAJE_HEIC =
+  'Tu iPhone guardó esta foto como HEIC, que el servidor no acepta. ' +
+  'Abre Ajustes → Cámara → Formatos → «Más compatible» y vuelve a tomarla, ' +
+  'o conviértela a JPG antes de subirla.'
+
+// Cada archivo tiene su propia entrada {key, file, url}: solo se revoca la
+// eliminada (más cleanup al desmontar).
 const newKey = () =>
   (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`)
 
-export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint = '/api/publicaciones/upload' }) {
+export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint = '/api/publicaciones/upload', onPendientes }) {
   // `items`: [{key, file, url, name, size}] — url es objectURL local para preview (no la final).
   const [items, setItems] = useState([])
   const [error, setError] = useState('')
   const [uploading, setUploading] = useState(false)
-  // BUG-F3-02 (fix): antes `uploadedUrls` iniciaba con `initialUrls` (placeholders Unsplash)
-  // y mostraba "✓ Subidas N URLs" sin haber subido nada. Ahora inicia vacío: solo URLs reales.
+  // Solo URLs realmente subidas (nunca placeholders iniciales).
   const [uploadedUrls, setUploadedUrls] = useState([])
+  const [comprimiendo, setComprimiendo] = useState(false)
   const inputRef = useRef(null)
   // Ref espejo para cleanup al desmontar sin depender del closure (evita revocar de más/menos).
   const itemsRef = useRef([])
   itemsRef.current = items
+
+  // Avisa al padre cuántas fotos están elegidas pero sin subir, para que
+  // pueda guiar ("pulsa Subir antes de Enviar") en vez de un error seco.
+  useEffect(() => {
+    try { onPendientes?.(items.length) } catch { /* noop */ }
+  }, [items.length])
+
+  // Hidrata URLs ya subidas (borrador restaurado): el padre es dueño de
+  // las finales y las pasa por initialUrls; aquí se reflejan como banner
+  // sin obligar a re-seleccionar archivos. Si el padre vacía (Limpiar /
+  // descartar borrador / éxito), se limpia el banner también.
+  useEffect(() => {
+    if (!initialUrls || initialUrls.length === 0) {
+      setUploadedUrls((prev) => (prev.length && itemsRef.current.length === 0 ? [] : prev))
+      return
+    }
+    if (itemsRef.current.length === 0) {
+      setUploadedUrls((prev) => (prev.length === 0 ? [...initialUrls] : prev))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialUrls])
 
   // Revoca todas las previews al desmontar (evita leak si el usuario navega sin Limpiar).
   useEffect(() => {
@@ -47,7 +81,7 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
     }
   }, [])
 
-  const validateAndAdd = (newFiles) => {
+  const validateAndAdd = async (newFiles) => {
     setError('')
     const arr = Array.from(newFiles || [])
     if (items.length + arr.length > UPLOAD_MAX_FILES) {
@@ -55,17 +89,32 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
       return
     }
     for (const f of arr) {
-      if (!f.type || !f.type.startsWith('image/')) {
-        setError(`"${f.name}" no es imagen (solo image/*)`)
+      // Bloque 5: HEIC de iPhone con mensaje accionable (antes: error
+      // genérico). No se convierte en cliente (sin dependencia pesada):
+      // se pide JPG desde Ajustes o conversión previa.
+      if (esArchivoHeic(f)) {
+        setError(`"${f.name}": ${MENSAJE_HEIC}`)
+        return
+      }
+      if (!f.type || !UPLOAD_ALLOWED_TYPES.includes(f.type.toLowerCase())) {
+        setError(`"${f.name}" no es un formato válido (solo JPG, PNG o WEBP)`)
         return
       }
       if (f.size > UPLOAD_MAX_SIZE) {
-        setError(`"${f.name}" excede 5MB (${(f.size / 1024 / 1024).toFixed(1)}MB)`)
+        setError(`"${f.name}" es muy pesada (${(f.size / 1024 / 1024).toFixed(1)}MB). El tamaño máximo permitido es 5 MB.`)
         return
       }
     }
+    // Compresión Canvas (máx 1200px, calidad 0.8) antes de previsualizar/subir.
+    setComprimiendo(true)
+    let livianas = arr
+    try {
+      livianas = await Promise.all(arr.map((f) => comprimirImagen(f)))
+    } finally {
+      setComprimiendo(false)
+    }
     // Solo los nuevos crean objectURL (los existentes se reutilizan, sin recrear).
-    const fresh = arr.map((f) => ({
+    const fresh = livianas.map((f) => ({
       key: newKey(),
       file: f,
       url: URL.createObjectURL(f),
@@ -95,8 +144,7 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
     })
   }
 
-  // BUG-F3-03 (fix): Limpiar ahora propaga `onUrls([])` y el padre DEBE respetarlo
-  // (ver Publicar.jsx: antes `urls.length ? urls : f.fotos` ignoraba el vaciado).
+  // Limpiar propaga `onUrls([])` para que el padre vacíe las fotos.
   const handleClear = () => {
     items.forEach((it) => {
       try { URL.revokeObjectURL(it.url) } catch { /* noop */ }
@@ -128,7 +176,8 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
       setUploadedUrls(urls)
       onUrls(urls)
     } catch (err) {
-      const detail = err.response?.data?.detail
+      // Prefiere el mensaje amigable del interceptor (español no-técnico).
+      const detail = err.mensajeAmigable || err.response?.data?.detail
       setError(
         typeof detail === 'string'
           ? detail
@@ -142,12 +191,12 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
   }
 
   const total = items.length
-  const canUpload = total >= UPLOAD_MIN_FILES && total <= UPLOAD_MAX_FILES && !uploading
+  const canUpload = total >= UPLOAD_MIN_FILES && total <= UPLOAD_MAX_FILES && !uploading && !comprimiendo
 
   return (
     <div className="space-y-3">
       <label className="text-sm font-medium">
-        Fotos reales * <span className="text-neutral-400 font-normal">(3-10, cada una max 5MB, image/*)</span>
+        Fotos reales * <span className="text-neutral-400 font-normal">(3-10, JPG/PNG/WEBP, cada una max 5MB)</span>
       </label>
 
       {/* Drop zone accesible por teclado */}
@@ -166,14 +215,17 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
         tabIndex={0}
         aria-label="Seleccionar fotos"
       >
-        <input ref={inputRef} type="file" multiple accept="image/*" className="hidden" onChange={onInputChange} />
+        <input ref={inputRef} type="file" multiple accept={UPLOAD_ACCEPT} className="hidden" onChange={onInputChange} />
         <p className="text-sm font-medium text-neutral-700">Arrastra fotos aquí o haz clic para seleccionar</p>
         <p className="text-xs text-neutral-400 mt-1" aria-live="polite">
-          {total}/{UPLOAD_MAX_FILES} fotos • {total >= UPLOAD_MIN_FILES ? '✓ mínimo alcanzado' : `faltan ${UPLOAD_MIN_FILES - total} para mínimo`}
+          {comprimiendo
+            ? 'Optimizando imágenes…'
+            : uploading
+              ? 'Subiendo…'
+              : total === 0
+                ? `0/${UPLOAD_MAX_FILES} fotos • elige al menos ${UPLOAD_MIN_FILES} de tu galería o cámara`
+                : `${total}/${UPLOAD_MAX_FILES} fotos • ${total >= UPLOAD_MIN_FILES ? 'listas para subir ✓ (pulsa el botón de abajo)' : `elige ${UPLOAD_MIN_FILES - total} más para poder subir`}`}
         </p>
-        {initialUrls.length > 0 && uploadedUrls.length === 0 && (
-          <p className="text-[11px] text-neutral-400 mt-1">Tienes {initialUrls.length} URLs de ejemplo; sube fotos reales para reemplazarlas.</p>
-        )}
       </div>
 
       {/* Previews locales (objectURL, no son las finales) */}
@@ -186,7 +238,8 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
                 type="button"
                 onClick={() => removeFile(p.key)}
                 aria-label={`Quitar ${p.name}`}
-                className="absolute top-1 right-1 bg-black/60 text-white text-xs w-6 h-6 rounded-full hover:bg-red-600"
+                // M3 táctil: área 44px vía pseudo-elemento (el visible sigue w-6).
+                className="absolute top-1 right-1 bg-black/60 text-white text-xs w-6 h-6 rounded-full hover:bg-red-600 before:absolute before:-inset-2.5 before:content-['']"
               >
                 ×
               </button>
@@ -198,7 +251,11 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
         </div>
       )}
 
-      {/* URLs reales devueltas por el backend (local /uploads/* o Cloudinary secure_url) */}
+      {/* URLs reales devueltas por el backend (local /uploads/* o Cloudinary secure_url).
+          Los archivos elegidos se CONSERVAN tras subir para poder acumular
+          (subir 3, elegir 2 más, subir: cada subida reemplaza las URLs del
+          padre con su propio lote). Sus objectURL siguen vivos para el
+          preview y se revocan al quitar/limpiar/desmontar. */}
       {uploadedUrls.length > 0 && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-3">
           <p className="text-xs font-medium text-green-800">✓ Subidas {uploadedUrls.length} URLs listas para publicar:</p>
@@ -215,9 +272,16 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
           type="button"
           onClick={handleUpload}
           disabled={!canUpload}
+          aria-disabled={!canUpload}
+          aria-busy={uploading}
           className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white py-2.5 rounded-xl font-medium text-sm"
         >
-          {uploading ? 'Subiendo...' : `Subir ${total} fotos → obtener URLs`}
+          {uploading ? (
+            <span className="inline-flex items-center gap-2">
+              <span aria-hidden="true" className="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />
+              Subiendo...
+            </span>
+          ) : `Subir ${total} fotos → obtener URLs`}
         </button>
         {items.length > 0 && (
           <button

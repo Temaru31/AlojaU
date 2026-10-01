@@ -7,11 +7,12 @@ from datetime import datetime
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_optional_user, require_admin
+from app.core.logseguro import exc_resumen
 from app.core.config import settings
 from app.db.session import get_session
 
@@ -24,10 +25,24 @@ MotivoReporte = Literal["POSIBLE_ESTAFA", "DATOS_FALSOS", "INMUEBLE_ARRENDADO", 
 ESTADOS_REVISADOS = ("CONFIRMADO", "DESCARTADO")
 
 
+def _rechazar_html(v: Optional[str]) -> Optional[str]:
+    """Texto plano sin HTML ejecutable (defensa en profundidad: el frontend
+    React escapa por defecto, pero la API también la consumen terceros).
+    Mismo criterio que PublicacionCreate (cubre <img onerror>, <svg>...)."""
+    if v is not None and ("<" in v or ">" in v):
+        raise ValueError("no se permite HTML ni los caracteres < > (texto plano)")
+    return v
+
+
 class ReporteIn(BaseModel):
     publicacion_id: int = Field(gt=0, le=1000000)
     motivo: MotivoReporte
     detalle: Optional[str] = Field(default=None, min_length=0, max_length=500)
+
+    @field_validator("detalle")
+    @classmethod
+    def detalle_sin_html(cls, v):
+        return _rechazar_html(v)
 
 
 class ReporteOut(BaseModel):
@@ -52,6 +67,17 @@ def _mock_enabled() -> bool:
 _REPORT_ATTEMPTS: dict[str, list[float]] = {}
 REPORT_LIMIT = 5
 REPORT_WINDOW_S = 60.0
+
+
+def clear_report_rate_limit_for_tests() -> None:
+    """Limpia el bucket anti-spam (solo tests).
+
+    TestClient siempre usa la misma IP ("testclient"): sin limpieza, un
+    archivo que reporta mucho deja al siguiente en 429 según el orden de
+    ejecución (falso negativo intermitente). Patrón del repo (cfr.
+    clear_rol_cache_for_tests en core/security).
+    """
+    _REPORT_ATTEMPTS.clear()
 
 
 def _check_report_rate_limit(request: Request):
@@ -83,13 +109,23 @@ async def crear_reporte(
     db: AsyncSession = Depends(get_session),
     authorization: Optional[str] = Header(None),
 ):
-    """Crea reporte PENDIENTE (anónimo si no hay token). 404 si la publicación no existe."""
-    user = get_optional_user(authorization)
+    """Crea reporte PENDIENTE (anónimo si no hay token).
+
+    Anti-oráculo: inexistente y no-ACTIVO responden el MISMO 404 genérico,
+    para no revelar avisos privados/pendientes por diferencia de respuesta.
+    Solo avisos ACTIVO y de dueño activo son reportables.
+    """
+    user = await get_optional_user(authorization)
     try:
         from app.models import Publicacion, ReportePublicacion
 
         pub = await db.get(Publicacion, payload.publicacion_id)
-        if not pub:
+        if not pub or pub.estado != "ACTIVO":
+            raise HTTPException(status_code=404, detail="Publicación no encontrada")
+        # Dueño en soft-delete: mismo 404 (el aviso es invisible).
+        from app.models import Usuario
+        dueno = await db.get(Usuario, pub.usuario_id)
+        if dueno is not None and getattr(dueno, "eliminado_en", None) is not None:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
         _check_report_rate_limit(request)
         nuevo = ReportePublicacion(
@@ -110,7 +146,7 @@ async def crear_reporte(
             await db.rollback()
         except Exception:
             pass
-        logger.error(f"[reportes crear] DB falló: {e!r}", exc_info=True)
+        logger.error(f"[reportes crear] DB falló: {exc_resumen(e)}", exc_info=True)
         if not _mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
@@ -121,15 +157,37 @@ async def listar_reportes(
     estado: Optional[str] = Query(None, pattern="^(PENDIENTE|CONFIRMADO|DESCARTADO)$"),
     db: AsyncSession = Depends(get_session),
     _admin: dict = Depends(require_admin),
+    # Al final a propósito: llamadas directas existentes usan (estado, db, admin)
+    # posicional. Cota defensiva sin cambiar el shape de respuesta.
+    limit: int = Query(200, ge=1, le=500, description="Cota defensiva: la bandeja crece sin paginar"),
 ):
-    """Lista reportes (filtro opcional por estado), más recientes primero."""
+    """Lista reportes (filtro opcional por estado), más recientes primero.
+
+    Sin paginación histórica: se acota con `limit` (mismo shape de respuesta,
+    sin romper el panel admin) para que la tabla no agote memoria del worker.
+    """
     from app.models import ReportePublicacion
 
-    stmt = select(ReportePublicacion).order_by(ReportePublicacion.id.desc())
-    if estado:
-        stmt = stmt.where(ReportePublicacion.estado == estado)
-    rows = (await db.execute(stmt)).scalars().all()
-    return [_to_out(r) for r in rows]
+    # Llamadas directas (tests/CI) no resuelven el default Query: si llega el
+    # objeto Query en vez de int, se usa la cota por defecto (HTTP sí valida
+    # ge/le vía FastAPI y da 422 fuera de rango).
+    lim = limit if isinstance(limit, int) else 200
+    lim = max(1, min(lim, 500))
+    try:
+        stmt = select(ReportePublicacion).order_by(ReportePublicacion.id.desc())
+        if estado:
+            stmt = stmt.where(ReportePublicacion.estado == estado)
+        rows = (await db.execute(stmt.limit(lim))).scalars().all()
+        return [_to_out(r) for r in rows]
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[reportes listar] DB falló: {exc_resumen(e)}", exc_info=True)
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router.patch("/{reporte_id}", response_model=ReporteOut, summary="HU-010B Revisar reporte (solo ADMIN)")
@@ -142,15 +200,29 @@ async def revisar_reporte(
     """confirmar -> CONFIRMADO (revisado, procede) | descartar -> DESCARTADO. Solo desde PENDIENTE."""
     from app.models import ReportePublicacion
 
-    rep = await db.get(ReportePublicacion, reporte_id)
-    if not rep:
-        raise HTTPException(status_code=404, detail="Reporte no encontrado")
-    if rep.estado != "PENDIENTE":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Reporte ya revisado (estado {rep.estado})",
-        )
-    rep.estado = "CONFIRMADO" if payload.accion == "confirmar" else "DESCARTADO"
-    await db.commit()
-    await db.refresh(rep)
-    return _to_out(rep)
+    try:
+        rep = await db.get(ReportePublicacion, reporte_id)
+        if not rep:
+            raise HTTPException(status_code=404, detail="Reporte no encontrado")
+        if rep.estado != "PENDIENTE":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Reporte ya revisado (estado {rep.estado})",
+            )
+        rep.estado = "CONFIRMADO" if payload.accion == "confirmar" else "DESCARTADO"
+        await db.commit()
+        await db.refresh(rep)
+        return _to_out(rep)
+    except HTTPException:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[reportes revisar] DB falló: {exc_resumen(e)}", exc_info=True)
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")

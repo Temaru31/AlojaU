@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { render, screen, cleanup, waitFor } from '@testing-library/react'
-import { MemoryRouter, Routes, Route } from 'react-router-dom'
-import Detalle from './Detalle'
+import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
+import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom'
+import Detalle, { humanizarTipo } from './Detalle'
 import { api } from '../services/api'
 
-vi.mock('../services/api', () => ({ api: { get: vi.fn() } }))
+vi.mock('../services/api', () => ({ api: { get: vi.fn(), post: vi.fn() } }))
 // Leaflet no corre en jsdom: se mockean hijos visuales (el scroll/botones se prueban aquí).
 vi.mock('../components/MapaZona', () => ({ default: (props) => <div data-testid="mapa" data-aviso={props.aviso ? JSON.stringify(props.aviso) : ''} data-lugar={props.lugar ? JSON.stringify(props.lugar) : ''} /> }))
 vi.mock('../components/GaleriaFotos', () => ({ default: () => <div data-testid="galeria" /> }))
@@ -138,20 +138,31 @@ describe('Detalle 004 sincronización dinámica del mapa', () => {
       })
     })
     renderDetalleQs('?campus_id=3')
-    await waitFor(() => expect(api.get).toHaveBeenCalledWith('/api/publicaciones/1?campus_id=3'))
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith('/api/publicaciones/1?campus_id=3', {}))
     const mapa = await screen.findByTestId('mapa')
     expect(mapa.dataset.lugar).toContain('Campanario')
     expect(mapa.dataset.lugar).toContain('2.4467')
     expect(screen.getByText(/Distancia a Sede Única/)).toBeInTheDocument()
   })
 
-  it('sin ?campus_id= mantiene el comportamiento legacy (sin lugar, etiqueta genérica)', async () => {
+  it('sin ?campus_id= modo inmueble único (sin distancia a campus)', async () => {
     window.scrollTo = vi.fn()
     api.get.mockResolvedValue({ data: { ...pub, distancia_geodesica_m: 320 } })
     renderDetalle()
     await waitFor(() => expect(screen.getByText('Descripción')).toBeInTheDocument())
     expect(screen.getByTestId('mapa').dataset.lugar).toBe('')
-    expect(screen.getByText('Distancia al campus')).toBeInTheDocument()
+    // Tarea 1 (v10): encabezado de vivienda, sin cálculo hacia campus no elegido.
+    expect(screen.getByText('Ubicación de la vivienda')).toBeInTheDocument()
+    expect(screen.queryByText('Distancia al campus')).not.toBeInTheDocument()
+  })
+
+  it('PAUSADO_POR_REPORTE muestra tarjeta explicativa (no el aviso genérico)', async () => {
+    window.scrollTo = vi.fn()
+    api.get.mockResolvedValue({ data: { ...pub, estado: 'PAUSADO_POR_REPORTE' } })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+    expect(screen.getByText(/Anuncio pausado temporalmente/)).toBeInTheDocument()
+    expect(screen.getByText(/contacto está deshabilitado/)).toBeInTheDocument()
   })
 })
 
@@ -181,5 +192,390 @@ describe('Detalle 004 distancias honestas', () => {
     await waitFor(() => expect(screen.getByText('Distancia a Sede Única')).toBeInTheDocument())
     // No hereda los 900 m de otro lugar: no aparece ninguna distancia en el bloque.
     expect(screen.queryByText(/900/)).not.toBeInTheDocument()
+  })
+})
+
+describe('Detalle ramas sin cubrir (contacto, errores, fallbacks)', () => {
+  it('humanizarTipo: conocido traduce, desconocido conserva, vacío informa', () => {
+    expect(humanizarTipo('COMPARTIDO')).toBe('Compartido')
+    expect(humanizarTipo('LOFT')).toBe('LOFT')
+    expect(humanizarTipo(null)).toBe('No informado')
+    expect(humanizarTipo(undefined)).toBe('No informado')
+  })
+
+  it('PENDIENTE muestra aviso ámbar y oculta el WhatsApp', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: { ...pub, estado: 'PENDIENTE' } })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText(/No disponible para contacto por ahora/)).toBeInTheDocument())
+    expect(screen.getByText(/en revisión/)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Contactar por WhatsApp/ })).not.toBeInTheDocument()
+    expect(screen.getByText('Este aviso no está disponible por ahora')).toBeInTheDocument()
+  })
+
+  it('ACTIVO sin teléfono autorizado explica que no hay contacto', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: { ...pub, telefono_whatsapp: null } })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText(/Sin WhatsApp autorizado/)).toBeInTheDocument())
+    expect(screen.queryByRole('link', { name: /Contactar por WhatsApp/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Guardar y avísame si habilita contacto/ })).toBeInTheDocument()
+  })
+
+  it('contacto ya registrado se refleja sin volver a pulsar', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    localStorage.setItem('alojau_contactos', JSON.stringify([{ id: 1, titulo: 'x', fecha: '2026-01-01' }]))
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText(/Ya contactaste este aviso/)).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Ya contacté por otro medio' })).not.toBeInTheDocument()
+  })
+
+  it('storage corrupto no rompe el detalle (contactos e historial opcionales)', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    localStorage.setItem('alojau_contactos', '{roto')
+    localStorage.setItem('alojau_historial', '[roto')
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getAllByText('Habitación cerca Tulcán').length).toBeGreaterThan(0))
+  })
+
+  it('descripción larga ofrece Leer más / Leer menos', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: { ...pub, descripcion: 'Detalle. '.repeat(40) } })
+    renderDetalle()
+    const mas = await screen.findByRole('button', { name: 'Leer más' })
+    fireEvent.click(mas)
+    expect(await screen.findByRole('button', { name: 'Leer menos' })).toBeInTheDocument()
+  })
+
+  it('sin descripción informa que el arrendador no la agregó', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: { ...pub, descripcion: '  ' } })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText(/El arrendador aún no agregó una descripción/)).toBeInTheDocument())
+  })
+
+  it('botón Reportar abre el modal', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Reportar este aviso' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Reportar este aviso' }))
+    expect(screen.getByTestId('reportar')).toBeInTheDocument()
+  })
+
+  it('favorito alterna el toast con enlace a Favoritos', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByRole('button', { name: '♡ Añadir a favoritos' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '♡ Añadir a favoritos' }))
+    expect(await screen.findByText(/Guardado en favoritos/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Ver →' })).toHaveAttribute('href', '/favoritos')
+  })
+
+  it('comparar alterna sin toast cuando hay menos de 2', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByRole('button', { name: '+ Comparar (máx 3)' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '+ Comparar (máx 3)' }))
+    expect(screen.queryByText(/Añadido a comparar/)).not.toBeInTheDocument()
+  })
+
+  it('copiar sin portapapeles no rompe y conserva el botón', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    const btn = await screen.findByRole('button', { name: 'Copiar número' })
+    fireEvent.click(btn)
+    expect(screen.getByRole('button', { name: 'Copiar número' })).toBeInTheDocument()
+    expect(screen.queryByText('✓ Número copiado')).not.toBeInTheDocument()
+  })
+
+  it('Ya contacté por otro medio marca y oculta la acción', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    const btn = await screen.findByRole('button', { name: 'Ya contacté por otro medio' })
+    fireEvent.click(btn)
+    expect(await screen.findByText(/Marcado como contactado/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Ya contacté por otro medio' })).not.toBeInTheDocument()
+  })
+
+  it('canon y depósito nulos muestran No informado (sin total)', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({
+      data: {
+        ...pub, canon_mensual: undefined, canon: undefined,
+        deposito_requerido: null, deposito: null,
+        reglas_convivencia: 'Reglas claras de convivencia',
+        direccion_referencial: 'Calle 5 # 4-70',
+      },
+    })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText('Descripción')).toBeInTheDocument())
+    // R7: +1 por la variante móvil (sticky bar refleja el mismo estado; en
+    // CSS solo una variante es visible, en jsdom conviven ambas).
+    expect(screen.getAllByText('No informado').length).toBe(4)
+    expect(screen.queryByText(/Total primer mes/)).not.toBeInTheDocument()
+  })
+
+  it('respuesta nula informa publicación no encontrada', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: null })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText('Publicación no encontrada')).toBeInTheDocument())
+  })
+
+  it('tipo y servicios crudos se muestran tal cual (badges)', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: { ...pub, tipo_inmueble: 'LOFT', servicios: ['WiFi Fibra', 'Amoblado'] } })
+    renderDetalle()
+    // R7: +1 por los chips deslizables móviles (misma razón que arriba).
+    await waitFor(() => expect(screen.getAllByText('LOFT').length).toBe(3))
+    expect(screen.getAllByText('WiFi Fibra').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('Amoblado').length).toBeGreaterThanOrEqual(1)
+  })
+})
+
+describe('Detalle sticky: precio reactivo sin staleness entre avisos', () => {
+  it('al navegar 1→2 no muestra el precio viejo mientras carga el nuevo', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    const pub2 = { ...pub, id: 2, titulo: 'Apartaestudio segundo aviso', canon_mensual: 900000 }
+    let resolverSegundo = null
+    api.get.mockImplementation((url) => {
+      if (url === '/api/publicaciones/1') return Promise.resolve({ data: pub })
+      if (url === '/api/publicaciones/2') {
+        return new Promise((res) => { resolverSegundo = () => res({ data: pub2 }) })
+      }
+      if (url.includes('/similares')) return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: null })
+    })
+    const IrAlSegundo = () => {
+      const navegar = useNavigate()
+      return <button type="button" onClick={() => navegar('/publicacion/2')}>ir al 2</button>
+    }
+    render(
+      <MemoryRouter initialEntries={['/publicacion/1']}>
+        <Routes>
+          <Route path="/publicacion/:id" element={<><IrAlSegundo /><Detalle /></>} />
+        </Routes>
+      </MemoryRouter>
+    )
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Contacto rápido' })).toBeInTheDocument())
+    expect(screen.getByRole('region', { name: 'Contacto rápido' })).toHaveTextContent('$450.000')
+    // Navega al segundo aviso (fetch pendiente): ni rastro del anterior.
+    fireEvent.click(screen.getByRole('button', { name: 'ir al 2' }))
+    await waitFor(() => expect(screen.queryByText('Habitación cerca Tulcán')).not.toBeInTheDocument())
+    expect(screen.queryByText('$450.000')).not.toBeInTheDocument()
+    resolverSegundo()
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Contacto rápido' })).toHaveTextContent('$900.000'))
+  })
+
+  it('sticky indica depósito aparte para etiqueta inequívoca', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Contacto rápido' })).toBeInTheDocument())
+    expect(screen.getByRole('region', { name: 'Contacto rápido' })).toHaveTextContent('+depósito $200.000')
+  })
+})
+
+describe('Detalle R7 (móvil: carrusel, flotantes, sticky bar)', () => {
+  it('sticky bar con precio y WhatsApp sin tapar contenido (pb-24)', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    const { container } = renderDetalle()
+    await waitFor(() => expect(screen.getByRole('region', { name: 'Contacto rápido' })).toBeInTheDocument())
+    expect(screen.getByRole('link', { name: 'Abrir chat de WhatsApp' })).toHaveAttribute('href', expect.stringContaining('wa.me/573001234567'))
+    expect(container.firstChild.className).toMatch(/pb-24/)
+  })
+
+  it('botones flotantes usan los mismos handlers que desktop (nombres propios)', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText('Descripción')).toBeInTheDocument())
+    // Nombres distintos a los pills de desktop (sin duplicar roles).
+    expect(screen.getByRole('button', { name: 'Guardar en favoritos' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Agregar a comparar' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar en favoritos' }))
+    expect(await screen.findByText(/Guardado en favoritos/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Agregar a comparar' }))
+    expect(screen.queryByText(/Añadido a comparar/)).not.toBeInTheDocument()
+  })
+})
+
+describe('Detalle acciones flotantes (compartir + editar dueño)', () => {
+  it('compartir flotante usa Web Share nativo con título, texto y url', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    const share = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { share, clipboard: { writeText: vi.fn() } })
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText('Descripción')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Compartir esta publicación' }))
+    await waitFor(() => expect(share).toHaveBeenCalledWith(expect.objectContaining({
+      title: expect.stringContaining('Habitación cerca Tulcán'),
+      text: expect.stringContaining('Habitación cerca Tulcán'),
+      url: expect.any(String),
+    })))
+    vi.unstubAllGlobals()
+  })
+
+  it('dueño ve lápiz flotante que abre el editor; terceros no lo ven', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    const AuthCtx = await import('../contexts/AuthContext')
+    const spy = vi.spyOn(AuthCtx, 'useAuth').mockReturnValue({
+      token: 'tok-dueno', user: { id: 7, email: 'd@b.co' }, loading: false,
+      login: vi.fn(), logout: vi.fn(), refresh: vi.fn(),
+    })
+    try {
+      api.get.mockImplementation((url) => {
+        if (url === '/api/publicaciones/1') {
+          return Promise.resolve({ data: { ...pub, usuario_id: 7 } })
+        }
+        return Promise.resolve({ data: null })
+      })
+      renderDetalle()
+      await waitFor(() => expect(screen.getByText('Descripción')).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('button', { name: 'Editar publicación' }))
+      expect(await screen.findByRole('dialog', { name: /Editar Habitación cerca Tulcán/ })).toBeInTheDocument()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('sin dueño no hay lápiz flotante', async () => {
+    window.scrollTo = vi.fn()
+    localStorage.clear()
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByText('Descripción')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Editar publicación' })).not.toBeInTheDocument()
+  })
+})
+
+describe('Detalle v14.1 (sesión en vistas)', () => {
+  it('con token: envía Authorization para que el dueño vea su PENDIENTE', async () => {
+    const AuthCtx = await import('../contexts/AuthContext')
+    const spy = vi.spyOn(AuthCtx, 'useAuth').mockReturnValue({
+      token: 'tok-dueno', user: { email: 'a@b.co' }, loading: false,
+      login: vi.fn(), logout: vi.fn(), refresh: vi.fn(),
+    })
+    try {
+      api.get.mockResolvedValue({ data: pub })
+      renderDetalle()
+      await waitFor(() => expect(api.get).toHaveBeenCalledWith(
+        '/api/publicaciones/1',
+        { headers: { Authorization: 'Bearer tok-dueno' } },
+      ))
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('sin token: no envía Authorization (lectura pública)', async () => {
+    api.get.mockResolvedValue({ data: pub })
+    renderDetalle()
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith('/api/publicaciones/1', {}))
+  })
+})
+
+describe('Detalle v15.2 (dueño, inactivo y similares)', () => {
+  it('dueño ve botón Editar publicación; tercero no', async () => {
+    const AuthCtx = await import('../contexts/AuthContext')
+    const spy = vi.spyOn(AuthCtx, 'useAuth').mockReturnValue({
+      token: 't', user: { id: 9, email: 'a@b.co' }, loading: false,
+      login: vi.fn(), logout: vi.fn(), refresh: vi.fn(),
+    })
+    try {
+      api.get.mockImplementation((url) => {
+        if (url.endsWith('/similares')) return Promise.resolve({ data: { items: [], total: 0 } })
+        if (url.endsWith('/vista')) return Promise.resolve({ data: { vistas: 1, contada: true } })
+        return Promise.resolve({ data: { ...pub, usuario_id: 9 } })
+      })
+      renderDetalle()
+      expect(await screen.findByRole('button', { name: /Editar Habitación cerca Tulcán/ })).toBeInTheDocument()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('M4 dueño ve Historial del inmueble; tercero no', async () => {
+    const AuthCtx = await import('../contexts/AuthContext')
+    const spy = vi.spyOn(AuthCtx, 'useAuth').mockReturnValue({
+      token: 't', user: { id: 9, email: 'a@b.co' }, loading: false,
+      login: vi.fn(), logout: vi.fn(), refresh: vi.fn(),
+    })
+    try {
+      api.get.mockImplementation((url) => {
+        if (url.endsWith('/similares')) return Promise.resolve({ data: { items: [], total: 0 } })
+        if (url.endsWith('/vista')) return Promise.resolve({ data: { vistas: 1, contada: true } })
+        if (url.endsWith('/historial')) return Promise.resolve({ data: { id: 1, items: [
+          { id: 5, evento: 'CREATED', detalle: null, creado_en: '2026-09-10T10:00:00-05:00' },
+          { id: 9, evento: 'PAUSED', detalle: null, creado_en: '2026-09-12T10:00:00-05:00' },
+        ] } })
+        return Promise.resolve({ data: { ...pub, usuario_id: 9 } })
+      })
+      renderDetalle()
+      expect(await screen.findByRole('heading', { name: /Historial del inmueble/ })).toBeInTheDocument()
+      expect(screen.getByText('Creada')).toBeInTheDocument()
+      expect(screen.getByText('Pausada')).toBeInTheDocument()
+      expect(screen.queryByText('CREATED')).not.toBeInTheDocument()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('aviso inactivo muestra banner y similares; contacto oculto', async () => {
+    const AuthCtx = await import('../contexts/AuthContext')
+    const spy = vi.spyOn(AuthCtx, 'useAuth').mockReturnValue({
+      token: 't', user: { id: 9, email: 'a@b.co' }, loading: false,
+      login: vi.fn(), logout: vi.fn(), refresh: vi.fn(),
+    })
+    try {
+      const similar = { ...pub, id: 2, titulo: 'Vecina Tulcán', estado: 'ACTIVO' }
+      api.get.mockImplementation((url) => {
+        if (url.endsWith('/similares')) return Promise.resolve({ data: { items: [similar], total: 1 } })
+        if (url.endsWith('/vista')) return Promise.resolve({ data: { vistas: 5, contada: true } })
+        return Promise.resolve({ data: { ...pub, usuario_id: 9, estado: 'PAUSADO', telefono_whatsapp: '573001234567' } })
+      })
+      renderDetalle()
+      expect(await screen.findByText(/temporalmente pausada o desactualizada/)).toBeInTheDocument()
+      expect(await screen.findByText('Inmuebles similares disponibles en esta zona')).toBeInTheDocument()
+      expect(await screen.findByText('Vecina Tulcán')).toBeInTheDocument()
+      expect(screen.queryByRole('link', { name: /Contactar por WhatsApp/ })).not.toBeInTheDocument()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('404 muestra cortesía de no disponible', async () => {
+    api.get.mockRejectedValue({ response: { status: 404 } })
+    renderDetalle()
+    expect(await screen.findByText('Esta publicación no se encuentra disponible actualmente')).toBeInTheDocument()
   })
 })

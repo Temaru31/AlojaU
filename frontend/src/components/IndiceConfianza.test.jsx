@@ -26,12 +26,17 @@ describe('IndiceConfianza - HU-007 amigable', ()=>{
     // checks verdes: 5 factores ok -> 5 ✓ (más el de la insignia si aplica)
     expect(screen.getAllByText('✓').length).toBeGreaterThanOrEqual(5)
   })
-  it('barra visual con width proporcional', ()=>{
-    const { container } = render(<Indice indice={50} desglose={{completitud:20, telefono:10, fotos:10, vigencia:5, reportes:5}} />)
-    // barra es el div con width inline dentro de bg-gray-200
-    const bar = container.querySelector('div[style*="50%"]')
-    expect(bar).toBeInTheDocument()
-    expect(bar.style.width).toBe('50%')
+  it('anillo SVG con avance proporcional y colores dinámicos', ()=>{
+    const { container, rerender } = render(<Indice indice={50} desglose={{completitud:20, telefono:10, fotos:10, vigencia:5, reportes:5}} />)
+    const anillo = container.querySelector('svg[aria-label="Confianza 50 de 100"] circle[stroke-dasharray]')
+    expect(anillo).toBeInTheDocument()
+    // 50% de C≈163.36 -> 81.7
+    expect(anillo.getAttribute('stroke-dasharray')).toMatch(/^81\.7/)
+    expect(anillo.getAttribute('stroke')).toBe('#f59e0b') // Amarillo >50
+    rerender(<Indice indice={95} desglose={{}} />)
+    expect(container.querySelector('circle[stroke-dasharray]').getAttribute('stroke')).toBe('#10b981') // Verde >80
+    rerender(<Indice indice={30} desglose={{}} />)
+    expect(container.querySelector('circle[stroke-dasharray]').getAttribute('stroke')).toBe('#ef4444') // Rojo <50
   })
   it('desplegable muestra detalles amigables al hacer click', async ()=>{
     const user = userEvent.setup()

@@ -8,11 +8,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from fastapi.staticfiles import StaticFiles
+import asyncio
 import logging
 import os
+import time
 import uuid
+from contextlib import asynccontextmanager
 from app.core.config import settings
-from app.routers import publicaciones, campus, auth, uploads, reportes, admin
+from app.routers import publicaciones, campus, auth, uploads, reportes, admin, ciudades, admin_automation, zonas, housing_types, notificaciones
+
+# Detalle #7 DX local: el OTP se loguea con logger.info pero uvicorn deja el
+# root en WARNING y el código era invisible. En dev/test se sube a INFO para
+# verlo; en prod se respeta el nivel del entorno (sin secretos en logs).
+if getattr(settings, "ENV", "dev") != "prod":
+    logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger("alojau")
 
@@ -36,20 +45,81 @@ CSP_DOCS = (
 )
 PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=()"
 
+def _registrar_webhook_telegram() -> bool:
+    """Registra setWebhook de Telegram (Bot API) de forma best-effort.
+
+    Solo tiene efecto si TELEGRAM_BOT_TOKEN + TELEGRAM_WEBHOOK_URL están
+    configurados. Retorna True si Telegram respondió ok. Nunca lanza
+    (el arranque del servidor jamás depende de Telegram).
+    """
+    import json as _json
+    import urllib.request as _url
+    try:
+        token = (getattr(settings, "TELEGRAM_BOT_TOKEN", "") or "").strip()
+        url = (getattr(settings, "TELEGRAM_WEBHOOK_URL", "") or "").strip()
+        if not token or not url:
+            return False
+        cuerpo: dict = {"url": url}
+        secreto = (getattr(settings, "TELEGRAM_WEBHOOK_SECRET", "") or "").strip()
+        if secreto:
+            cuerpo["secret_token"] = secreto
+        req = _url.Request(
+            f"https://api.telegram.org/bot{token}/setWebhook",
+            data=_json.dumps(cuerpo).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with _url.urlopen(req, timeout=10) as resp:  # noqa: S310
+            rta = _json.loads(resp.read().decode("utf-8") or "{}")
+            return bool(rta.get("ok", False))
+    except Exception as e:
+        logger.warning("[telegram webhook] auto-registro falló: %s", e)
+        return False
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup: registra el webhook de Telegram solo en prod con URL+token.
+
+    Fire-and-forget en background: un Telegram caído o mal configurado no
+    retrasa ni tumba el arranque (el endpoint sigue respondiendo y los logs
+    muestran el resultado). En dev/test no hace nada.
+    """
+    try:
+        if (getattr(settings, "ENV", "dev") or "dev") == "prod":
+            async def _fondo():
+                try:
+                    ok = await asyncio.to_thread(_registrar_webhook_telegram)
+                    if ok:
+                        logger.info("[telegram webhook] auto-registro ok")
+                    else:
+                        logger.warning("[telegram webhook] omitido (sin URL/token) o rechazado")
+                except Exception as e:
+                    logger.warning("[telegram webhook] auto-registro falló: %s", e)
+            asyncio.get_running_loop().create_task(_fondo())
+    except Exception:
+        pass
+    yield
+
+
 app = FastAPI(
     title="AlojaU API",
     version="0.1.0",
     description="MVP vivienda universitaria Popayán - Sprint1: búsqueda por campus, filtros, detalle, publicar PENDIENTE, índice confianza, WhatsApp",
     docs_url=None,  # F1: /docs custom con favicon AlojaU (ver abajo)
+    lifespan=lifespan,
 )
 
 # CORS restringido (DoD-5): nunca "*" con credentials
+# Detalle #10: sin PUT (ningún endpoint lo usa; todo es PATCH/POST) — reduce
+# superficie preflight sin romper contratos.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    # Bloque 2B fix: el frontend envía Idempotency-Key en POST /publicaciones
+    # cross-origin (Vercel -> Render); sin allowlist el preflight falla.
+    allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Request-ID"],
 )
 
 # Headers de seguridad básicos (OWASP)
@@ -78,6 +148,42 @@ async def request_id_middleware(request: Request, call_next):
     response.headers["X-Request-ID"] = request_id
     return response
 
+# SecOps: detector de ráfagas 401/403/429 (fuerza bruta, sondeo IDOR, scrapers).
+# Solo contadores por minuto en memoria — sin IP, sin path, sin query, sin
+# PII (Ley 1581): si el umbral se cruza, un WARNING por minuto con el total.
+# Costo despreciable (un dict + int por respuesta denegada; /health es 200).
+_SEC_BURST: dict[int, int] = {}
+_SEC_BURST_WINDOW_S = 60
+_SEC_BURST_UMBRAL = 30
+_SEC_BURST_ULTIMO_AVISO = {"minuto": 0}
+
+
+def clear_security_burst_for_tests() -> None:
+    _SEC_BURST.clear()
+    _SEC_BURST_ULTIMO_AVISO["minuto"] = 0
+
+
+@app.middleware("http")
+async def security_burst_middleware(request: Request, call_next):
+    response = await call_next(request)
+    try:
+        if response.status_code in (401, 403, 429):
+            minuto = int(time.monotonic() // _SEC_BURST_WINDOW_S)
+            _SEC_BURST[minuto] = _SEC_BURST.get(minuto, 0) + 1
+            for k in [k for k in _SEC_BURST if k < minuto - 1]:
+                _SEC_BURST.pop(k, None)
+            total = _SEC_BURST.get(minuto, 0) + _SEC_BURST.get(minuto - 1, 0)
+            if total >= _SEC_BURST_UMBRAL and _SEC_BURST_ULTIMO_AVISO["minuto"] != minuto:
+                _SEC_BURST_ULTIMO_AVISO["minuto"] = minuto
+                logger.warning(
+                    "[secops] ráfaga de %s respuestas 401/403/429 en ~2min (posible sondeo)",
+                    total,
+                )
+    except Exception:
+        pass
+    return response
+
+
 # OLA5-M7: handler global 500 con traza estructurada + request_id.
 # HTTPException (401/403/404/...) pasa INTACTA (mismo status/detail/headers):
 # Starlette también la dirigiría a un handler de `Exception` por MRO, así que
@@ -102,9 +208,30 @@ def health():
     """Para SLA 98% Tabla18 - Render/Railway lo usa para cold start check (15s)"""
     return {"status": "ok", "service": "AlojaU API", "version": "0.1.0", "sprint": "Sprint1 HU-001,002,003,005,007,008"}
 
+
+@app.get("/api/v1/ping", tags=["infra"])
+def ping():
+    """Alias del healthcheck para el keep-alive del frontend.
+
+    Algunos bloqueadores (Brave Shields/AdBlock) filtran la ruta /health y
+    ensucian la consola con net::ERR_BLOCKED_BY_CLIENT. /health se conserva
+    para Render (healthCheckPath) y tests; el cliente usa este alias.
+    """
+    return {"status": "ok", "service": "AlojaU API"}
+
 # Static uploads (HU-005) - sirve /uploads/{uuid}.jpg
+# AUDITORÍA PRE-PUSH: makedirs tolerante (contenedor read-only no debe tumbar
+# el arranque; StaticFiles exige dir existente -> se crea bajo try).
 _upload_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
-os.makedirs(_upload_dir, exist_ok=True)
+try:
+    os.makedirs(_upload_dir, exist_ok=True)
+except Exception:
+    logger.warning("[storage] /uploads no escribible al arrancar (FS efímero/solo-lectura)")
+    try:
+        os.makedirs("/tmp/alojau_uploads", exist_ok=True)
+        _upload_dir = "/tmp/alojau_uploads"
+    except Exception:
+        pass
 app.mount("/uploads", StaticFiles(directory=_upload_dir), name="uploads")
 
 # Favicon AlojaU para /docs (F1: reemplaza rayo FastAPI por marca propia)
@@ -124,13 +251,20 @@ async def custom_docs():
         swagger_favicon_url="/static/favicon.svg",
     )
 
-# Routers Sprint1 + T1 reportes + RBAC admin
+# Routers Sprint1 + T1 reportes + RBAC admin + multiciudad + automation + zonas + M2 housing
+app.include_router(ciudades.router)
+app.include_router(zonas.router)
+app.include_router(admin_automation.router)
 app.include_router(campus.router)
 app.include_router(publicaciones.router)
 app.include_router(auth.router)
 app.include_router(uploads.router)
 app.include_router(reportes.router)
 app.include_router(admin.router)
+app.include_router(housing_types.router_public)
+app.include_router(housing_types.router_admin)
+app.include_router(notificaciones.router)
+app.include_router(notificaciones.router_busquedas)
 
 # Legacy mock endpoints removidos: ahora en routers/publicaciones.py y routers/campus.py
 # - GET /api/publicaciones?campus_id=&precio_min=&precio_max=&tipo=&servicios=  (HU-001+002)

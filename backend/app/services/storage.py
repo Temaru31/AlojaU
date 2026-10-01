@@ -34,14 +34,30 @@ class StorageBackend(ABC):
 
 
 class LocalStorageBackend(StorageBackend):
-    """Dev/test: disco local + URL `{base}/uploads/{filename}`."""
+    """Dev/test: disco local + URL `{base}/uploads/{filename}`.
+
+    AUDITORÍA PRE-PUSH (avatar M3): en Render el disco es EFÍMERO (se borra
+    al redeploy/reiniciar). Solo para dev/test; en prod se exige Cloudinary
+    (ver `get_storage_backend` + aviso en logs). El `makedirs` es tolerante
+    para no tumbar el arranque en contenedores con FS de solo lectura: si
+    falla, el `save` posterior responde 503 graceful (nunca 500 crudo).
+    """
 
     name = "local"
 
     def __init__(self, upload_dir: str, base_url: str):
         self.upload_dir = os.path.abspath(upload_dir)
         self.base_url = base_url.rstrip("/")
-        os.makedirs(self.upload_dir, exist_ok=True)
+        try:
+            os.makedirs(self.upload_dir, exist_ok=True)
+        except Exception:
+            # Contenedor serverless con FS read-only: no se tumba el import;
+            # `save` fallará graceful con 503 y el avatar no se persiste.
+            import logging as _lg
+            _lg.getLogger("alojau.storage").warning(
+                "[storage] upload_dir no escribible (FS efímero/solo-lectura): %s",
+                self.upload_dir,
+            )
 
     def save(self, content: bytes, filename: str, mime: str) -> str:
         # Defensa path traversal aunque el router ya usa uuid.
@@ -112,15 +128,65 @@ class CloudinaryStorageBackend(StorageBackend):
         return url
 
 
+def es_persistente() -> bool:
+    """True si el backend efectivo es persistente (Cloudinary)."""
+    return bool(settings.cloudinary_configured)
+
+
+def borrar_local_si_huerfano(url: str | None, prefijo: str = "avatar-") -> bool:
+    """Borrado best-effort de un archivo huérfano del storage local.
+
+    Solo actúa si `url` apunta al storage local (`/uploads/<prefijo>*`);
+    URLs Cloudinary/externas se ignoran siempre. Incluye defensa
+    anti-traversal (el destino debe quedar dentro de `backend/uploads/`).
+    Retorna True si borró algo. Nunca lanza.
+    """
+    try:
+        if not url:
+            return False
+        from urllib.parse import urlparse as _up
+        path = _up(str(url)).path or ""
+        if not path.startswith("/uploads/"):
+            return False
+        nombre = os.path.basename(path)
+        if not nombre or not nombre.startswith(prefijo):
+            return False
+        base = get_storage_backend(base_url="http://localhost")
+        upload_dir = getattr(base, "upload_dir", None)
+        if not upload_dir:
+            return False  # Backend persistente (Cloudinary): nada que borrar.
+        upload_dir = os.path.abspath(upload_dir)
+        dest = os.path.abspath(os.path.join(upload_dir, nombre))
+        if not dest.startswith(upload_dir) or not os.path.isfile(dest):
+            return False
+        os.remove(dest)
+        return True
+    except Exception:
+        return False
+
+
 def get_storage_backend(base_url: str = "", upload_dir: str = "") -> StorageBackend:
     """Factory: Cloudinary si `settings.cloudinary_configured`, si no Local.
 
     Args:
         base_url: base para URLs locales (ej `str(request.base_url)`).
         upload_dir: override solo tests (default `backend/uploads/`).
+
+    AUDITORÍA PRE-PUSH: si `ENV=prod` y no hay Cloudinary, se usa disco
+    EFÍMERO y se deja warning explícito (el avatar/foto se pierde al
+    redeploy; el endpoint responde igual 200 pero no es durable).
     """
     if settings.cloudinary_configured:
         return CloudinaryStorageBackend()
+    try:
+        import logging as _lg
+        if getattr(settings, "ENV", "dev") == "prod":
+            _lg.getLogger("alojau.storage").warning(
+                "[storage] prod sin CLOUDINARY_*: se usa disco EFÍMERO "
+                "(Render lo borra al redeploy). Configura CLOUDINARY_*."
+            )
+    except Exception:
+        pass
     default_dir = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "../../uploads")
     )

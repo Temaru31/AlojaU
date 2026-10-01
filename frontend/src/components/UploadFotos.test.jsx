@@ -24,12 +24,20 @@ const pickFiles = (input, files) => {
 }
 
 describe('F3 UploadFotos', () => {
-  it('renderiza dropzone + contador 0/10 y no muestra banner falso con initialUrls', () => {
+  it('renderiza dropzone + contador 0/10 e hidrata URLs ya subidas (borrador)', () => {
     render(<UploadFotos token="t" onUrls={vi.fn()} initialUrls={['https://x/1.jpg']} />)
     expect(screen.getByRole('button', { name: 'Seleccionar fotos' })).toBeInTheDocument()
     expect(screen.getByText(/0\/10 fotos/)).toBeInTheDocument()
-    // BUG-F3-02: antes mostraba "✓ Subidas 1 URLs" sin subir. Ahora no.
-    expect(screen.queryByText(/Subidas .* URLs listas/)).not.toBeInTheDocument()
+    // Hidratación legítima: refleja las URLs del padre sin re-seleccionar.
+    expect(screen.getByText(/Subidas 1 URLs listas/)).toBeInTheDocument()
+    expect(screen.getByText('https://x/1.jpg')).toBeInTheDocument()
+  })
+
+  it('vaciar initialUrls limpia el banner (Limpiar / descartar borrador)', async () => {
+    const { rerender } = render(<UploadFotos token="t" onUrls={vi.fn()} initialUrls={['https://x/1.jpg']} />)
+    expect(await screen.findByText(/Subidas 1 URLs listas/)).toBeInTheDocument()
+    rerender(<UploadFotos token="t" onUrls={vi.fn()} initialUrls={[]} />)
+    await waitFor(() => expect(screen.queryByText(/Subidas .* URLs listas/)).not.toBeInTheDocument())
   })
 
   it('exige mínimo 3 fotos antes de subir (HU-005 C2)', async () => {
@@ -37,18 +45,20 @@ describe('F3 UploadFotos', () => {
     const input = document.querySelector('input[type="file"]')
     pickFiles(input, [img('a.png'), img('b.png')])
     // Con 2/10 el botón está deshabilitado (defensa) y el dropzone indica faltante.
-    expect(await screen.findByText(/faltan 1 para mínimo/)).toBeInTheDocument()
+    expect(await screen.findByText(/elige 1 más para poder subir/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Subir 2 fotos/ })).toBeDisabled()
     expect(api.post).not.toHaveBeenCalled()
   })
 
-  it('rechaza no-imagen y >5MB sin llamar al backend', async () => {
+  it('rechaza formato inválido y >5MB sin llamar al backend', async () => {
     render(<UploadFotos token="t" onUrls={vi.fn()} />)
     const input = document.querySelector('input[type="file"]')
     pickFiles(input, [new File(['x'], 'doc.txt', { type: 'text/plain' })])
-    expect(await screen.findByText(/no es imagen/)).toBeInTheDocument()
+    expect(await screen.findByText(/no es un formato válido.*JPG, PNG o WEBP/)).toBeInTheDocument()
+    pickFiles(input, [new File(['x'], 'anim.gif', { type: 'image/gif' })])
+    expect(await screen.findByText(/no es un formato válido/)).toBeInTheDocument()
     pickFiles(input, [img('big.png', 6 * 1024 * 1024)])
-    expect(await screen.findByText(/excede 5MB/)).toBeInTheDocument()
+    expect(await screen.findByText(/muy pesada.*máximo permitido es 5 MB/)).toBeInTheDocument()
     expect(api.post).not.toHaveBeenCalled()
   })
 
@@ -63,7 +73,8 @@ describe('F3 UploadFotos', () => {
     render(<UploadFotos token="tok-arr" onUrls={onUrls} />)
     const input = document.querySelector('input[type="file"]')
     pickFiles(input, [img('a1.png'), img('a2.png'), img('a3.png')])
-    fireEvent.click(screen.getByRole('button', { name: /Subir 3 fotos/ }))
+    // validateAndAdd es async (compresión Canvas): espera el botón habilitado.
+    fireEvent.click(await screen.findByRole('button', { name: /Subir 3 fotos/ }))
     await waitFor(() =>
       expect(api.post).toHaveBeenCalledWith(
         '/api/publicaciones/upload',
@@ -97,5 +108,17 @@ describe('F3 UploadFotos', () => {
     fireEvent.click(btns[0])
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1)
     expect(screen.getByText(/2\/10 fotos/)).toBeInTheDocument()
+  })
+
+  it('Bloque 5: HEIC de iPhone se detecta con guía accionable', async () => {
+    const { esArchivoHeic } = await import('./UploadFotos')
+    expect(esArchivoHeic(new File(['x'], 'foto.heic', { type: 'image/heic' }))).toBe(true)
+    expect(esArchivoHeic(new File(['x'], 'foto.HEIF', { type: '' }))).toBe(true)
+    expect(esArchivoHeic(img('a.png'))).toBe(false)
+    render(<UploadFotos token="t" onUrls={vi.fn()} />)
+    const input = document.querySelector('input[type="file"]')
+    pickFiles(input, [new File(['x'], 'IMG_001.heic', { type: 'image/heic' })])
+    expect(await screen.findByText(/HEIC.*Más compatible/)).toBeInTheDocument()
+    expect(api.post).not.toHaveBeenCalled()
   })
 })

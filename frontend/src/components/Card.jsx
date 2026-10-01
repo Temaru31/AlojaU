@@ -1,37 +1,29 @@
-import { getLabelIndice, formatDistancia } from '../utils/formatters'
+import { useRef, useState } from 'react'
+import { formatDistancia } from '../utils/formatters'
 import { formatTiempoCaminando } from '../utils/formatters'
 import SmartImage from './SmartImage'
+import BadgeConfianza from './BadgeConfianza'
 import { notifyToast } from './Toast'
 import { useFavoritos } from '../contexts/FavoritosContext'
 import { useComparar } from '../contexts/CompararContext'
+import { portadaUrl, fotosOrdenadas } from '../utils/portada'
 
 export default function Card({ pub, lugarNombre = null }) {
   const favHook = useFavoritos()
   const compHook = useComparar()
   // NUEVO(<=3ln): indice null -> 0 para no mostrar "— Básico"
   const indice = pub.indice_confianza ?? 0
-  const level = indice >= 80 ? 'high' : indice >= 50 ? 'mid' : 'low'
-
-  // UX: semántica visual Alto=verde, Medio=naranja (no amarillo: es el corporativo), Bajo=rojo.
-  const badgeStyles = {
-    high: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
-    mid: 'bg-orange-50 text-orange-700 border border-orange-200',
-    low: 'bg-red-50 text-red-700 border border-red-200',
-  }
-
-  const dotStyles = {
-    high: 'bg-emerald-500',
-    mid: 'bg-orange-500',
-    low: 'bg-red-500',
-  }
 
   const canon = pub.canon_mensual ?? pub.canon
-  // BUG-08: fallback unificado a "No informado"
+  // Fallback unificado a "No informado".
   const zona = pub.zona_nombre || pub.zona || 'No informado'
   const dist = pub.distancia_geodesica_m ?? pub.dist_m
-  // BUG-08: num_fotos real (??, no valor inventado)
+  // num_fotos real (sin valor inventado).
   const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? (typeof pub.fotos === 'number' ? pub.fotos : 0))
-  const cover = Array.isArray(pub.fotos) ? pub.fotos[0] : null
+  // BUG#1: la portada es orden=1 (ver utils/portada). La API ya trae
+  // fotos[0] ordenada, pero se resuelve vía helper para sobrevivir a
+  // refetch/comparar/favoritos aunque el payload traiga imagenes.
+  const cover = portadaUrl(pub)
   const tiempo = formatTiempoCaminando(dist)
   // 004 POIs: badge destacado "A X m · Y min a pie de [Lugar]" cuando hay
   // contexto de cercanía; sin lugar se conserva el texto legado.
@@ -42,13 +34,53 @@ export default function Card({ pub, lugarNombre = null }) {
   const isFav = favHook.isFav(pub.id)
   const isComp = compHook.isSelected(pub.id)
 
+  // Carousel táctil en la tarjeta (sin abrir el detalle).
+  const fotos = fotosOrdenadas(pub)
+  const [fotoIdx, setFotoIdx] = useState(0)
+  const touchX = useRef(null)
+  const huboSwipe = useRef(false)
+  const totalFotos = fotos.length
+  const irFoto = (dir) => {
+    if (totalFotos < 2) return
+    setFotoIdx((i) => (i + dir + totalFotos) % totalFotos)
+  }
+  const onTouchStart = (e) => {
+    huboSwipe.current = false
+    touchX.current = e.touches?.[0]?.clientX ?? null
+  }
+  const onTouchEnd = (e) => {
+    if (touchX.current == null) return
+    const fin = e.changedTouches?.[0]?.clientX
+    if (fin == null) return
+    const dx = fin - touchX.current
+    touchX.current = null
+    if (Math.abs(dx) < 40 || totalFotos < 2) return
+    huboSwipe.current = true
+    e.stopPropagation()
+    irFoto(dx < 0 ? 1 : -1)
+  }
+  // Tras un swipe, el tap que sigue NO debe navegar al detalle (la tarjeta vive en un <Link>).
+  const frenarClickPostSwipe = (e) => {
+    if (huboSwipe.current) {
+      huboSwipe.current = false
+      e.preventDefault()
+      e.stopPropagation()
+    }
+  }
+
   return (
     <div className="card-hover group p-0 overflow-hidden min-w-0">
-      {/* Image */}
-      <div className="h-36 sm:h-40 w-full overflow-hidden bg-gradient-to-br from-navy-50 to-neutral-100 relative">
+      {/* Image + carousel táctil */}
+      <div
+        className="h-36 sm:h-40 w-full overflow-hidden bg-gradient-to-br from-navy-50 to-neutral-100 relative"
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+        onClickCapture={frenarClickPostSwipe}
+      >
         {cover ? (
           <SmartImage
-            src={cover}
+            key={fotos[fotoIdx] || cover}
+            src={fotos[fotoIdx] || cover}
             alt={pub.titulo}
             className="w-full h-full object-cover group-hover:scale-[1.02] transition"
             eager={false}
@@ -60,11 +92,28 @@ export default function Card({ pub, lugarNombre = null }) {
             </svg>
           </div>
         )}
-        {/* Confidence badge */}
-        <div className={`absolute top-3 left-3 badge ${badgeStyles[level]}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${dotStyles[level]}`} />
-          {indice} — {getLabelIndice(indice)}
+        {/* Badge minimalista de confianza (tooltip con el detalle) */}
+        <div className="absolute top-3 left-3">
+          <BadgeConfianza indice={indice} />
         </div>
+        {/* Dots + contador del carousel (stopPropagation: no navegan al detalle) */}
+        {totalFotos > 1 && (
+          <div className="absolute bottom-3 left-3 flex items-center gap-1.5" role="group" aria-label={`Fotos: ${fotoIdx + 1} de ${totalFotos}`}>
+            <span className="text-[10px] font-bold text-white bg-black/50 rounded-full px-1.5 py-0.5" aria-hidden="true">
+              {fotoIdx + 1}/{totalFotos}
+            </span>
+            {fotos.slice(0, 5).map((_, i) => (
+              <button
+                key={i}
+                type="button"
+                aria-label={`Ver foto ${i + 1}`}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFotoIdx(i) }}
+                // M3 táctil: área extendida invisible (el punto visible sigue w-2).
+                className={`relative w-2 h-2 rounded-full transition before:absolute before:-inset-2.5 before:content-[''] ${i === Math.min(fotoIdx, 4) ? 'bg-white scale-110' : 'bg-white/50 hover:bg-white/80'}`}
+              />
+            ))}
+          </div>
+        )}
         {/* Favorito */}
         <button
           type="button"

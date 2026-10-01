@@ -54,12 +54,35 @@ def crear_publicacion(titulo_extra="") -> int:
 
 
 def patch_fecha_mock(pub_id: int, fecha: datetime):
-    """Fuerza fecha_expiracion en MOCK_PUBS (sólo modo mock sin PG)."""
+    """Fuerza fecha_expiracion en MOCK_PUBS (modo mock) y en PG (modo DB real)."""
     from app.routers.publicaciones import MOCK_PUBS
     for p in MOCK_PUBS:
         if p["id"] == pub_id:
             p["fecha_expiracion"] = fecha
             break
+    # Si hay PG real, parchea la fila DB también (el test crea vía POST real).
+    try:
+        import asyncio
+
+        import asyncpg
+
+        async def _patch():
+            import os
+
+            raw = os.getenv("DATABASE_URL", "postgresql://alojau:alojau123@localhost:5432/alojau")
+            dsn = raw.replace("postgresql+asyncpg://", "postgresql://")
+            conn = await asyncpg.connect(dsn)
+            try:
+                await conn.execute(
+                    "UPDATE publicaciones SET fecha_expiracion=$1 WHERE id=$2",
+                    fecha, pub_id,
+                )
+            finally:
+                await conn.close()
+
+        asyncio.run(_patch())
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------

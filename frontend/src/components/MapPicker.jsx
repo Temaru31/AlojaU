@@ -41,18 +41,24 @@ export default function MapPicker({ lat, lng, onChange, onAddressSuggestion, onG
   }
 
   // Reverse-geocode al fijar punto (debounce implícito: solo tras pick estable).
+  // Estado determinista: ningún camino deja "Buscando dirección…" eterno
+  // (Quitar el pin antes de 800ms cancelaba el timer con buscandoDir=true).
   useEffect(() => {
-    if (!tienePunto) { setSugerencia(''); return }
+    if (!tienePunto) { setSugerencia(''); setBuscandoDir(false); return }
     const id = ++seq.current
     setBuscandoDir(true)
     const t = window.setTimeout(async () => {
-      const dir = await reverseGeocode(Number(lat), Number(lng))
-      if (seq.current === id) {
-        setSugerencia(dir || '')
-        setBuscandoDir(false)
+      try {
+        const dir = await reverseGeocode(Number(lat), Number(lng))
+        if (seq.current === id) setSugerencia(dir || '')
+      } finally {
+        if (seq.current === id) setBuscandoDir(false)
       }
     }, 800)
-    return () => window.clearTimeout(t)
+    return () => {
+      window.clearTimeout(t)
+      if (seq.current === id) setBuscandoDir(false)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lat, lng])
 

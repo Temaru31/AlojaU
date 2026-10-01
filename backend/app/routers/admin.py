@@ -8,7 +8,7 @@ Endpoints (todos solo ADMIN via require_admin -> 401 sin token, 403 sin rol):
 
 Sprint: mock en memoria si no hay PG (solo dev, mismo patrón que publicaciones).
 """
-from typing import List, Literal, Optional
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from pydantic import BaseModel, Field
@@ -17,6 +17,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import require_admin
+from app.core.logseguro import exc_resumen
 from app.db.session import get_session
 from app.core.config import settings
 from app.core.pagination import paginate_params, build_paginated
@@ -40,6 +41,10 @@ class MetricasOut(BaseModel):
     pendientes: int = 0
     reportes_activos: int = 0
     reportes_pendientes: int = 0
+    # M1 aditivo: inmuebles distintos con al menos 1 reporte PENDIENTE
+    # (COUNT DISTINCT publicacion_id WHERE estado='PENDIENTE').
+    # `reportes_activos` se mantiene intacto (denuncias totales acumuladas).
+    inmuebles_con_reportes: int = 0
     arrendadores_verificados: int = 0
     total_usuarios: int = 0
 
@@ -50,32 +55,60 @@ class CambioEstadoIn(BaseModel):
 
 ESTADO_A_EVENTO = {"ACTIVO": "APPROVED", "RECHAZADO": "REJECTED", "PAUSADO": "PAUSED"}
 
+# Re-export de compatibilidad (fuente única: services/notifications).
+from app.services.notifications import MENSAJE_ESTADO_DUENO  # noqa: E402
+
+
+async def _notificar_dueno_estado(db, usuario_id: int | None, titulo: str, estado: str) -> str:
+    """Avisa al dueño del cambio de estado (best-effort, nunca rompe el 200).
+
+    Delega en el centro de notificaciones (services/notifications):
+    DM de Telegram si hay chat vinculado, si no queda el aviso dentro de
+    la app (banner de Mis publicaciones). Retorna canal o "none".
+    """
+    try:
+        from app.services import notifications as _nt
+        return await _nt.notificar_cambio_estado(db, usuario_id, titulo, estado)
+    except Exception as e:
+        logger.warning(f"[admin notificar] fallo best-effort: {exc_resumen(e)}")
+        return "none"
+
 
 @router.get("/metricas", response_model=MetricasOut, summary="Admin métricas globales")
 async def metricas(
     db: AsyncSession = Depends(get_session),
     admin: dict = Depends(require_admin),
 ):
-    """Totales para /admin/dashboard. Sin token 401, no-ADMIN 403."""
+    """Totales para /admin/dashboard. Sin token 401, no-ADMIN 403.
+    v14.1: excluye cuentas en soft-delete (inventario visible real)."""
     try:
         from app.models import Publicacion, ReportePublicacion, Usuario
+        from app.repositories.publicacion_repo import dueno_activo_clause
 
-        total = (await db.execute(select(func.count()).select_from(Publicacion))).scalar() or 0
-        activas = (await db.execute(select(func.count()).select_from(Publicacion).where(Publicacion.estado == "ACTIVO"))).scalar() or 0
-        pendientes = (await db.execute(select(func.count()).select_from(Publicacion).where(Publicacion.estado == "PENDIENTE"))).scalar() or 0
+        dueno_ok = dueno_activo_clause(Publicacion)
+        total = (await db.execute(select(func.count()).select_from(Publicacion).where(dueno_ok))).scalar() or 0
+        activas = (await db.execute(select(func.count()).select_from(Publicacion).where(Publicacion.estado == "ACTIVO", dueno_ok))).scalar() or 0
+        pendientes = (await db.execute(select(func.count()).select_from(Publicacion).where(Publicacion.estado == "PENDIENTE", dueno_ok))).scalar() or 0
         rep_act = (await db.execute(select(func.count()).select_from(ReportePublicacion).where(ReportePublicacion.estado.in_(["PENDIENTE", "CONFIRMADO"])))).scalar() or 0
         rep_pen = (await db.execute(select(func.count()).select_from(ReportePublicacion).where(ReportePublicacion.estado == "PENDIENTE"))).scalar() or 0
-        verif = (await db.execute(select(func.count()).select_from(Usuario).where(Usuario.rol == "ARRENDADOR", Usuario.telefono_verificado.is_(True)))).scalar() or 0
-        users = (await db.execute(select(func.count()).select_from(Usuario))).scalar() or 0
+        # M1: inmuebles distintos con reportes PENDIENTE (usa idx_reportes_pub_estado).
+        inmuebles_rep = (await db.execute(
+            select(func.count(func.distinct(ReportePublicacion.publicacion_id))).where(
+                ReportePublicacion.estado == "PENDIENTE")
+        )).scalar() or 0
+        vivos = Usuario.eliminado_en.is_(None)
+        verif = (await db.execute(select(func.count()).select_from(Usuario).where(Usuario.rol == "ARRENDADOR", Usuario.telefono_verificado.is_(True), vivos))).scalar() or 0
+        users = (await db.execute(select(func.count()).select_from(Usuario).where(vivos))).scalar() or 0
         return MetricasOut(
             total_publicaciones=total, activas=activas, pendientes=pendientes,
             reportes_activos=rep_act, reportes_pendientes=rep_pen,
+            inmuebles_con_reportes=int(inmuebles_rep),
             arrendadores_verificados=verif, total_usuarios=users,
         )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] metricas falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] metricas falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -93,6 +126,8 @@ async def metricas(
         pendientes=sum(1 for p in pubs if p.get("estado") == "PENDIENTE"),
         reportes_activos=sum(int(p.get("reportes_activos", 0) or 0) for p in pubs),
         reportes_pendientes=0,
+        # Mock dev sin tabla reportes: 0 inmuebles con pendientes (contrato aditivo).
+        inmuebles_con_reportes=0,
         arrendadores_verificados=sum(1 for u in MOCK_USERS.values() if u.get("rol") == "ARRENDADOR" and u.get("telefono_verificado")),
         total_usuarios=len(MOCK_USERS),
     )
@@ -127,11 +162,11 @@ async def pendientes(
         if not pubs:
             return build_paginated([], total, page, size_norm)
         rep_map, users_map, _ = await repo.fetch_page_aggregates(db, pubs, None)
-        return build_paginated(view.cards_for_page(pubs, rep_map, users_map, {}, None), total, page, size_norm)
+        return build_paginated(view.cards_for_page(pubs, rep_map, users_map, {}, None, True), total, page, size_norm)
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] pendientes falló: {e!r}", exc_info=True)
+        logger.error(f"[DB fallback] pendientes falló: {exc_resumen(e)}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -146,7 +181,7 @@ async def pendientes(
     )
     total = len(filtradas)
     offset, size_norm = paginate_params(page, size)
-    items = [view.mock_to_out(p) for p in filtradas[offset:offset + size_norm]]
+    items = [view.mock_to_out(p, None, True) for p in filtradas[offset:offset + size_norm]]
     return build_paginated(items, total, page, size_norm)
 
 
@@ -158,7 +193,8 @@ async def cambiar_estado(
     admin: dict = Depends(require_admin),
 ):
     """approve->ACTIVO (+audit APPROVED), rechazar->RECHAZADO (+REJECTED), pausar->PAUSADO (+PAUSED).
-    404 si no existe. El dueño ve el cambio en Mis Publicaciones."""
+    404 si no existe. El dueño ve el cambio en Mis Publicaciones y recibe DM
+    de Telegram si vinculó su chat (best-effort)."""
     try:
         from app.models import Publicacion, PublicacionesAudit
 
@@ -172,7 +208,39 @@ async def cambiar_estado(
             evento=ESTADO_A_EVENTO[payload.estado],
             detalle=f"Cambio a {payload.estado} por admin",
         ))
+        # v13.2: si el pase a terminal deja al dueño en 0 vigentes -> democión.
+        try:
+            from app.services import role_lifecycle as _rl
+            await db.flush()
+            await _rl.evaluar_democion(db, p.usuario_id)
+        except Exception:
+            pass
+        # Fase 2: fan-out de alertas solo al aprobar. Savepoint interno +
+        # try: un fallo aquí jamás revierte la aprobación (pre-commit).
+        if payload.estado == "ACTIVO":
+            try:
+                from app.services import notifications_matcher as _nm
+                await _nm.evaluar_y_crear_notificaciones(
+                    db, publicacion_id=pub_id, dueno_id=int(p.usuario_id),
+                    titulo=p.titulo, canon=p.canon_mensual,
+                    campus_ids=[c.campus_id for c in (p.campus_links or [])],
+                    zona_id=p.zona_barrio_id, tipo=p.tipo_inmueble,
+                    servicios_ids=[s.id for s in (p.servicios or [])],
+                )
+            except Exception:
+                pass
+        # Rediseño campanita: aviso in-app al dueño ante cualquier cambio
+        # (aprueba/rechaza/pausa). Helper con savepoint: nunca tumba el flujo.
+        try:
+            from app.services import notifications_matcher as _nm2
+            await _nm2.notificar_moderacion(
+                db, usuario_id=int(p.usuario_id), publicacion_id=pub_id,
+                titulo_pub=p.titulo, estado=payload.estado,
+            )
+        except Exception:
+            pass
         await db.commit()
+        dueno_id, titulo = p.usuario_id, p.titulo
         stmt = (
             select(Publicacion)
             .options(
@@ -184,7 +252,9 @@ async def cambiar_estado(
         )
         p = (await db.execute(stmt)).scalars().unique().one()
         rep_map, users_map, _ = await repo.fetch_page_aggregates(db, [p], None)
-        return view.cards_for_page([p], rep_map, users_map, {}, None)[0]
+        # Aviso fuera de la app (no bloquea la respuesta si Telegram falla).
+        await _notificar_dueno_estado(db, dueno_id, titulo, payload.estado)
+        return view.cards_for_page([p], rep_map, users_map, {}, None, True)[0]
     except HTTPException:
         try:
             await db.rollback()
@@ -192,7 +262,9 @@ async def cambiar_estado(
             pass
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] admin cambiar_estado {pub_id} falló: {e!r}", exc_info=True)
+        _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
+        _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
+        logger.error(f"[DB fallback] admin cambiar_estado {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -207,7 +279,7 @@ async def cambiar_estado(
     if not pub:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
     pub["estado"] = payload.estado
-    return view.mock_to_out(pub)
+    return view.mock_to_out(pub, None, True)
 
 
 @router.delete("/publicaciones/{pub_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Admin eliminar aviso")
@@ -223,7 +295,15 @@ async def eliminar(
         p = await db.get(Publicacion, pub_id)
         if not p:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
+        dueno_id = p.usuario_id
         await db.delete(p)
+        # v13.2: borrado admin también recuenta inventario del dueño.
+        try:
+            from app.services import role_lifecycle as _rl
+            await db.flush()
+            await _rl.evaluar_democion(db, dueno_id)
+        except Exception:
+            pass
         await db.commit()
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except HTTPException:
@@ -233,7 +313,9 @@ async def eliminar(
             pass
         raise
     except Exception as e:
-        logger.error(f"[DB fallback] admin eliminar {pub_id} falló: {e!r}", exc_info=True)
+        _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
+        _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
+        logger.error(f"[DB fallback] admin eliminar {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
         try:
             await db.rollback()
         except Exception:
@@ -249,3 +331,299 @@ async def eliminar(
             MOCK_PUBS.pop(i)
             return Response(status_code=status.HTTP_204_NO_CONTENT)
     raise HTTPException(status_code=404, detail="Publicación no encontrada")
+
+
+@router.post("/cuentas/purgar", summary="Admin: purga física de cuentas con gracia vencida")
+async def purgar_cuentas(
+    db: AsyncSession = Depends(get_session),
+    admin: dict = Depends(require_admin),
+):
+    """v13.1: borra físicamente cuentas con eliminado_en > 30 días.
+
+    Diseñado para cron (pg_cron o llamada diaria). En dev sin PG purga mocks.
+    """
+    from datetime import datetime, timezone, timedelta
+    from app.routers.auth import CUENTA_GRACE_DAYS
+    corte = datetime.now(timezone.utc) - timedelta(days=CUENTA_GRACE_DAYS)
+    try:
+        from app.models import Usuario
+
+        res = await db.execute(
+            select(Usuario).where(Usuario.eliminado_en.is_not(None),
+                                  Usuario.eliminado_en < corte))
+        n = 0
+        for u in res.scalars().all():
+            await db.delete(u)
+            n += 1
+        await db.commit()
+        return {"purgadas": n, "gracia_dias": CUENTA_GRACE_DAYS}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[DB fallback] purgar_cuentas falló: {exc_resumen(e)}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    from app.routers.auth import MOCK_USERS
+
+    n = sum(1 for m in MOCK_USERS.values() if m.get("eliminado_en"))
+    for em in [em for em, m in MOCK_USERS.items() if m.get("eliminado_en")]:
+        MOCK_USERS.pop(em, None)
+    return {"purgadas": n, "gracia_dias": CUENTA_GRACE_DAYS, "mock": True}
+
+
+class BulkEstadoIn(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=50)
+
+
+@router.post("/publicaciones/bulk-approve", summary="Admin: aprobar en lote (con audit)")
+async def bulk_approve(
+    data: BulkEstadoIn,
+    db: AsyncSession = Depends(get_session),
+    admin: dict = Depends(require_admin),
+):
+    """v15.2 moderación masiva. Transacción única: estados + audit APPROVED."""
+    return await _bulk_cambiar_estado(db, admin, data.ids, "ACTIVO", "APPROVED")
+
+
+@router.post("/publicaciones/bulk-reject", summary="Admin: rechazar en lote (con audit)")
+async def bulk_reject(
+    data: BulkEstadoIn,
+    db: AsyncSession = Depends(get_session),
+    admin: dict = Depends(require_admin),
+):
+    """v15.2 moderación masiva. Transacción única: estados + audit REJECTED."""
+    return await _bulk_cambiar_estado(db, admin, data.ids, "RECHAZADO", "REJECTED")
+
+
+async def _bulk_cambiar_estado(db: AsyncSession, admin: dict, ids: list[int],
+                               estado: str, evento: str) -> dict:
+    """Cambio masivo con democión por dueño en la misma transacción.
+
+    Detalle #1: un bulk-reject total dejaba ARRENDADOR con 0 vigentes sin
+    democionar (los endpoints individuales sí lo hacían). Se recoge el set
+    de dueños afectados por los cambios y se evalúa democión con row-lock
+    antes del commit. Retorna además `democionados: [usuario_ids]`.
+    """
+    from app.models import Publicacion, PublicacionesAudit
+
+    vistos, cambiados, faltantes = [], [], []
+    duenos_afectados: set[int] = set()
+    cambiados_info: list[tuple[int, int, str]] = []  # (pub_id, dueno_id, titulo)
+    try:
+        for pid in dict.fromkeys(ids):
+            if not isinstance(pid, int) or pid < 1:
+                faltantes.append(pid)
+                continue
+            p = await db.get(Publicacion, pid)
+            if not p:
+                faltantes.append(pid)
+                continue
+            vistos.append(pid)
+            if p.estado == estado:
+                continue
+            p.estado = estado
+            db.add(PublicacionesAudit(
+                publicacion_id=pid,
+                usuario_id=admin.get("id") if isinstance(admin.get("id"), int) else None,
+                evento=evento,
+                detalle=f"Cambio masivo a {estado} por admin",
+            ))
+            cambiados.append(pid)
+            try:
+                duenos_afectados.add(int(p.usuario_id))
+                cambiados_info.append((pid, int(p.usuario_id), str(p.titulo or f"aviso {pid}")))
+            except Exception:
+                pass
+        # Misma transacción: flush de estados + democión N->0 por dueño.
+        democionados: list[int] = []
+        if cambiados and duenos_afectados:
+            try:
+                from app.services import role_lifecycle as _rl
+                await db.flush()
+                for dueno_id in sorted(duenos_afectados):
+                    try:
+                        _, demo = await _rl.evaluar_democion(db, dueno_id)
+                        if demo:
+                            democionados.append(dueno_id)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        # Fase 2: fan-out por aviso aprobado (bulk acotado a 50 por schema)
+        # + aviso de moderación al dueño ante cualquier cambio (ACTIVO,
+        # RECHAZADO, PAUSADO). Una query trae relaciones; cada aviso usa su
+        # savepoint aislado y nada tumba el commit.
+        if estado in ("ACTIVO", "RECHAZADO", "PAUSADO") and cambiados:
+            try:
+                from app.services import notifications_matcher as _nm
+                filas = (await db.execute(
+                    select(Publicacion).options(
+                        selectinload(Publicacion.servicios),
+                        selectinload(Publicacion.campus_links),
+                    ).where(Publicacion.id.in_(cambiados))
+                )).scalars().all()
+                for _p in filas:
+                    try:
+                        # Fan-out de alertas SOLO al aprobar (un rechazo jamás
+                        # debe generar "nuevo arriendo" de un aviso invisible).
+                        if estado == "ACTIVO":
+                            await _nm.evaluar_y_crear_notificaciones(
+                                db, publicacion_id=_p.id, dueno_id=int(_p.usuario_id),
+                                titulo=_p.titulo, canon=_p.canon_mensual,
+                                campus_ids=[c.campus_id for c in (_p.campus_links or [])],
+                                zona_id=_p.zona_barrio_id, tipo=_p.tipo_inmueble,
+                                servicios_ids=[s.id for s in (_p.servicios or [])],
+                            )
+                        await _nm.notificar_moderacion(
+                            db, usuario_id=int(_p.usuario_id),
+                            publicacion_id=_p.id, titulo_pub=_p.titulo,
+                            estado=estado,
+                        )
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        await db.commit()
+        # Avisos fuera de la app (best-effort, tras el commit, en paralelo
+        # con tope de 5 para no saturar la Bot API).
+        notificados = 0
+        try:
+            import asyncio as _asyncio
+            _semaforo = _asyncio.Semaphore(5)
+
+            async def _uno(_dueno, _titulo):
+                async with _semaforo:
+                    try:
+                        return await _notificar_dueno_estado(db, _dueno, _titulo, estado)
+                    except Exception:
+                        return "none"
+
+            resultados = await _asyncio.gather(
+                *[_uno(_d, _t) for _p, _d, _t in cambiados_info],
+                return_exceptions=True,
+            )
+            notificados = sum(1 for r in resultados if r != "none" and not isinstance(r, Exception))
+        except Exception:
+            pass
+        return {"estado": estado, "solicitados": len(ids), "cambiados": cambiados,
+                "sin_cambios": [i for i in vistos if i not in cambiados],
+                "no_encontrados": faltantes, "democionados": democionados,
+                "notificados": notificados}
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[DB fallback] bulk {estado} falló: {exc_resumen(e)}", exc_info=True)
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
+
+
+def _mensaje_auditoria_legible(evento: str | None, publicacion_id: int | None, detalle: str | None) -> str:
+    """M1 human-readable: convierte el enum crudo + detalle en frase amigable.
+
+    Ej. RENEWED #14 -> "Renovó expiración del aviso #14". Nunca expone JSON crudo.
+    Aditivo: si el evento es desconocido, devuelve el detalle limpio o el evento.
+    """
+    ev = (evento or "").upper()
+    pid_txt = f" #{int(publicacion_id)}" if publicacion_id is not None else ""
+    mapa = {
+        "CREATED": f"Creó el aviso{pid_txt}",
+        "APPROVED": f"Aprobó el aviso{pid_txt}",
+        "REJECTED": f"Rechazó el aviso{pid_txt}",
+        "PAUSED": f"Pausó el aviso{pid_txt}",
+        "RESUMED": f"Reanudó el aviso{pid_txt}",
+        "RENTED": f"Marcó como arrendado el aviso{pid_txt}",
+        "EXPIRED": f"Expiró el aviso{pid_txt}",
+        "RENEWED": f"Renovó expiración del aviso{pid_txt}",
+        "BLOCKED": f"Bloqueó el aviso{pid_txt}",
+        "SETTINGS": "Actualizó ajustes del sistema",
+        "CUENTA_DELETE": "Eliminó su cuenta",
+    }
+    base = mapa.get(ev)
+    if base:
+        return base
+    # Fallback: detalle legible (corta JSON crudo a 140 chars sin llaves).
+    det = (detalle or "").strip()
+    if det:
+        limpio = det.replace("{", "").replace("}", "").replace('"', "").strip()
+        return f"{ev.title() if ev else 'Evento'}{pid_txt}: {limpio[:140]}" if limpio else (base or ev or "Evento")
+    return base or ev or "Evento"
+
+
+@router.get("/auditoria", summary="Admin: ver log de auditoría (motivos IA/reglas)")
+async def ver_auditoria(
+    publicacion_id: int | None = Query(None, ge=1),
+    evento: str | None = Query(None, max_length=20),
+    page: int = Query(1, ge=1, le=1000),
+    size: int = Query(20, ge=1, le=50),
+    db: AsyncSession = Depends(get_session),
+    admin: dict = Depends(require_admin),
+):
+    """v15.2 trazabilidad: por qué se aprobó/rechazó (humano o auto).
+
+    Filtros opcionales por aviso y evento. Solo lectura.
+
+    M1 enriquecido (aditivo, sin romper contrato): cada item incluye
+    `usuario_email` (batch 1 query WHERE id IN por página), `publicacion_existe`
+    (True si el aviso existe, False si fue eliminado, None si no aplica) y
+    `mensaje_legible` (texto humano, ej. "Renovó expiración del aviso #14").
+    """
+    from app.models import PublicacionesAudit
+    from app.core.pagination import paginate_params
+
+    try:
+        conds = []
+        if publicacion_id:
+            conds.append(PublicacionesAudit.publicacion_id == publicacion_id)
+        if evento:
+            conds.append(PublicacionesAudit.evento == evento)
+        total = (await db.execute(
+            select(func.count()).select_from(PublicacionesAudit).where(*conds))).scalar() or 0
+        offset, size_norm = paginate_params(page, size)
+        rows = (await db.execute(
+            select(PublicacionesAudit).where(*conds)
+            .order_by(PublicacionesAudit.id.desc()).limit(size_norm).offset(offset)
+        )).scalars().all()
+        # M1 batch por página: 1 query usuarios + 1 query publicaciones existentes.
+        email_por_id: dict[int, str | None] = {}
+        existe_por_pub: dict[int, bool] = {}
+        try:
+            from app.models import Publicacion, Usuario
+            uids = sorted({int(r.usuario_id) for r in rows if r.usuario_id is not None})
+            if uids:
+                ures = await db.execute(
+                    select(Usuario.id, Usuario.email).where(Usuario.id.in_(uids)))
+                email_por_id = {int(i): e for i, e in ures.all()}
+            pids = sorted({int(r.publicacion_id) for r in rows if r.publicacion_id is not None})
+            if pids:
+                pres = await db.execute(
+                    select(Publicacion.id).where(Publicacion.id.in_(pids)))
+                vivos = {int(i) for (i,) in pres.all()}
+                existe_por_pub = {pid: (pid in vivos) for pid in pids}
+        except Exception:
+            pass
+        items = []
+        for r in rows:
+            pid = r.publicacion_id
+            items.append({
+                "id": r.id, "publicacion_id": pid, "usuario_id": r.usuario_id,
+                "evento": r.evento, "detalle": r.detalle,
+                "creado_en": r.creado_en.isoformat() if r.creado_en else None,
+                "usuario_email": email_por_id.get(int(r.usuario_id)) if r.usuario_id is not None else None,
+                "publicacion_existe": (existe_por_pub.get(int(pid)) if pid is not None else None),
+                "mensaje_legible": _mensaje_auditoria_legible(r.evento, pid, r.detalle),
+            })
+        return {"items": items, "total": total, "page": page, "size": size_norm}
+    except HTTPException:
+        raise
+    except Exception as e:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.error(f"[DB fallback] auditoria falló: {exc_resumen(e)}", exc_info=True)
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")

@@ -25,3 +25,16 @@ services:
         value: False
       - key: PYTHON_VERSION
         value: 3.11.0
+      # Bloque 1 Telegram webhook (diagnóstico causa raíz):
+      # - BOT_TOKEN/BOT_USERNAME/WEBHOOK_SECRET se setean manual en dashboard
+      #   (sync:false para no exponer el token en el repo).
+      # - Tras el deploy, registrar UNA vez el webhook con setWebhook
+      #   (ver backend/.env.example). Sin webhook, el /start nunca vincula.
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: TELEGRAM_WEBHOOK_URL
+        sync: false

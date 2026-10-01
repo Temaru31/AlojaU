@@ -5,17 +5,17 @@ const friendly = (indice) => {
     label: 'Confianza Alta',
     color: 'text-emerald-700',
     bg: 'bg-emerald-500',
-    bar: 'bg-emerald-500',
+    ring: '#10b981',
     light: 'bg-emerald-50 border-emerald-200',
     emoji: '✅',
     msg: '¡Se ve bien! Información completa y contacto verificado.',
   }
   if (indice >= 50) return {
     label: 'Confianza Media',
-    color: 'text-orange-700',
-    bg: 'bg-orange-500',
-    bar: 'bg-orange-500',
-    light: 'bg-orange-50 border-orange-200',
+    color: 'text-amber-700',
+    bg: 'bg-amber-400',
+    ring: '#f59e0b',
+    light: 'bg-amber-50 border-amber-200',
     emoji: '⚠️',
     msg: 'Bastante bien, pero revisa detalles antes de pagar.',
   }
@@ -23,7 +23,7 @@ const friendly = (indice) => {
     label: 'Confianza Básica',
     color: 'text-red-700',
     bg: 'bg-red-500',
-    bar: 'bg-red-500',
+    ring: '#ef4444',
     light: 'bg-red-50 border-red-200',
     emoji: '🔍',
     msg: 'Revisa con calma, faltan datos importantes.',
@@ -38,18 +38,38 @@ const friendlyDetails = (desglose = {}) => [
   { key: 'reportes', label: 'Sin reportes', max: 10, val: desglose.reportes || 0, ok: (desglose.reportes || 0) >= 10, tip: 'Nadie ha reportado esta publicación' },
 ]
 
+const RING_R = 26
+const RING_C = 2 * Math.PI * RING_R
+
 export default function IndiceConfianza({ indice = 0, desglose = {} }) {
   const [open, setOpen] = useState(false)
   const f = friendly(indice)
   const details = friendlyDetails(desglose)
+  const clamped = Math.max(0, Math.min(100, Number(indice) || 0))
+  const avance = ((RING_C * clamped) / 100).toFixed(1)
 
   return (
     <div className={`border rounded-xl p-4 sm:p-5 bg-white min-w-0 overflow-hidden ${f.light}`}>
-      {/* Header amigable */}
+      {/* Header amigable con anillo de progreso SVG */}
       <div className="flex items-start gap-3 sm:gap-4 min-w-0">
-        <div className={`w-14 h-14 sm:w-16 sm:h-16 rounded-2xl ${f.bg} text-white flex flex-col items-center justify-center shrink-0 shadow-sm`}>
-          <span className="text-lg sm:text-xl font-extrabold leading-none">{indice}</span>
-          <span className="text-[10px] font-medium opacity-90">/100</span>
+        <div className="relative w-16 h-16 sm:w-20 sm:h-20 shrink-0">
+          <svg viewBox="0 0 64 64" className="w-full h-full -rotate-90" role="img" aria-label={`Confianza ${clamped} de 100`}>
+            <circle cx="32" cy="32" r={RING_R} fill="none" strokeWidth="7" className="stroke-neutral-200" />
+            <circle
+              cx="32"
+              cy="32"
+              r={RING_R}
+              fill="none"
+              stroke={f.ring}
+              strokeWidth="7"
+              strokeLinecap="round"
+              strokeDasharray={`${avance} ${RING_C.toFixed(1)}`}
+            />
+          </svg>
+          <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
+            <span className="text-lg sm:text-xl font-extrabold text-navy-900">{clamped}</span>
+            <span className="text-[10px] font-medium text-neutral-400">/100</span>
+          </div>
         </div>
         <div className="min-w-0 flex-1">
           <p className={`font-bold text-sm sm:text-base flex items-center gap-1.5 ${f.color}`}>
@@ -57,19 +77,6 @@ export default function IndiceConfianza({ indice = 0, desglose = {} }) {
           </p>
           <p className="text-xs sm:text-sm text-neutral-600 mt-1 break-words leading-snug">{f.msg}</p>
           <p className="text-[11px] text-neutral-400 mt-1">No es garantía. Verifica en persona antes de pagar.</p>
-        </div>
-      </div>
-
-      {/* Barra visual */}
-      <div className="mt-4">
-        <div className="flex justify-between text-[11px] text-neutral-500 mb-1">
-          <span>0</span><span>50</span><span>100</span>
-        </div>
-        <div className="w-full bg-neutral-200 rounded-full h-2.5 overflow-hidden">
-          <div className={`h-full rounded-full transition-all duration-500 ${f.bar}`} style={{ width: `${Math.max(4, indice)}%` }} />
-        </div>
-        <div className="flex justify-between text-[10px] text-neutral-400 mt-1">
-          <span>Básico</span><span>Medio</span><span>Alto</span>
         </div>
       </div>
 

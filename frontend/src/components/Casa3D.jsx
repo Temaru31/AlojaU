@@ -13,7 +13,7 @@ function webglDisponible() {
   }
 }
 
-export default function Casa3D() {
+export default function Casa3D({ compact = false }) {
   const contenedorRef = useRef(null)
   const [estado, setEstado] = useState(() => (webglDisponible() ? 'cargando' : 'sin-webgl'))
 
@@ -168,7 +168,7 @@ export default function Casa3D() {
   }, [])
 
   return (
-    <div className="relative h-64 sm:h-80 lg:h-[26rem]" role="img" aria-label="Modelo 3D de una casa girando">
+    <div className={compact ? "relative h-40 md:h-48" : "relative h-64 sm:h-80 lg:h-[26rem]"} role="img" aria-label="Modelo 3D de una casa girando">
       <div
         className="absolute inset-0 pointer-events-none"
         style={{ background: 'radial-gradient(ellipse 62% 52% at 50% 58%, rgba(245,196,69,0.16), transparent 70%)' }}

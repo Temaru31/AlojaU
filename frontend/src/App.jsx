@@ -9,15 +9,27 @@ const Detalle = lazy(() => import('./pages/Detalle'))
 const Publicar = lazy(() => import('./pages/Publicar'))
 const Comparar = lazy(() => import('./pages/Comparar'))
 const Favoritos = lazy(() => import('./pages/Favoritos'))
+const Alertas = lazy(() => import('./pages/Alertas'))
 const AdminReportes = lazy(() => import('./pages/AdminReportes'))
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'))
+const AdminTipos = lazy(() => import('./pages/AdminTipos'))
+// v13 Enterprise Auth: OAuth callback, recovery y legal (Ley 1581).
+const AuthCallback = lazy(() => import('./pages/AuthCallback'))
+const Recuperar = lazy(() => import('./pages/Recuperar'))
+const Restablecer = lazy(() => import('./pages/Restablecer'))
+const Terminos = lazy(() => import('./pages/Terminos'))
+const Privacidad = lazy(() => import('./pages/Privacidad'))
 import ProtectedAdminRoute from './components/ProtectedAdminRoute'
 import ColdStartBanner from './components/ColdStartBanner'
+import ErrorBoundary from './components/ErrorBoundary'
 import Toaster from './components/Toast'
 import BrandMark from './components/BrandMark'
+import Campanita from './components/Campanita'
+import useKeepAlive from './hooks/useKeepAlive'
 import { FavoritosProvider, useFavoritos } from './contexts/FavoritosContext'
 import { CompararProvider, useComparar } from './contexts/CompararContext'
-import { AuthProvider, useAuth, inicialesDe } from './contexts/AuthContext'
+import { AuthProvider, useAuth, inicialesDe, AUTH_EVENT, MIAS_EVENT } from './contexts/AuthContext'
+import { api } from './services/api'
 
 // UX: cada cambio de ruta abre arriba del todo (antes: abrir Perfil/Publicar
 // desde el fondo del home las dejaba scrolleadas abajo). Solo pathname:
@@ -37,7 +49,7 @@ function ScrollToTop() {
 function Nav() {
   const { count: favCount } = useFavoritos()
   const { count: compCount, max: compMax } = useComparar()
-  const { token, user, logout } = useAuth()
+  const { token, user, loading: authLoading, logout } = useAuth()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [userOpen, setUserOpen] = useState(false)
   const location = useLocation()
@@ -45,7 +57,51 @@ function Nav() {
 
   const closeMenu = () => setMobileOpen(false)
   const closeUser = () => setUserOpen(false)
+  // M1 efecto fantasma: la sesión se decide por usuario verificado, no por
+  // token crudo (un token muerto/401 no debe mostrar avatar ni "Mis pubs").
+  const sesionActiva = !!token && !!user && !authLoading
+  const verificando = !!token && (!user || authLoading)
   const displayName = user?.nombre_completo?.trim() || user?.email?.split('@')[0] || 'Mi cuenta'
+
+  // Contador de avisos propios: "Mis publicaciones" se oculta con 0 avisos
+  // confirmados (Usuario Base nuevo) y aparece tras la primera publicación
+  // (cualquier estado). Fail-open: desconocido/error -> visible (nunca
+  // castigar la UX por un fallo de red; sin token no se pide /mias).
+  const [totalMias, setTotalMias] = useState(null)
+  useEffect(() => {
+    let vivo = true
+    // Sin sesión, cargar() resetea a null (fail-open); no hay setState
+    // léxico aquí para no añadir ruido al linter (patrón del repo).
+    const cargar = async () => {
+      // Sin sesión se resetea a null y no se pide /mias (fail-open).
+      if (!sesionActiva || !token) {
+        if (vivo) setTotalMias(null)
+        return
+      }
+      try {
+        const r = await api.get('/api/publicaciones/mias', {
+          params: { size: 1 },
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        // Solo un total numérico oculta el enlace; cualquier otra forma
+        // (error, mock, contrato futuro) mantiene visible (fail-open).
+        const t = r.data?.total
+        if (vivo) setTotalMias(typeof t === 'number' ? t : null)
+      } catch {
+        if (vivo) setTotalMias(null)
+      }
+    }
+    cargar()
+    const refrescar = () => { if (vivo) void cargar() }
+    window.addEventListener(AUTH_EVENT, refrescar)
+    window.addEventListener(MIAS_EVENT, refrescar)
+    return () => {
+      vivo = false
+      window.removeEventListener(AUTH_EVENT, refrescar)
+      window.removeEventListener(MIAS_EVENT, refrescar)
+    }
+  }, [sesionActiva, token])
+  const muestraMisPubs = totalMias !== 0
 
   // BUG-12: cierre del menú móvil con Esc (+ dropdown de usuario)
   useEffect(() => {
@@ -59,7 +115,7 @@ function Nav() {
   useEffect(() => { closeUser() }, [location.pathname])
 
   const mobileLinkCls = (active) =>
-    `flex items-center justify-between px-3 py-2.5 text-sm font-medium rounded-md transition-colors duration-200 ${active ? 'text-navy-800 bg-navy-50' : 'text-neutral-600 hover:bg-neutral-100'
+    `flex items-center justify-between px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-md transition-colors duration-200 ${active ? 'text-navy-800 bg-navy-50' : 'text-neutral-600 hover:bg-neutral-100'
     }`
 
   return (
@@ -85,14 +141,7 @@ function Nav() {
               >
                 Comparar {compCount > 0 && <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full ml-1">{compCount}/{compMax}</span>}
               </Link>
-              <Link
-                to="/perfil"
-                className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive('/perfil') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
-                  }`}
-              >
-                Mi Perfil
-              </Link>
-              {token && (
+              {sesionActiva && muestraMisPubs && (
                 <Link
                   to="/mis-publicaciones"
                   className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive('/mis-publicaciones') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
@@ -104,13 +153,21 @@ function Nav() {
             </div>
           </div>
 
-          <div className="hidden md:flex items-center gap-3">
+          <div className="hidden md:flex items-center gap-2">
             {favCount > 0 && <span className="text-sm text-neutral-500" aria-label={`${favCount} favoritos`}>♡ {favCount}</span>}
-            {/* UX: navbar según sesión */}
-            {!token ? (
-              <Link to="/perfil" className="px-3 py-2 text-sm font-medium rounded-md text-neutral-500 hover:text-navy-700 hover:bg-neutral-100 transition-colors">
-                Mi Perfil / Iniciar Sesión
-              </Link>
+            {/* Campanita a la izquierda del dropdown de perfil (nunca tras Publicar). */}
+            {sesionActiva && <Campanita token={token} />}
+            {/* Navbar según sesión verificada; con token sin verificar aún, placeholder neutro. */}
+            {!sesionActiva ? (
+              verificando ? (
+                <span className="px-3 py-2 text-sm text-neutral-300 animate-pulse" aria-label="Verificando sesión">
+                  •••
+                </span>
+              ) : (
+                <Link to="/perfil" className="px-3 py-2 text-sm font-medium rounded-md text-neutral-500 hover:text-navy-700 hover:bg-neutral-100 transition-colors">
+                  Iniciar Sesión
+                </Link>
+              )
             ) : (
               <div className="relative">
                 <button type="button"
@@ -120,8 +177,11 @@ function Nav() {
                   aria-haspopup="menu"
                   className="flex items-center gap-2 pl-1 pr-2 py-1 rounded-full border border-neutral-200 hover:border-navy-300 hover:bg-neutral-50 transition"
                 >
-                  <span aria-hidden="true" className="w-8 h-8 rounded-full bg-navy-800 text-white text-xs font-bold flex items-center justify-center">
+                  <span aria-hidden="true" className="relative w-8 h-8 rounded-full bg-navy-800 text-white text-xs font-bold flex items-center justify-center shrink-0">
                     {inicialesDe(user)}
+                    {user?.foto_perfil_url && (
+                      <img src={user.foto_perfil_url} alt="" referrerPolicy="no-referrer" className="absolute inset-0 w-8 h-8 rounded-full object-cover border border-neutral-200 bg-navy-800" onError={(e) => { e.currentTarget.style.display = 'none' }} />
+                    )}
                   </span>
                   <span className="text-sm font-medium text-navy-800 max-w-28 truncate">{displayName}</span>
                   <span aria-hidden="true" className={`text-[10px] text-neutral-400 transition-transform ${userOpen ? 'rotate-180' : ''}`}>▼</span>
@@ -129,27 +189,53 @@ function Nav() {
                 {userOpen && (
                   <>
                     <div aria-hidden="true" onClick={closeUser} className="fixed inset-0 z-40" />
-                    <div role="menu" aria-label="Cuenta" className="absolute right-0 top-11 w-56 rounded-xl border border-neutral-150 shadow-xl bg-white p-2 z-50">
-                      <p className="px-3 py-2 text-xs text-neutral-400 truncate border-b border-neutral-100 mb-1" title={user?.email || ''}>
-                        {user?.email || 'Sesión activa'}
-                      </p>
-                      <Link to="/perfil" onClick={closeUser} role="menuitem" className="block px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-100">
-                        Mi Perfil
+                    <div role="menu" aria-label="Cuenta" className="absolute right-0 top-11 w-64 rounded-2xl border border-neutral-150 shadow-xl bg-white p-2 z-50 animar-subir">
+                      {/* Tarjeta de usuario (mismo lenguaje que el drawer móvil). */}
+                      <Link
+                        to="/perfil"
+                        onClick={closeUser}
+                        role="menuitem"
+                        aria-label="Abrir mi perfil"
+                        className="flex items-center gap-3 px-3 py-3 mb-1 rounded-xl bg-navy-50 border border-navy-100 hover:bg-navy-100 active:bg-navy-100 transition"
+                      >
+                        <span aria-hidden="true" className="relative w-10 h-10 rounded-full bg-navy-800 text-white text-xs font-bold flex items-center justify-center shrink-0">
+                          {inicialesDe(user)}
+                          {user?.foto_perfil_url && (
+                            <img src={user.foto_perfil_url} alt="" referrerPolicy="no-referrer" className="absolute inset-0 w-10 h-10 rounded-full object-cover border border-navy-100 bg-navy-800" onError={(e) => { e.currentTarget.style.display = 'none' }} />
+                          )}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm font-bold text-navy-900 truncate">{displayName}</span>
+                          <span className="block text-[11px] text-neutral-500 truncate">{user?.email || ''}</span>
+                          <span className="inline-block mt-0.5 text-[10px] font-bold px-1.5 py-px rounded bg-white text-navy-700 border border-navy-100">
+                            {user?.rol === 'ADMIN' ? 'Administrador' : user?.rol === 'ARRENDADOR' ? 'Arrendador' : 'Usuario Base'}
+                          </span>
+                        </span>
+                        <span aria-hidden="true" className="text-neutral-400">›</span>
                       </Link>
-                      <Link to="/mis-publicaciones" onClick={closeUser} role="menuitem" className="block px-3 py-2 text-sm font-medium rounded-md text-neutral-600 hover:bg-neutral-100">
-                        Mis Publicaciones
+                      <Link to="/perfil" onClick={closeUser} role="menuitem" className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-xl text-neutral-600 hover:bg-neutral-100 active:bg-neutral-100 transition">
+                        <span aria-hidden="true">👤</span> Mi Perfil
                       </Link>
-                      {user?.rol === 'ADMIN' && (
-                        <Link to="/admin/dashboard" onClick={closeUser} role="menuitem" className="block px-3 py-2 text-sm font-bold rounded-md text-navy-800 bg-navy-50 hover:bg-navy-100">
-                          🛡️ Panel admin
+                      {muestraMisPubs && (
+                        <Link to="/mis-publicaciones" onClick={closeUser} role="menuitem" className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-xl text-neutral-600 hover:bg-neutral-100 active:bg-neutral-100 transition">
+                          <span aria-hidden="true">📢</span> Mis Publicaciones
+                        </Link>
+                      )}
+                      <Link to="/favoritos" onClick={closeUser} role="menuitem" className="flex items-center justify-between gap-2 px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-xl text-neutral-600 hover:bg-neutral-100 active:bg-neutral-100 transition">
+                        <span><span aria-hidden="true">🧡</span> Favoritos</span>
+                        {favCount > 0 && <span className="bg-red-100 text-red-700 text-[11px] font-bold px-1.5 py-0.5 rounded-full" aria-label={`${favCount} favoritos`}>{favCount}</span>}
+                      </Link>
+                      {(user?.rol || '').toUpperCase() === 'ADMIN' && (
+                        <Link to="/admin/dashboard" onClick={closeUser} role="menuitem" className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] text-sm font-bold rounded-xl text-navy-800 bg-navy-50 hover:bg-navy-100 active:bg-navy-100 transition">
+                          <span aria-hidden="true">🛡️</span> Panel Admin
                         </Link>
                       )}
                       <button type="button"
                         onClick={() => { logout(); closeUser() }}
                         role="menuitem"
-                        className="block w-full text-left px-3 py-2 text-sm font-semibold rounded-md text-red-600 hover:bg-red-50 transition-colors"
+                        className="flex items-center justify-center gap-2 w-full px-3 py-2.5 min-h-[44px] mt-1 text-sm font-bold rounded-xl text-red-600 hover:bg-red-50 active:bg-red-100 transition-colors"
                       >
-                        Cerrar sesión
+                        <span aria-hidden="true">🚪</span> Cerrar sesión
                       </button>
                     </div>
                   </>
@@ -160,12 +246,20 @@ function Nav() {
               Publicar
             </Link>
           </div>
+          {/* Campanita móvil en la barra superior (logo + campanita + hamburguesa).
+              Instancia separada de la de desktop: ambas se sincronizan por el
+              evento alojau:notificaciones-change (costo: 2 lecturas tiny/45s). */}
+          {sesionActiva && (
+            <span className="md:hidden inline-flex">
+              <Campanita token={token} />
+            </span>
+          )}
           <button type="button"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-label={mobileOpen ? 'Cerrar menú' : 'Abrir menú'}
             aria-expanded={mobileOpen}
             aria-controls="mobile-menu"
-            className="md:hidden p-2 text-neutral-500 hover:text-navy-700 rounded-md transition-colors duration-200"
+            className="md:hidden p-2 min-h-[44px] min-w-[44px] inline-flex items-center justify-center text-neutral-500 hover:text-navy-700 rounded-md transition-colors duration-200"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               {mobileOpen
@@ -188,13 +282,54 @@ function Nav() {
             id="mobile-menu"
             className="md:hidden absolute inset-x-3 top-[68px] rounded-xl border border-neutral-150 shadow-xl bg-white p-2 z-50 transition-all duration-200"
           >
+            {/* R5 tarjeta destacada de sesión: avatar+nombre+correo+rol → /perfil */}
+            {sesionActiva ? (
+              <Link
+                to="/perfil"
+                onClick={closeMenu}
+                aria-label="Abrir mi perfil"
+                className="flex items-center gap-3 px-3 py-3 mb-1 rounded-xl bg-navy-50 border border-navy-100 active:bg-navy-100 transition"
+              >
+                <span aria-hidden="true" className="relative w-11 h-11 rounded-full bg-navy-800 text-white text-sm font-bold flex items-center justify-center shrink-0">
+                  {inicialesDe(user)}
+                  {user?.foto_perfil_url && (
+                    <img src={user.foto_perfil_url} alt="" referrerPolicy="no-referrer" className="absolute inset-0 w-11 h-11 rounded-full object-cover border border-navy-100 bg-navy-800" onError={(e) => { e.currentTarget.style.display = 'none' }} />
+                  )}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-bold text-navy-900 truncate">{displayName}</span>
+                  <span className="block text-[11px] text-neutral-500 truncate">{user?.email || ''}</span>
+                  <span className="inline-block mt-0.5 text-[10px] font-bold px-1.5 py-px rounded bg-white text-navy-700 border border-navy-100">
+                    {user?.rol === 'ADMIN' ? 'Administrador' : user?.rol === 'ARRENDADOR' ? 'Arrendador' : 'Usuario Base'}
+                  </span>
+                </span>
+                <span aria-hidden="true" className="text-neutral-400">›</span>
+              </Link>
+            ) : (
+              <Link
+                to="/perfil"
+                onClick={closeMenu}
+                className="block w-full px-3 py-3 mb-1 text-sm font-bold text-center text-white bg-navy-800 rounded-xl active:bg-navy-900 transition"
+              >
+                Iniciar sesión / Registrarse
+              </Link>
+            )}
             <Link
               to="/"
               onClick={closeMenu}
               aria-current={isActive('/') ? 'page' : undefined}
               className={mobileLinkCls(isActive('/'))}
             >
-              Buscar vivienda
+              🔍 Buscar vivienda
+            </Link>
+            <Link
+              to="/favoritos"
+              onClick={closeMenu}
+              aria-current={isActive('/favoritos') ? 'page' : undefined}
+              className={mobileLinkCls(isActive('/favoritos'))}
+            >
+              <span>🧡 Favoritos</span>
+              {favCount > 0 && <span className="bg-red-100 text-red-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${favCount} favoritos`}>{favCount}</span>}
             </Link>
             <Link
               to="/comparar"
@@ -202,63 +337,53 @@ function Nav() {
               aria-current={isActive('/comparar') ? 'page' : undefined}
               className={mobileLinkCls(isActive('/comparar'))}
             >
-              <span>Comparar</span>
+              <span>⚖️ Comparar</span>
               <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${compCount} de ${compMax} para comparar`}>{compCount}/{compMax}</span>
             </Link>
-            {/* UX-AUDIT P1: se elimina el item "Favoritos" (apuntaba a "/" = Buscar,
-                enlace muerto). La página /favoritos llega en T3 (BUG-07); el contador
-                ♡ del navbar desktop sigue visible. */}
+            {sesionActiva && muestraMisPubs && (
+              <Link
+                to="/mis-publicaciones"
+                onClick={closeMenu}
+                aria-current={isActive('/mis-publicaciones') ? 'page' : undefined}
+                className={mobileLinkCls(isActive('/mis-publicaciones'))}
+              >
+                📢 Mis Publicaciones
+              </Link>
+            )}
             <Link
-              to="/perfil"
+              to="/alertas"
               onClick={closeMenu}
-              aria-current={isActive('/perfil') ? 'page' : undefined}
-              className={mobileLinkCls(isActive('/perfil'))}
+              aria-current={isActive('/alertas') ? 'page' : undefined}
+              className={mobileLinkCls(isActive('/alertas'))}
             >
-              {token ? (
-                <span className="flex items-center gap-2">
-                  <span aria-hidden="true" className="w-6 h-6 rounded-full bg-navy-800 text-white text-[10px] font-bold flex items-center justify-center">
-                    {inicialesDe(user)}
-                  </span>
-                  <span className="truncate max-w-40">{displayName}</span>
-                </span>
-              ) : 'Mi Perfil / Iniciar Sesión'}
+              🔔 Mis Alertas y Notificaciones
             </Link>
-            {token && (
-              <>
-                <Link
-                  to="/mis-publicaciones"
-                  onClick={closeMenu}
-                  aria-current={isActive('/mis-publicaciones') ? 'page' : undefined}
-                  className={mobileLinkCls(isActive('/mis-publicaciones'))}
-                >
-                  Mis Publicaciones
-                </Link>
-                {user?.rol === 'ADMIN' && (
-                  <Link
-                    to="/admin/dashboard"
-                    onClick={closeMenu}
-                    aria-current={isActive('/admin/dashboard') ? 'page' : undefined}
-                    className={mobileLinkCls(isActive('/admin/dashboard'))}
-                  >
-                    🛡️ Panel admin
-                  </Link>
-                )}
-                <button type="button"
-                  onClick={() => { logout(); closeMenu() }}
-                  className="w-full text-left px-3 py-2.5 text-sm font-semibold rounded-md text-red-600 hover:bg-red-50 transition-colors"
-                >
-                  Cerrar sesión
-                </button>
-              </>
+            {(user?.rol || '').toUpperCase() === 'ADMIN' && (
+              <Link
+                to="/admin/dashboard"
+                onClick={closeMenu}
+                aria-current={isActive('/admin/dashboard') ? 'page' : undefined}
+                className={mobileLinkCls(isActive('/admin/dashboard'))}
+              >
+                🛡️ Panel Admin
+              </Link>
             )}
             <Link
               to="/publicar"
               onClick={closeMenu}
               aria-current={isActive('/publicar') ? 'page' : undefined}
-              className="block w-full px-3 py-2.5 text-sm font-semibold text-navy-900 bg-gold-400 rounded-md text-center mt-1 transition-colors duration-200 hover:bg-gold-500"
+              className="block w-full px-3 py-3 text-sm font-bold text-navy-900 bg-gold-400 rounded-xl text-center mt-1 min-h-[44px] transition-colors duration-200 hover:bg-gold-500 active:bg-gold-500"
             >
-              Publicar vivienda
+              + Publicar vivienda
             </Link>
+            {sesionActiva && (
+              <button type="button"
+                onClick={() => { logout(); closeMenu() }}
+                className="w-full px-3 py-3 mt-1 min-h-[44px] text-sm font-bold rounded-xl text-red-600 hover:bg-red-50 active:bg-red-100 transition-colors"
+              >
+                🚪 Cerrar sesión
+              </button>
+            )}
 
           </div>
         </>
@@ -299,7 +424,11 @@ function Footer() {
         </div>
         <div className="border-t border-neutral-150 mt-8 pt-6 flex flex-col sm:flex-row justify-between items-center gap-2">
           <p className="text-xs text-neutral-400">2026 AlojaU. Todos los derechos reservados.</p>
-          <p className="text-xs text-neutral-400">Universidad del Cauca</p>
+          <p className="text-xs text-neutral-400 flex gap-3">
+            <Link to="/terminos" className="hover:text-navy-600 underline">Términos</Link>
+            <Link to="/privacidad" className="hover:text-navy-600 underline">Privacidad (Ley 1581)</Link>
+            <span>Universidad del Cauca</span>
+          </p>
         </div>
       </div>
     </footer>
@@ -307,13 +436,17 @@ function Footer() {
 }
 
 function App() {
+  // Bloque 3: heartbeat ligero anti cold-start (solo pestaña visible).
+  // Nota: el hook vive aquí (raíz del Router) para cubrir toda la app.
+  useKeepAlive()
   return (
     <BrowserRouter>
+      <ErrorBoundary>
       <ScrollToTop />
       <AuthProvider>
         <FavoritosProvider>
           <CompararProvider>
-            <div className="min-h-screen flex flex-col bg-neutral-50">
+            <div className="min-h-screen min-h-dvh flex flex-col bg-neutral-50 pb-safe">
               <Nav />
               <ColdStartBanner />
               <main className="flex-1">
@@ -334,10 +467,15 @@ function App() {
                     <Route path="/comparar" element={<Comparar />} />
                     <Route path="/publicar" element={<Publicar />} />
                     <Route path="/perfil" element={<Perfil />} />
-                    <Route path="/mis-publicaciones" element={<MisPublicaciones />} />
-                    <Route path="/favoritos" element={<Favoritos />} />
+                    <Route path="/auth/callback" element={<AuthCallback />} />
+                    <Route path="/recuperar" element={<Recuperar />} />
+                    <Route path="/restablecer" element={<Restablecer />} />
+                    <Route path="/terminos" element={<Terminos />} />
+                    <Route path="/privacidad" element={<Privacidad />} />                    <Route path="/mis-publicaciones" element={<MisPublicaciones />} />
+                    <Route path="/alertas" element={<Alertas />} />
                     <Route path="/admin/dashboard" element={<ProtectedAdminRoute><AdminDashboard /></ProtectedAdminRoute>} />
                     <Route path="/admin/reportes" element={<ProtectedAdminRoute><AdminReportes /></ProtectedAdminRoute>} />
+                    <Route path="/admin/tipos-vivienda" element={<ProtectedAdminRoute><AdminTipos /></ProtectedAdminRoute>} />
                   </Routes>
                 </Suspense>
                 <Toaster />
@@ -348,6 +486,7 @@ function App() {
           </CompararProvider>
         </FavoritosProvider>
       </AuthProvider>
+      </ErrorBoundary>
     </BrowserRouter>
   )
 }

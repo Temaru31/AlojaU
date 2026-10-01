@@ -38,6 +38,18 @@ describe('T1 Reportes frontend', () => {
     expect(await screen.findByText(/Gracias, revisaremos/)).toBeInTheDocument()
   })
 
+  it('M5 durante el envío deshabilita y muestra spinner (anti doble-clic)', async () => {
+    let resolver
+    api.post.mockReturnValue(new Promise((res) => { resolver = res }))
+    renderModal()
+    const btn = screen.getByRole('button', { name: 'Enviar anónimo' })
+    fireEvent.click(btn)
+    expect(await screen.findByRole('button', { name: /Enviando/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Enviando/ })).toHaveAttribute('aria-busy', 'true')
+    resolver({ data: { id: 9, estado: 'PENDIENTE' } })
+    expect(await screen.findByText(/Gracias, revisaremos/)).toBeInTheDocument()
+  })
+
   it('modal cierra con tecla Escape (accesibilidad)', async () => {
     const onClose = vi.fn()
     render(<ReportarModal publicacionId={1} titulo="Apto test" onClose={onClose} />)
@@ -57,9 +69,17 @@ describe('T1 Reportes frontend', () => {
     api.get.mockResolvedValue({ data: [{ id: 5, publicacion_id: 1, motivo: 'OTRO', detalle: 'x', estado: 'PENDIENTE', fecha_creacion: null, usuario_id: null }] })
     api.patch.mockResolvedValue({ data: { id: 5, estado: 'CONFIRMADO' } })
     renderAdmin()
-    expect(await screen.findByText(/ver aviso #1/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Confirmar reporte 5/ }))
+    const enlace = await screen.findByRole('link', { name: /Abrir aviso #1 en nueva pestaña/ })
+    expect(enlace).toHaveAttribute('href', '/publicacion/1')
+    expect(enlace).toHaveAttribute('target', '_blank')
+    fireEvent.click(screen.getByRole('button', { name: /Aceptar y pausar anuncio del reporte 5/ }))
     await waitFor(() => expect(api.patch).toHaveBeenCalledWith('/api/reportes/5', { accion: 'confirmar' }, expect.anything()))
+  })
+
+  it('bandeja ofrece desestimar con micro-copy claro', async () => {
+    api.get.mockResolvedValue({ data: [{ id: 6, publicacion_id: 2, motivo: 'OTRO', detalle: '', estado: 'PENDIENTE', fecha_creacion: null, usuario_id: null }] })
+    renderAdmin()
+    expect(await screen.findByRole('button', { name: /Desestimar reporte 6/ })).toHaveTextContent('Desestimar Reporte')
   })
 
   it('bandeja muestra aviso de permiso en 403', async () => {
