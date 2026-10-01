@@ -215,6 +215,20 @@ async def cambiar_estado(
             await _rl.evaluar_democion(db, p.usuario_id)
         except Exception:
             pass
+        # Fase 2: fan-out de alertas solo al aprobar. Savepoint interno +
+        # try: un fallo aquí jamás revierte la aprobación (pre-commit).
+        if payload.estado == "ACTIVO":
+            try:
+                from app.services import notifications_matcher as _nm
+                await _nm.evaluar_y_crear_notificaciones(
+                    db, publicacion_id=pub_id, dueno_id=int(p.usuario_id),
+                    titulo=p.titulo, canon=p.canon_mensual,
+                    campus_ids=[c.campus_id for c in (p.campus_links or [])],
+                    zona_id=p.zona_barrio_id, tipo=p.tipo_inmueble,
+                    servicios_ids=[s.id for s in (p.servicios or [])],
+                )
+            except Exception:
+                pass
         await db.commit()
         dueno_id, titulo = p.usuario_id, p.titulo
         stmt = (
@@ -425,6 +439,30 @@ async def _bulk_cambiar_estado(db: AsyncSession, admin: dict, ids: list[int],
                         _, demo = await _rl.evaluar_democion(db, dueno_id)
                         if demo:
                             democionados.append(dueno_id)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        # Fase 2: fan-out por aviso aprobado (bulk acotado a 50 por schema).
+        # Una query trae relaciones; cada aviso usa su savepoint aislado.
+        if estado == "ACTIVO" and cambiados:
+            try:
+                from app.services import notifications_matcher as _nm
+                filas = (await db.execute(
+                    select(Publicacion).options(
+                        selectinload(Publicacion.servicios),
+                        selectinload(Publicacion.campus_links),
+                    ).where(Publicacion.id.in_(cambiados))
+                )).scalars().all()
+                for _p in filas:
+                    try:
+                        await _nm.evaluar_y_crear_notificaciones(
+                            db, publicacion_id=_p.id, dueno_id=int(_p.usuario_id),
+                            titulo=_p.titulo, canon=_p.canon_mensual,
+                            campus_ids=[c.campus_id for c in (_p.campus_links or [])],
+                            zona_id=_p.zona_barrio_id, tipo=_p.tipo_inmueble,
+                            servicios_ids=[s.id for s in (_p.servicios or [])],
+                        )
                     except Exception:
                         pass
             except Exception:

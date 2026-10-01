@@ -13,6 +13,7 @@ import { contarAvanzados, parseServicios, toggleServicio, PanelPrimario, MasFilt
 import useFocusTrap from '../hooks/useFocusTrap'
 import Paginacion from '../components/Paginacion'
 import SearchBar from '../components/SearchBar'
+import { GuardarAlerta } from './Alertas'
 import { guardarCampusFiltro, guardarFiltrosBuscar, leerFiltrosBuscar, limpiarFiltrosBuscar } from '../utils/persistenciaBuscar'
 
 function parseCiudadId(searchParams) {
@@ -662,7 +663,7 @@ export default function Buscar() {
           </div>
         )}
 
-        <div className="flex items-center justify-between mt-4 mb-5">
+        <div className="flex items-center justify-between gap-2 mt-4 mb-5">
           <div>
             <p className="text-sm text-neutral-600">
               <span className="font-semibold text-navy-800">{pubs.length}</span> {pubs.length === 1 ? 'resultado' : 'resultados'}
@@ -673,6 +674,7 @@ export default function Buscar() {
               )}
             </p>
           </div>
+          <GuardarAlerta filtros={filtros} campusId={campusId} />
         </div>
 
         {loading ? (
