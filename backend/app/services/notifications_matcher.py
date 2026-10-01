@@ -29,6 +29,8 @@ logger = logging.getLogger("alojau.notificaciones")
 PURGA_DIAS = 90
 PURGA_TOPE_FILAS = 500
 
+ESTADO_HUMANO = {"ACTIVO": "aprobado", "RECHAZADO": "rechazado", "PAUSADO": "pausado"}
+
 
 def _titulo_para(titulo_pub: str | None, pub_id: int) -> str:
     base = (titulo_pub or "").strip() or f"aviso {pub_id}"
@@ -132,3 +134,71 @@ async def evaluar_y_crear_notificaciones(
         from app.core.logseguro import exc_resumen
         logger.warning(f"[matcher] enqueue omitido (flujo principal intacto): {exc_resumen(e)}")
         return 0
+
+
+async def crear_notificacion(
+    db: AsyncSession,
+    *,
+    usuario_id: int,
+    tipo: str,
+    titulo: str,
+    cuerpo: str = "",
+    publicacion_id: int | None = None,
+    busqueda_id: int | None = None,
+    evento_id: str,
+) -> int | None:
+    """Inserta UNA notificación con savepoint propio. Nunca lanza.
+
+    Retorna el id creado o None (duplicado por evento_id o cualquier fallo).
+    Misma garantía que el matcher: la operación principal sigue intacta.
+    """
+    try:
+        from app.models import Notificacion
+        async with db.begin_nested():
+            row = Notificacion(
+                usuario_id=int(usuario_id), tipo=tipo,
+                titulo=str(titulo)[:200], cuerpo=str(cuerpo or "")[:2000],
+                publicacion_id=publicacion_id, busqueda_id=busqueda_id,
+                evento_id=evento_id,
+            )
+            db.add(row)
+            await db.flush()
+            return row.id
+    except Exception as e:
+        from app.core.logseguro import exc_resumen
+        logger.warning(f"[notif] fila omitida (flujo principal intacto): {exc_resumen(e)}")
+        return None
+
+
+async def notificar_moderacion(
+    db: AsyncSession,
+    *,
+    usuario_id: int,
+    publicacion_id: int,
+    titulo_pub: str | None,
+    estado: str,
+) -> int | None:
+    """Aviso al dueño tras aprobar/rechazar/pausar. Nunca lanza.
+
+    Dedupe por (aviso, estado): una segunda aprobación idéntica no duplica.
+    """
+    humano = ESTADO_HUMANO.get(estado, estado.lower())
+    base = (titulo_pub or "").strip() or f"aviso {publicacion_id}"
+    return await crear_notificacion(
+        db, usuario_id=usuario_id, tipo="moderacion",
+        titulo=f"Tu aviso fue {humano}: {base[:110]}",
+        cuerpo=f"Estado actual: {humano}. Revísalo en Mis publicaciones.",
+        publicacion_id=int(publicacion_id),
+        evento_id=f"moderacion:{int(publicacion_id)}:{estado}",
+    )
+
+
+async def notificar_telegram_vinculado(db: AsyncSession, *, usuario_id: int) -> int | None:
+    """Bienvenida in-app al vincular Telegram. Nunca lanza."""
+    ahora = int(datetime.now(timezone.utc).timestamp())
+    return await crear_notificacion(
+        db, usuario_id=usuario_id, tipo="telegram",
+        titulo="¡Número verificado con éxito en AlojaU! 🎉",
+        cuerpo="Tu Telegram quedó vinculado y tu número verificado (+20 pts de confianza).",
+        evento_id=f"telegram_vinculado:{int(usuario_id)}:{ahora}",
+    )

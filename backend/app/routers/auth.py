@@ -2152,6 +2152,7 @@ async def _webhook_contacto(db: AsyncSession, chat_id: str, from_id, contacto: d
             )
             return {"ok": True, "vinculado": False, "motivo": "numero-distinto"}
         # Todo coincide: VERIFICA el teléfono + vincula + quema en transacción.
+        # Más fila de bienvenida in-app (misma TX, savepoint propio).
         try:
             if isinstance(usuario, dict):
                 usuario["telegram_chat_id"] = str(chat_id)
@@ -2159,6 +2160,11 @@ async def _webhook_contacto(db: AsyncSession, chat_id: str, from_id, contacto: d
             else:
                 usuario.telegram_chat_id = str(chat_id)
                 usuario.telefono_verificado = True
+            try:
+                from app.services import notifications_matcher as _nm
+                await _nm.notificar_telegram_vinculado(db, usuario_id=int(pend["user_id"]))
+            except Exception:
+                pass
             row, nonce = pend.get("row"), pend.get("nonce")
             if row is not None:
                 row.usado = True

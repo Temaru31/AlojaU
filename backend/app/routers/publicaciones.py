@@ -1539,6 +1539,10 @@ async def crear_publicacion(
                     campus_ids=list(campus_ids), zona_id=payload.zona_barrio_id,
                     tipo=payload.tipo_inmueble, servicios_ids=list(servicios_ids),
                 )
+                await _nm.notificar_moderacion(
+                    db, usuario_id=user["id"], publicacion_id=nueva.id,
+                    titulo_pub=nueva.titulo, estado="ACTIVO",
+                )
             except Exception:
                 pass
         resp = {"id": nueva.id, "estado": nueva.estado, "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "mensaje": "Publicación en PENDIENTE, pendiente de moderación" if nueva.estado == "PENDIENTE" else "Publicación aprobada automáticamente", "rol": user.get("rol"), "rol_actualizado": rol_actualizado, "moderacion": mod_info}

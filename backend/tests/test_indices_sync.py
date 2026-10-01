@@ -212,7 +212,7 @@ def test_migracion_019_cubre_indices_notificaciones():
         assert n in sql, f"{n} falta en 019_notificaciones_y_busquedas.sql"
         assert n in schema, f"{n} falta en schema.sql"
     for pieza in ("busquedas_guardadas", "notificaciones", "evento_id",
-                  "uq_notif_usuario_evento", "chk_bg_rango"):
+                  "uq_notif_usuario_evento", "chk_bg_rango", "chk_notif_tipo"):
         assert pieza in mig, f"{pieza} falta en 019_notificaciones_y_busquedas.py"
         assert pieza in sql, f"{pieza} falta en 019_notificaciones_y_busquedas.sql"
         assert pieza in schema, f"{pieza} falta en schema.sql"

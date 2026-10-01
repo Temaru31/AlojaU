@@ -80,7 +80,17 @@ describe('useNotificaciones (Fase 3)', () => {
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2))
   })
 
-  it('polling cada 5 min solo con pestaña visible', async () => {
+  it('revalida al enfocar la ventana', async () => {
+    api.get.mockResolvedValue({ data: BANDEJA })
+    Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+    render(<Probe token="t" />)
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(1))
+    window.dispatchEvent(new Event('focus'))
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2))
+  })
+
+  it('polling cada 45 s solo con pestaña visible', async () => {
+    expect(NOTIF_POLL_MS).toBe(45_000)
     vi.useFakeTimers()
     try {
       api.get.mockResolvedValue({ data: BANDEJA })

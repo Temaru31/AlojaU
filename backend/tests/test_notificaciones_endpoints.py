@@ -213,8 +213,12 @@ def test_approve_genera_notificacion(limpias):
     data = _bandeja_total(EST)
     assert data["total"] == 1 and data["no_leidas"] == 1
     assert data["items"][0]["publicacion_id"] == pid
-    # El dueño no se auto-notifica.
-    assert _bandeja_total(ARR)["total"] == 0
+    assert data["items"][0]["tipo"] == "nuevo_arriendo"
+    # El dueño no se auto-alerta del matcher, pero SÍ recibe su aviso de
+    # moderación (rediseño campanita).
+    dueno = _bandeja_total(ARR)
+    assert dueno["total"] == 1
+    assert dueno["items"][0]["tipo"] == "moderacion"
 
 
 def test_doble_approve_no_duplica(limpias):

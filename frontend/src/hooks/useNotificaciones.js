@@ -5,8 +5,9 @@
 // - marcarLeida(id) optimista con rollback si el PATCH falla.
 // - marcarTodas() vía PATCH /leer-todas.
 // - Refresco por evento 'alojau:notificaciones-change' (tras publicar,
-//   guardar alerta o vincular) + polling pasivo 5 min solo visible
-//   (patrón useKeepAlive: sin pestaña visible no hay peticiones).
+//   guardar alerta o vincular) + polling pasivo 45 s solo visible +
+//   revalidación al enfocar la ventana (patrón useKeepAlive: sin pestaña
+//   visible no hay peticiones).
 // - Sin token no pide nada (los tests de MisPublicaciones exigen: sin token
 //   no se toca /mias; aquí igual con la bandeja privada).
 // Uso: const { items, noLeidas, loading, marcarLeida, marcarTodas } =
@@ -15,7 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
 
 export const NOTIF_EVENT = 'alojau:notificaciones-change'
-export const NOTIF_POLL_MS = 5 * 60_000
+export const NOTIF_POLL_MS = 45_000
 
 export function emitNotificacionesChange() {
   try {
@@ -71,20 +72,21 @@ export default function useNotificaciones({ token } = {}) {
   useEffect(() => {
     cargar(false)
     const refrescar = () => { cargar(true) }
+    const refrescarSiVisible = () => {
+      try {
+        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
+      } catch { /* SSR: igual */ }
+      refrescar()
+    }
     try {
       window.addEventListener(NOTIF_EVENT, refrescar)
+      window.addEventListener('focus', refrescarSiVisible)
     } catch { /* SSR/tests */ }
-    const timer = window.setInterval
-      ? window.setInterval(() => {
-        try {
-          if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
-        } catch { /* SSR: igual */ }
-        refrescar()
-      }, NOTIF_POLL_MS)
-      : null
+    const timer = window.setInterval ? window.setInterval(refrescarSiVisible, NOTIF_POLL_MS) : null
     return () => {
       try {
         window.removeEventListener(NOTIF_EVENT, refrescar)
+        window.removeEventListener('focus', refrescarSiVisible)
       } catch { /* noop */ }
       if (timer) window.clearInterval(timer)
     }

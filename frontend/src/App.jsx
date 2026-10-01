@@ -153,8 +153,10 @@ function Nav() {
             </div>
           </div>
 
-          <div className="hidden md:flex items-center gap-3">
+          <div className="hidden md:flex items-center gap-2">
             {favCount > 0 && <span className="text-sm text-neutral-500" aria-label={`${favCount} favoritos`}>♡ {favCount}</span>}
+            {/* Campanita a la izquierda del dropdown de perfil (nunca tras Publicar). */}
+            {sesionActiva && <Campanita token={token} />}
             {/* Navbar según sesión verificada; con token sin verificar aún, placeholder neutro. */}
             {!sesionActiva ? (
               verificando ? (
@@ -244,7 +246,14 @@ function Nav() {
               Publicar
             </Link>
           </div>
-          {sesionActiva && <Campanita token={token} />}
+          {/* Campanita móvil en la barra superior (logo + campanita + hamburguesa).
+              Instancia separada de la de desktop: ambas se sincronizan por el
+              evento alojau:notificaciones-change (costo: 2 lecturas tiny/45s). */}
+          {sesionActiva && (
+            <span className="md:hidden inline-flex">
+              <Campanita token={token} />
+            </span>
+          )}
           <button type="button"
             onClick={() => setMobileOpen(!mobileOpen)}
             aria-label={mobileOpen ? 'Cerrar menú' : 'Abrir menú'}

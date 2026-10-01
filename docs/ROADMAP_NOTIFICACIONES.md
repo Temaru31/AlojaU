@@ -110,6 +110,24 @@
 4. Verificar: `GET /api/notificaciones` 401 sin token; campanita visible
    con sesión; publicar→aprobar genera fila (tabla `notificaciones`).
 
+## Rediseño campanita (post-Fase 3, misma rama)
+
+- Bell vectorial inline estilo lucide (sin dependencia), badge ámbar, panel
+  popover desktop / sheet móvil; vacía con un solo enlace; no-leídas en
+  ámbar suave; iconos por tipo; tiempo con mayúscula inicial.
+- Campanita en 2 instancias (desktop junto al perfil + header móvil),
+  sincronizadas por `alojau:notificaciones-change`. Desviaciones
+  justificadas del brief: sin namespace `/api/v1` (convención `/api/...`),
+  destino `/publicacion/:id` (la ruta es singular), sin lucide-react.
+- Poll del hook a 45 s + revalidación al enfocar.
+- Eventos nuevos: moderación (approve/reject/pausa, unitario+bulk+automod)
+  y bienvenida Telegram (mig 020 amplía el CHECK con `'telegram'`;
+  downgrade solo sin filas telegram). Helper `crear_notificacion` con
+  savepoint, nunca lanza; hooks con try/except.
+- Incidentes reales corregidos: CHECK duplicado por nombre autogenerado
+  (020 tumba ambos nombres), `in_([])`, commit antes de contar en tests,
+  e interferencia al correr ambas suites contra el mismo PG local.
+
 ## Pendientes abiertos (futuro multicanal, FUERA DE ALCANCE)
 - Futuro multicanal (FUERA DE ALCANCE): drenar por `canal` + estado de envío
   por canal (columnas nuevas, sin reescribir nada de Fase 1).
