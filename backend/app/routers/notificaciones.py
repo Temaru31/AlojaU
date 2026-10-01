@@ -2,7 +2,7 @@
 
 - GET /api/notificaciones: lectura PURA (sin escrituras, sin purga).
 - PATCH .../leer y .../leer-todas: únicos escritores de `leida`.
-- /api/busquedas-guardadas: POST (tope 10 activas), GET mías, DELETE propia.
+- /api/busquedas-guardadas: POST (mínimo 1 filtro, tope 5 activas), GET mías, DELETE propia.
 - Sin PG (mock/dev): 503 honesto (sin stores mock: es módulo nuevo con
   fuente única en BD, igual que POST /api/reportes en dev sin PG).
 """
@@ -26,7 +26,26 @@ logger = logging.getLogger("alojau.notificaciones")
 router = APIRouter(prefix="/api/notificaciones", tags=["notificaciones"])
 router_busquedas = APIRouter(prefix="/api/busquedas-guardadas", tags=["busquedas"])
 
-MAX_ALERTAS_ACTIVAS = 10
+MAX_ALERTAS_ACTIVAS = 5
+
+MENSAJE_SIN_FILTROS = (
+    "⚠️️ Selecciona al menos un filtro (zona, precio o tipo) "
+    "para crear una alerta relevante."
+)
+
+
+def _tiene_filtros(data: "BusquedaIn") -> bool:
+    """Anti-spam: una alerta sin ningún filtro matchearía TODO y generaría
+    notificaciones masivas innecesarias en cada publicación."""
+    if data.zona_barrio_id is not None:
+        return True
+    if data.campus_id is not None:
+        return True
+    if data.precio_min is not None or data.precio_max is not None:
+        return True
+    if (data.tipo or "").strip():
+        return True
+    return bool(data.servicios_ids)
 
 
 def _mock_enabled() -> bool:
@@ -233,6 +252,8 @@ async def crear_busqueda(
 ):
     """Valida tope anti-abuso + FKs de catálogo. 422 con guía si algo falla."""
     uid = _uid(user)
+    if not _tiene_filtros(data):
+        raise HTTPException(status_code=422, detail=MENSAJE_SIN_FILTROS)
     try:
         from app.models import BusquedaGuardada
         n_activas = (await db.execute(
@@ -243,7 +264,8 @@ async def crear_busqueda(
         if n_activas >= MAX_ALERTAS_ACTIVAS:
             raise HTTPException(
                 status_code=422,
-                detail=f"Máximo {MAX_ALERTAS_ACTIVAS} alertas activas: desactiva o elimina una.",
+                detail=f"Has alcanzado el límite de {MAX_ALERTAS_ACTIVAS} alertas activas. "
+                       f"Gestiona o elimina una existente para crear una nueva.",
             )
         if data.campus_id is not None:
             from app.models import CampusUniversitario

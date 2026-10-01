@@ -128,7 +128,7 @@ export default function Campanita({ token }) {
           <div
             aria-hidden="true"
             onClick={() => setAbierto(false)}
-            className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm md:bg-transparent md:backdrop-blur-none"
+            className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm md:bg-transparent md:backdrop-blur-none"
           />
           <div
             role="menu"
@@ -189,9 +189,9 @@ export default function Campanita({ token }) {
               <Link
                 to="/alertas"
                 onClick={() => setAbierto(false)}
-                className="block text-center text-xs font-semibold text-navy-700 hover:underline min-h-[44px] content-center"
+                className="flex items-center justify-center gap-2 w-full px-4 py-2.5 min-h-[44px] text-xs font-bold text-navy-800 bg-slate-100 border border-slate-200 rounded-xl hover:bg-slate-200 active:bg-slate-200 transition"
               >
-                ⚙️ Gestionar mis alertas de búsqueda
+                <span aria-hidden="true">⚙️</span> Gestionar mis alertas de búsqueda
               </Link>
             </div>
           </div>

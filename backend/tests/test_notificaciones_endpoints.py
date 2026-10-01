@@ -3,7 +3,7 @@
 - GET puro (sin escrituras), paginado + no_leidas + filtro.
 - PATCH leer: 404 ajeno-inexistente, 403 ajeno-existente (IDOR).
 - PATCH leer-todas.
-- POST busquedas: tope 10 activas, FKs y rango validados.
+- POST busquedas: mínimo 1 filtro, tope 5 activas, FKs y rango validados.
 - DELETE propio/ajeno/inexistente.
 Requiere PG real; si no, skip (igual que los tests de Telegram).
 """
@@ -146,12 +146,20 @@ def test_busquedas_crud_y_tope(limpias):
     assert client.get("/api/busquedas-guardadas", headers=ARR).json() == []
 
 
-def test_busquedas_tope_10_activas(limpias):
-    for _ in range(10):
+def test_busquedas_tope_5_activas(limpias):
+    for _ in range(5):
         assert _alerta_post(ARR).status_code == 201
-    r11 = _alerta_post(ARR)
-    assert r11.status_code == 422
-    assert "10" in r11.json()["detail"]
+    r6 = _alerta_post(ARR)
+    assert r6.status_code == 422
+    assert "5" in r6.json()["detail"]
+
+
+def test_busquedas_sin_filtros_422(limpias):
+    r = client.post("/api/busquedas-guardadas", json={}, headers=ARR)
+    assert r.status_code == 422
+    assert "al menos un filtro" in r.json()["detail"]
+    # Con un solo filtro (zona) sí pasa.
+    assert _alerta_post(ARR, zona_barrio_id=1).status_code == 201
 
 
 def test_busquedas_validan_fk_y_rango(limpias):
@@ -205,7 +213,7 @@ def _bandeja_total(headers):
 
 
 def test_approve_genera_notificacion(limpias):
-    assert client.post("/api/busquedas-guardadas", json={}, headers=EST).status_code == 201
+    assert client.post("/api/busquedas-guardadas", json={"precio_max": 10000000}, headers=EST).status_code == 201
     pid = _publicar()
     r = client.patch(f"/api/admin/publicaciones/{pid}",
                      json={"estado": "ACTIVO"}, headers=ADMIN)
@@ -222,7 +230,7 @@ def test_approve_genera_notificacion(limpias):
 
 
 def test_doble_approve_no_duplica(limpias):
-    assert client.post("/api/busquedas-guardadas", json={}, headers=EST).status_code == 201
+    assert client.post("/api/busquedas-guardadas", json={"precio_max": 10000000}, headers=EST).status_code == 201
     pid = _publicar()
     assert client.patch(f"/api/admin/publicaciones/{pid}",
                         json={"estado": "ACTIVO"}, headers=ADMIN).status_code == 200
@@ -240,7 +248,7 @@ def test_savepoint_approve_sobrevive_matcher_roto(limpias, monkeypatch):
         raise RuntimeError("matcher caído (test)")
 
     monkeypatch.setattr(nm, "evaluar_y_crear_notificaciones", _roto)
-    assert client.post("/api/busquedas-guardadas", json={}, headers=EST).status_code == 201
+    assert client.post("/api/busquedas-guardadas", json={"precio_max": 10000000}, headers=EST).status_code == 201
     pid = _publicar()
     r = client.patch(f"/api/admin/publicaciones/{pid}",
                      json={"estado": "ACTIVO"}, headers=ADMIN)

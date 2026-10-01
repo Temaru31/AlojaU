@@ -453,9 +453,11 @@ async def _bulk_cambiar_estado(db: AsyncSession, admin: dict, ids: list[int],
                         pass
             except Exception:
                 pass
-        # Fase 2: fan-out por aviso aprobado (bulk acotado a 50 por schema).
-        # Una query trae relaciones; cada aviso usa su savepoint aislado.
-        if estado == "ACTIVO" and cambiados:
+        # Fase 2: fan-out por aviso aprobado (bulk acotado a 50 por schema)
+        # + aviso de moderación al dueño ante cualquier cambio (ACTIVO,
+        # RECHAZADO, PAUSADO). Una query trae relaciones; cada aviso usa su
+        # savepoint aislado y nada tumba el commit.
+        if estado in ("ACTIVO", "RECHAZADO", "PAUSADO") and cambiados:
             try:
                 from app.services import notifications_matcher as _nm
                 filas = (await db.execute(
@@ -466,19 +468,21 @@ async def _bulk_cambiar_estado(db: AsyncSession, admin: dict, ids: list[int],
                 )).scalars().all()
                 for _p in filas:
                     try:
-                        await _nm.evaluar_y_crear_notificaciones(
-                            db, publicacion_id=_p.id, dueno_id=int(_p.usuario_id),
-                            titulo=_p.titulo, canon=_p.canon_mensual,
-                            campus_ids=[c.campus_id for c in (_p.campus_links or [])],
-                            zona_id=_p.zona_barrio_id, tipo=_p.tipo_inmueble,
-                            servicios_ids=[s.id for s in (_p.servicios or [])],
-                        )
-                        if estado in ("ACTIVO", "RECHAZADO", "PAUSADO"):
-                            await _nm.notificar_moderacion(
-                                db, usuario_id=int(_p.usuario_id),
-                                publicacion_id=_p.id, titulo_pub=_p.titulo,
-                                estado=estado,
+                        # Fan-out de alertas SOLO al aprobar (un rechazo jamás
+                        # debe generar "nuevo arriendo" de un aviso invisible).
+                        if estado == "ACTIVO":
+                            await _nm.evaluar_y_crear_notificaciones(
+                                db, publicacion_id=_p.id, dueno_id=int(_p.usuario_id),
+                                titulo=_p.titulo, canon=_p.canon_mensual,
+                                campus_ids=[c.campus_id for c in (_p.campus_links or [])],
+                                zona_id=_p.zona_barrio_id, tipo=_p.tipo_inmueble,
+                                servicios_ids=[s.id for s in (_p.servicios or [])],
                             )
+                        await _nm.notificar_moderacion(
+                            db, usuario_id=int(_p.usuario_id),
+                            publicacion_id=_p.id, titulo_pub=_p.titulo,
+                            estado=estado,
+                        )
                     except Exception:
                         pass
             except Exception:
