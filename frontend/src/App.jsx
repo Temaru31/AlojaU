@@ -350,6 +350,14 @@ function Nav() {
                 📢 Mis Publicaciones
               </Link>
             )}
+            <Link
+              to="/alertas"
+              onClick={closeMenu}
+              aria-current={isActive('/alertas') ? 'page' : undefined}
+              className={mobileLinkCls(isActive('/alertas'))}
+            >
+              🔔 Mis Alertas y Notificaciones
+            </Link>
             {(user?.rol || '').toUpperCase() === 'ADMIN' && (
               <Link
                 to="/admin/dashboard"

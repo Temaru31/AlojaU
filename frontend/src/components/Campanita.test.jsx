@@ -62,6 +62,14 @@ describe('Campanita (Fase 3)', () => {
     expect(screen.queryByRole('button', { name: /Marcar todas/ })).not.toBeInTheDocument()
   })
 
+  it('footer permanente visible con y sin avisos', async () => {
+    api.get.mockResolvedValue({ data: BANDEJA })
+    renderEn()
+    fireEvent.click(await screen.findByRole('button', { name: /Notificaciones/ }))
+    const pie = await screen.findByRole('link', { name: /Gestionar mis alertas de búsqueda/ })
+    expect(pie).toHaveAttribute('href', '/alertas')
+  })
+
   it('moderación navega a mis-publicaciones y telegram a perfil', async () => {
     api.get.mockResolvedValue({
       data: {

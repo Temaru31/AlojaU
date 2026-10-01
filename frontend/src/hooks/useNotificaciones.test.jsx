@@ -89,6 +89,23 @@ describe('useNotificaciones (Fase 3)', () => {
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2))
   })
 
+  it('401 pausa el polling (no satura la red con fallidas)', async () => {
+    vi.useFakeTimers()
+    try {
+      api.get.mockRejectedValue({ response: { status: 401 } })
+      render(<Probe token="t" />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(api.get).toHaveBeenCalledTimes(1)
+      await act(async () => { await vi.advanceTimersByTimeAsync(NOTIF_POLL_MS * 3) })
+      expect(api.get).toHaveBeenCalledTimes(1)
+      window.dispatchEvent(new Event(NOTIF_EVENT))
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(api.get).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('polling cada 45 s solo con pestaña visible', async () => {
     expect(NOTIF_POLL_MS).toBe(45_000)
     vi.useFakeTimers()

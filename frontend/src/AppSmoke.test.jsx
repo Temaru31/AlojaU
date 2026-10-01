@@ -40,6 +40,7 @@ describe('App smoke honesto (shell + landing sin red)', () => {
     expect(screen.getByRole('link', { name: /Iniciar sesión \/ Registrarse/ })).toHaveAttribute('href', '/perfil')
     expect(screen.getByRole('link', { name: '🔍 Buscar vivienda' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '🧡 Favoritos' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '🔔 Mis Alertas y Notificaciones' })).toHaveAttribute('href', '/alertas')
     expect(screen.getByRole('link', { name: '+ Publicar vivienda' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Cerrar sesión/ })).not.toBeInTheDocument()
   })

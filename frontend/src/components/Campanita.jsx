@@ -105,7 +105,7 @@ export default function Campanita({ token }) {
   }
 
   return (
-    <div className="relative">
+    <div className="relative inline-block">
       <button
         type="button"
         onClick={() => setAbierto((v) => !v)}
@@ -125,11 +125,15 @@ export default function Campanita({ token }) {
       </button>
       {abierto && (
         <>
-          <div aria-hidden="true" onClick={() => setAbierto(false)} className="fixed inset-0 z-40" />
+          <div
+            aria-hidden="true"
+            onClick={() => setAbierto(false)}
+            className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm md:bg-transparent md:backdrop-blur-none"
+          />
           <div
             role="menu"
             aria-label="Notificaciones"
-            className="fixed inset-x-3 bottom-3 top-auto z-50 md:inset-auto md:right-0 md:top-11 md:w-80 flex flex-col bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden max-h-[70vh] md:max-h-[60vh] animar-subir"
+            className="fixed inset-x-3 bottom-3 top-auto z-50 md:absolute md:inset-auto md:right-0 md:mt-2 md:bottom-auto md:top-auto md:w-80 flex flex-col bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden max-h-[70vh] md:max-h-[60vh] animar-subir"
           >
             <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-slate-100">
               <h2 className="text-sm font-bold text-navy-900">Notificaciones</h2>
@@ -143,7 +147,7 @@ export default function Campanita({ token }) {
                 </button>
               )}
             </div>
-            <div className="overflow-y-auto flex-1" role="list" aria-label="Avisos">
+            <div className="overflow-y-auto flex-1 max-h-64" role="list" aria-label="Avisos">
               {loading && items.length === 0 && (
                 <p className="px-4 py-6 text-sm text-neutral-400 text-center">Cargando avisos…</p>
               )}
@@ -180,6 +184,15 @@ export default function Campanita({ token }) {
                   </span>
                 </button>
               ))}
+            </div>
+            <div className="border-t border-slate-100 p-3 bg-slate-50 rounded-b-xl">
+              <Link
+                to="/alertas"
+                onClick={() => setAbierto(false)}
+                className="block text-center text-xs font-semibold text-navy-700 hover:underline min-h-[44px] content-center"
+              >
+                ⚙️ Gestionar mis alertas de búsqueda
+              </Link>
             </div>
           </div>
         </>

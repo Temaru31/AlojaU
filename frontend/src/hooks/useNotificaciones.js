@@ -38,6 +38,10 @@ export default function useNotificaciones({ token } = {}) {
   const [error, setError] = useState('')
   const vivoRef = useRef(true)
   useEffect(() => () => { vivoRef.current = false }, [])
+  // 401/403 = sesión muerta o sin permiso: se pausa el polling para no
+  // saturar la pestaña de red con fallidas repetitivas. Se reanuda solo
+  // al cambiar el token (nuevo login) o con un 200 posterior.
+  const authBloqueadaRef = useRef(false)
 
   const cargar = useCallback(async (silencioso = false) => {
     if (!token) {
@@ -58,11 +62,14 @@ export default function useNotificaciones({ token } = {}) {
         params: { size: 20 }, headers: headers(token),
       })
       if (!vivoRef.current) return
+      authBloqueadaRef.current = false
       setItems(r.data?.items || [])
       setTotal(r.data?.total || 0)
       setNoLeidas(r.data?.no_leidas || 0)
       setError('')
-    } catch {
+    } catch (e) {
+      const status = e?.response?.status
+      if (status === 401 || status === 403) authBloqueadaRef.current = true
       if (vivoRef.current && !silencioso) setError('No se pudieron cargar las notificaciones.')
     } finally {
       if (vivoRef.current && !silencioso) setLoading(false)
@@ -70,8 +77,12 @@ export default function useNotificaciones({ token } = {}) {
   }, [token])
 
   useEffect(() => {
+    authBloqueadaRef.current = false
     cargar(false)
-    const refrescar = () => { cargar(true) }
+    const refrescar = () => {
+      if (authBloqueadaRef.current) return
+      cargar(true)
+    }
     const refrescarSiVisible = () => {
       try {
         if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return
