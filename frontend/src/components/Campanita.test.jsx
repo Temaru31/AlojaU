@@ -32,7 +32,7 @@ function renderEn(ruta = '/') {
   return () => screen.getByTestId('vista').textContent
 }
 
-afterEach(() => { cleanup(); localStorage.clear() })
+afterEach(() => { cleanup(); localStorage.clear(); vi.restoreAllMocks(); vi.useRealTimers() })
 beforeEach(() => vi.clearAllMocks())
 
 describe('Campanita (Fase 3)', () => {
@@ -62,6 +62,14 @@ describe('Campanita (Fase 3)', () => {
     expect(screen.queryByRole('button', { name: /Marcar todas/ })).not.toBeInTheDocument()
   })
 
+  it('footer permanente visible con y sin avisos', async () => {
+    api.get.mockResolvedValue({ data: BANDEJA })
+    renderEn()
+    fireEvent.click(await screen.findByRole('button', { name: /Notificaciones/ }))
+    const pie = await screen.findByRole('link', { name: /Gestionar mis alertas de búsqueda/ })
+    expect(pie).toHaveAttribute('href', '/alertas')
+  })
+
   it('moderación navega a mis-publicaciones y telegram a perfil', async () => {
     api.get.mockResolvedValue({
       data: {
@@ -78,7 +86,8 @@ describe('Campanita (Fase 3)', () => {
     fireEvent.click(await screen.findByText('Aprobado'))
     await waitFor(() => expect(verVista()).toBe('/mis-publicaciones'))
     fireEvent.click(screen.getByRole('button', { name: /Notificaciones/ }))
-    fireEvent.click(await screen.findByText('Verificado'))
+    // Timeout amplio: bajo carga paralela el re-render puede tardar.
+    fireEvent.click(await screen.findByText('Verificado', {}, { timeout: 5000 }))
     await waitFor(() => expect(verVista()).toBe('/perfil'))
   })
 

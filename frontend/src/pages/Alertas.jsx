@@ -15,7 +15,7 @@ import { notifyToast } from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { SERVICIOS_OPCIONES } from '../components/Filtros'
 import useTiposVivienda from '../hooks/useTiposVivienda'
-import { MAX_ALERTAS, filtrosABusqueda } from '../utils/alertas'
+import { MAX_ALERTAS, MENSAJE_SIN_FILTROS, alertaTieneFiltros, filtrosABusqueda } from '../utils/alertas'
 
 export function GuardarAlerta({ filtros, campusId }) {
   const { token } = useAuth()
@@ -28,15 +28,22 @@ export function GuardarAlerta({ filtros, campusId }) {
       navigate('/perfil')
       return
     }
+    const body = filtrosABusqueda(filtros, campusId)
+    if (!alertaTieneFiltros(body)) {
+      notifyToast(MENSAJE_SIN_FILTROS)
+      return
+    }
     setGuardando(true)
     try {
-      await api.post('/api/busquedas-guardadas', filtrosABusqueda(filtros, campusId), {
+      await api.post('/api/busquedas-guardadas', body, {
         headers: { Authorization: `Bearer ${token}` },
       })
       notifyToast('🔔 Alerta guardada: te avisaremos de nuevos arriendos.')
     } catch (e) {
       const d = e?.response?.data?.detail
-      notifyToast(typeof d === 'string' && d ? d : 'No se pudo guardar la alerta.')
+      const mensaje = typeof d === 'string' && d ? d : 'No se pudo guardar la alerta.'
+      // 422 (tope o sin filtros): con acceso directo a gestionarlas.
+      notifyToast(mensaje, e?.response?.status === 422 ? '/alertas' : undefined)
     } finally {
       setGuardando(false)
     }
@@ -97,17 +104,21 @@ export default function Alertas() {
   const crear = async (e) => {
     e?.preventDefault()
     if (topeAlcanzado || creando) return
+    const body = {
+      nombre: form.nombre.trim() || null,
+      precio_min: form.min === '' ? null : Number(form.min),
+      precio_max: form.max === '' ? null : Number(form.max),
+      campus_id: form.campus_id === '' ? null : Number(form.campus_id),
+      tipo: form.tipo || null,
+      servicios_ids: form.servicios,
+    }
+    if (!alertaTieneFiltros(body)) {
+      setError(MENSAJE_SIN_FILTROS)
+      return
+    }
     setCreando(true)
     setError('')
     try {
-      const body = {
-        nombre: form.nombre.trim() || null,
-        precio_min: form.min === '' ? null : Number(form.min),
-        precio_max: form.max === '' ? null : Number(form.max),
-        campus_id: form.campus_id === '' ? null : Number(form.campus_id),
-        tipo: form.tipo || null,
-        servicios_ids: form.servicios,
-      }
       const r = await api.post('/api/busquedas-guardadas', body, { headers: head })
       if (!vivoRef.current) return
       setAlertas((cur) => [r.data, ...cur])
@@ -171,7 +182,7 @@ export default function Alertas() {
         <h2 className="text-sm font-bold text-navy-800">Nueva alerta</h2>
         {topeAlcanzado && (
           <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md p-2" role="note">
-            Tienes {MAX_ALERTAS} alertas activas (máximo). Elimina una para crear otra.
+            Tienes {activas} alertas activas (máximo {MAX_ALERTAS}). Elimina una para crear otra.
           </p>
         )}
         <form onSubmit={crear} className="grid grid-cols-1 sm:grid-cols-2 gap-3">

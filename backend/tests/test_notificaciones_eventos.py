@@ -18,6 +18,7 @@ from app.main import app
 client = TestClient(app)
 ARR = {"Authorization": "Bearer mock-token-arrendador"}  # id 1
 ADMIN = {"Authorization": "Bearer mock-token-admin"}  # id 2
+EST = {"Authorization": "Bearer mock-token-estudiante"}  # id 3
 
 PUB_NUEVO = {
     "titulo": "Apartaestudio cerca al campus universitario",
@@ -54,14 +55,28 @@ async def _sql(sql, *args):
         await conn.close()
 
 
+async def _truncate_seguro():
+    """TRUNCATE tolerante a BD fresca u orden alterado (nunca falla)."""
+    import asyncpg
+    conn = await asyncio.wait_for(asyncpg.connect(_dsn()), timeout=10)
+    try:
+        hay = await conn.fetchval(
+            "SELECT count(*) FROM pg_tables WHERE tablename IN "
+            "('notificaciones','busquedas_guardadas')")
+        if hay == 2:
+            await conn.execute("TRUNCATE notificaciones, busquedas_guardadas")
+    finally:
+        await conn.close()
+
+
 @pytest.fixture()
 def limpias():
     if not _pg():
         pytest.skip("sin PG real")
     asyncio.run(_asegurar_020())
-    asyncio.run(_sql("TRUNCATE notificaciones, busquedas_guardadas"))
+    asyncio.run(_truncate_seguro())
     yield
-    asyncio.run(_sql("TRUNCATE notificaciones, busquedas_guardadas"))
+    asyncio.run(_truncate_seguro())
 
 
 async def _asegurar_020():
@@ -134,6 +149,16 @@ def test_rechazar_crea_moderacion(limpias):
     assert any(t == "moderacion" and e == f"moderacion:{pid}:RECHAZADO" for t, e in filas)
 
 
+def test_rechazar_no_genera_nuevo_arriendo(limpias):
+    # Un aviso invisible jamás dispara alertas de "nuevo arriendo".
+    assert client.post("/api/busquedas-guardadas",
+                       json={"precio_max": 10000000}, headers=EST).status_code == 201
+    pid = _publicar()
+    assert client.patch(f"/api/admin/publicaciones/{pid}",
+                        json={"estado": "RECHAZADO"}, headers=ADMIN).status_code == 200
+    assert _tipos_de(3) == []
+
+
 def test_bulk_approve_notifica_cada_aviso(limpias):
     p1, p2 = _publicar(), _publicar()
     r = client.post("/api/admin/publicaciones/bulk-approve",
@@ -142,6 +167,16 @@ def test_bulk_approve_notifica_cada_aviso(limpias):
     eventos = [e for _, e in _tipos_de(1)]
     assert f"moderacion:{p1}:ACTIVO" in eventos
     assert f"moderacion:{p2}:ACTIVO" in eventos
+
+
+def test_bulk_reject_notifica_cada_aviso(limpias):
+    p1, p2 = _publicar(), _publicar()
+    r = client.post("/api/admin/publicaciones/bulk-reject",
+                    json={"ids": [p1, p2]}, headers=ADMIN)
+    assert r.status_code == 200, r.text
+    eventos = [e for _, e in _tipos_de(1)]
+    assert f"moderacion:{p1}:RECHAZADO" in eventos
+    assert f"moderacion:{p2}:RECHAZADO" in eventos
 
 
 def test_vincular_telegram_crea_bienvenida(limpias):

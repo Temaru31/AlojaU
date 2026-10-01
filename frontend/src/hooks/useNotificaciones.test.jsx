@@ -11,7 +11,16 @@ function Probe({ token, onEstado }) {
   return null
 }
 
-afterEach(() => { cleanup(); vi.useRealTimers() })
+const VIS_ORIGINAL = typeof document !== 'undefined' ? document.visibilityState : 'visible'
+
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+  try {
+    Object.defineProperty(document, 'visibilityState', { value: VIS_ORIGINAL, configurable: true })
+  } catch { /* noop */ }
+})
 beforeEach(() => vi.clearAllMocks())
 
 const BANDEJA = {
@@ -87,6 +96,68 @@ describe('useNotificaciones (Fase 3)', () => {
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(1))
     window.dispatchEvent(new Event('focus'))
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2))
+  })
+
+  it('401 pausa el polling (no satura la red con fallidas)', async () => {
+    vi.useFakeTimers()
+    try {
+      api.get.mockRejectedValue({ response: { status: 401 } })
+      render(<Probe token="t" />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(api.get).toHaveBeenCalledTimes(1)
+      await act(async () => { await vi.advanceTimersByTimeAsync(NOTIF_POLL_MS * 3) })
+      expect(api.get).toHaveBeenCalledTimes(1)
+      window.dispatchEvent(new Event(NOTIF_EVENT))
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(api.get).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cambio de token reanuda el polling sin F5 (pausa -> login nuevo)', async () => {
+    vi.useFakeTimers()
+    try {
+      // t1 muere con 401: pausa.
+      api.get.mockRejectedValue({ response: { status: 401 } })
+      const { rerender } = render(<Probe token="t1" />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(api.get).toHaveBeenCalledTimes(1)
+      // Nuevo login (t2): el efecto se reconstruye, resetea la pausa y pide.
+      api.get.mockResolvedValue({ data: BANDEJA })
+      rerender(<Probe token="t2" />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(api.get).toHaveBeenCalledTimes(2)
+      // Y el polling vuelve a correr.
+      await act(async () => { await vi.advanceTimersByTimeAsync(NOTIF_POLL_MS) })
+      expect(api.get).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('recargar manual fuerza el intento aunque haya pausa', async () => {
+    api.get.mockRejectedValue({ response: { status: 401 } })
+    let visto = null
+    render(<Probe token="t" onEstado={(e) => { visto = e }} />)
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(1))
+    api.get.mockResolvedValue({ data: BANDEJA })
+    await act(async () => { await visto.recargar() })
+    await waitFor(() => expect(visto.noLeidas).toBe(1))
+  })
+
+  it('respuesta tardía tras logout se descarta (anti stale)', async () => {
+    let resolver
+    let visto = null
+    api.get.mockImplementation(() => new Promise((res) => { resolver = res }))
+    const { rerender } = render(<Probe token="t1" onEstado={(e) => { visto = e }} />)
+    await act(async () => {})
+    rerender(<Probe token="" onEstado={(e) => { visto = e }} />)
+    await act(async () => { resolver({ data: BANDEJA }) })
+    // UI reseteada por el logout, no repoblada con datos de t1.
+    expect(visto.items).toEqual([])
+    expect(visto.noLeidas).toBe(0)
+    await waitFor(() => expect(api.get).toHaveBeenCalledTimes(1))
   })
 
   it('polling cada 45 s solo con pestaña visible', async () => {

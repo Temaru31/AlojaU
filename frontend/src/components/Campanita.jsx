@@ -79,7 +79,7 @@ function textoBadge(n) {
 }
 
 export default function Campanita({ token }) {
-  const { items, noLeidas, loading, error, marcarLeida, marcarTodas } =
+  const { items, noLeidas, loading, error, marcarLeida, marcarTodas, recargar } =
     useNotificaciones({ token })
   const [abierto, setAbierto] = useState(false)
   const navigate = useNavigate()
@@ -105,10 +105,16 @@ export default function Campanita({ token }) {
   }
 
   return (
-    <div className="relative">
+    <div className="relative inline-block">
       <button
         type="button"
-        onClick={() => setAbierto((v) => !v)}
+        onClick={() => {
+          const vaAAbrir = !abierto
+          setAbierto(vaAAbrir)
+          // Intent explícito: refresca aunque el polling esté pausado por
+          // 401 (un 200 reanuda solo; un 401 repausa). Sin F5.
+          if (vaAAbrir) recargar()
+        }}
         aria-label={badge ? `Notificaciones, ${noLeidas} sin leer` : 'Notificaciones'}
         aria-expanded={abierto}
         aria-haspopup="menu"
@@ -125,11 +131,15 @@ export default function Campanita({ token }) {
       </button>
       {abierto && (
         <>
-          <div aria-hidden="true" onClick={() => setAbierto(false)} className="fixed inset-0 z-40" />
+          <div
+            aria-hidden="true"
+            onClick={() => setAbierto(false)}
+            className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm md:bg-transparent md:backdrop-blur-none"
+          />
           <div
             role="menu"
             aria-label="Notificaciones"
-            className="fixed inset-x-3 bottom-3 top-auto z-50 md:inset-auto md:right-0 md:top-11 md:w-80 flex flex-col bg-white rounded-xl shadow-xl border border-slate-200 overflow-hidden max-h-[70vh] md:max-h-[60vh] animar-subir"
+            className="fixed inset-x-3 bottom-3 top-auto z-50 md:absolute md:inset-auto md:right-0 md:mt-2 md:bottom-auto md:top-auto md:w-80 flex flex-col bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden max-h-[70vh] md:max-h-[60vh] animar-subir"
           >
             <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-slate-100">
               <h2 className="text-sm font-bold text-navy-900">Notificaciones</h2>
@@ -143,7 +153,7 @@ export default function Campanita({ token }) {
                 </button>
               )}
             </div>
-            <div className="overflow-y-auto flex-1" role="list" aria-label="Avisos">
+            <div className="overflow-y-auto flex-1 max-h-64" role="list" aria-label="Avisos">
               {loading && items.length === 0 && (
                 <p className="px-4 py-6 text-sm text-neutral-400 text-center">Cargando avisos…</p>
               )}
@@ -180,6 +190,15 @@ export default function Campanita({ token }) {
                   </span>
                 </button>
               ))}
+            </div>
+            <div className="border-t border-slate-100 p-3 bg-slate-50 rounded-b-xl">
+              <Link
+                to="/alertas"
+                onClick={() => setAbierto(false)}
+                className="flex items-center justify-center gap-2 w-full px-4 py-2.5 min-h-[44px] text-xs font-bold text-navy-800 bg-slate-100 border border-slate-200 rounded-xl hover:bg-slate-200 active:bg-slate-200 transition"
+              >
+                <span aria-hidden="true">⚙️</span> Gestionar mis alertas de búsqueda
+              </Link>
             </div>
           </div>
         </>

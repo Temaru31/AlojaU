@@ -23,7 +23,7 @@ function renderAlerta() {
   return render(<MemoryRouter><Alertas /></MemoryRouter>)
 }
 
-afterEach(() => { cleanup(); vi.restoreAllMocks() })
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers() })
 beforeEach(() => vi.clearAllMocks())
 
 describe('filtrosABusqueda (mapeo Buscar -> alerta)', () => {
@@ -64,9 +64,10 @@ describe('Alertas (Fase 3)', () => {
     renderAlerta()
     await waitFor(() => expect(api.get).toHaveBeenCalledWith('/api/busquedas-guardadas', expect.anything()))
     fireEvent.change(screen.getByPlaceholderText('Cerca a la U, barato'), { target: { value: 'Cerca U' } })
+    fireEvent.change(screen.getByPlaceholderText('300000'), { target: { value: '300000' } })
     fireEvent.click(screen.getByRole('button', { name: /Crear alerta/ }))
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
-      '/api/busquedas-guardadas', expect.objectContaining({ nombre: 'Cerca U' }), expect.anything()))
+      '/api/busquedas-guardadas', expect.objectContaining({ nombre: 'Cerca U', precio_min: 300000 }), expect.anything()))
     expect(await screen.findByText('Cerca U')).toBeInTheDocument()
   })
 
@@ -80,6 +81,34 @@ describe('Alertas (Fase 3)', () => {
     renderAlerta()
     await waitFor(() => expect(screen.getByText(/10 alertas activas/)).toBeInTheDocument())
     expect(screen.getByRole('button', { name: /Crear alerta/ })).toBeDisabled()
+    expect(api.post).not.toHaveBeenCalled()
+  })
+
+  it('sobre el tope heredado muestra el conteo real y permite gestionar', async () => {
+    mockAuth(CON_TOKEN)
+    const doce = Array.from({ length: 12 }, (_, i) => ({ id: i + 1, nombre: `A${i}`, activa: true, servicios_ids: [] }))
+    api.get.mockImplementation((url) => {
+      if (url === '/api/busquedas-guardadas') return Promise.resolve({ data: doce })
+      return Promise.resolve({ data: [] })
+    })
+    renderAlerta()
+    // Estado degradado elegante: dice 12 (no el tope) y bloquea crear.
+    await waitFor(() => expect(screen.getByText(/Tienes 12 alertas activas/)).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: /Crear alerta/ })).toBeDisabled()
+    // Leer y borrar siguen intactos.
+    expect(screen.getAllByRole('button', { name: /Eliminar alerta/ })).toHaveLength(12)
+  })
+
+  it('sin ningún filtro bloquea con guía y no postea', async () => {
+    mockAuth(CON_TOKEN)
+    api.get.mockImplementation((url) => {
+      if (url === '/api/busquedas-guardadas') return Promise.resolve({ data: [] })
+      return Promise.resolve({ data: [] })
+    })
+    renderAlerta()
+    await waitFor(() => expect(screen.getByRole('button', { name: /Crear alerta/ })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /Crear alerta/ }))
+    expect(await screen.findByText(/al menos un filtro/)).toBeInTheDocument()
     expect(api.post).not.toHaveBeenCalled()
   })
 
@@ -120,5 +149,37 @@ describe('GuardarAlerta (botón en Buscar)', () => {
       '/api/busquedas-guardadas',
       { precio_min: 300000, precio_max: null, campus_id: 2, tipo: null, servicios_ids: [1] },
       expect.anything()))
+  })
+
+  it('sin filtros no postea (toast con guía)', async () => {
+    mockAuth(CON_TOKEN)
+    const oyente = vi.fn()
+    window.addEventListener('alojau:toast', oyente)
+    try {
+      render(<MemoryRouter><GuardarAlerta filtros={{}} campusId={null} /></MemoryRouter>)
+      fireEvent.click(screen.getByRole('button', { name: /Guardar alerta/ }))
+      await waitFor(() => expect(oyente).toHaveBeenCalled())
+      expect(api.post).not.toHaveBeenCalled()
+      expect(oyente.mock.calls[0][0].detail.message).toMatch(/al menos un filtro/)
+    } finally {
+      window.removeEventListener('alojau:toast', oyente)
+    }
+  })
+
+  it('422 del tope lleva enlace a /alertas en el toast', async () => {
+    mockAuth(CON_TOKEN)
+    api.post.mockRejectedValue({
+      response: { status: 422, data: { detail: 'Has alcanzado el límite de 5 alertas activas.' } },
+    })
+    const oyente = vi.fn()
+    window.addEventListener('alojau:toast', oyente)
+    try {
+      render(<MemoryRouter><GuardarAlerta filtros={{ min: '300000' }} campusId={null} /></MemoryRouter>)
+      fireEvent.click(screen.getByRole('button', { name: /Guardar alerta/ }))
+      await waitFor(() => expect(oyente).toHaveBeenCalled())
+      expect(oyente.mock.calls[0][0].detail.href).toBe('/alertas')
+    } finally {
+      window.removeEventListener('alojau:toast', oyente)
+    }
   })
 })
