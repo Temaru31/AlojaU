@@ -146,6 +146,11 @@ Si necesitas enseñar la plataforma con más contenido (las 13 del home + 3 paus
 | Render | `ENV` | `prod` | Render | No |
 | Render | `USE_MOCK_FALLBACK` | `False` | Render | No |
 | Vercel | `VITE_API_URL` | `https://alojau-api.onrender.com` | Vercel → Settings → Env | No |
+| Render | `CHAT_ENABLED` | `false` (default apagado) | Render | No |
+| Render | `CHAT_DATABASE_URL` | `postgresql+asyncpg://chatbot_ro.<ref>:<secreto>@...pooler.supabase.com:5432/postgres` | Render (Sensitive) | **Sí** |
+| Render | `CHAT_LLM_PROVIDER/BASE_URL/API_KEY/MODEL` | `fake` + base + llave + modelo (vacío = Fake) | Render (API_KEY Sensitive) | **Sí (API_KEY)** |
+
+**Chatbot en prod (orden):** 1) SQL Editor: migraciones pendientes + `021_chatbot_readonly.sql` (verifica pre-chequeo 005–020). 2) `ALTER ROLE chatbot_ro WITH LOGIN PASSWORD '<secreto>'` (superuser, una vez). 3) Setear `CHAT_DATABASE_URL` (+ `CHAT_LLM_*` si hay proveedor) y `CHAT_ENABLED=true` recién al final. Sin `CHAT_DATABASE_URL` el bot responde deshabilitado (fail-closed). Ver `docs/CHATBOT.md:4`.
 
 **No hacer:** `CORS_ORIGINS=*` con `allow_credentials` (inseguro, `main.py:19` lo bloquea), `SECRET_KEY` corto, `DATABASE_URL` sin `+asyncpg`, subir `.env` (ya en `.gitignore:7`).
 
