@@ -228,11 +228,11 @@ def test_config_chat_apagado_por_defecto():
     import sys
     sys.path.insert(0, str(REPO))
     try:
+        # Default declarado en el modelo (sin instanciar: ni backend/.env
+        # local ni el entorno de desarrollo interfieren).
         from app.core.config import Settings
-        cfg = Settings(_env_file=None)
-        assert cfg.CHAT_ENABLED is False
-        assert cfg.CHAT_DATABASE_URL == ""
-        assert cfg.chat_configurado is False
+        assert Settings.model_fields["CHAT_ENABLED"].default is False
+        assert Settings.model_fields["CHAT_DATABASE_URL"].default == ""
     finally:
         sys.path.remove(str(REPO))
 

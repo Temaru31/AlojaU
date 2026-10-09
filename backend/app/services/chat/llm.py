@@ -50,6 +50,11 @@ class FakeLLMProvider(LLMProvider):
             paso = self.guion.pop(0)
             return {"texto": str(paso.get("texto", "")),
                     "tools": list(paso.get("tools", []))}
+        if any(m.get("rol") == "tool" for m in mensajes):
+            return {"texto": ("Encontré estas opciones según tu búsqueda, "
+                              "ordenadas por recientes. Pregúntame por "
+                              "filtros, confianza o compáralas en la app."),
+                    "tools": []}
         ultimo = ""
         for m in reversed(mensajes):
             if m.get("rol") == "user":

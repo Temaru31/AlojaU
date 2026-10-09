@@ -73,8 +73,12 @@ def test_apagado_responde_controlado_sin_llm_ni_bd(throttle_limpio,
     assert llamadas["n"] == 0, "apagado no debe tocar el LLM"
 
 
-def test_apagado_por_defecto(throttle_limpio):
-    assert settings.CHAT_ENABLED is False
+def test_apagado_por_defecto(throttle_limpio, monkeypatch):
+    # Default declarado en el modelo (sin instanciar: ni backend/.env local
+    # ni variables de entorno de desarrollo interfieren).
+    from app.core.config import Settings
+    assert Settings.model_fields["CHAT_ENABLED"].default is False
+    monkeypatch.setattr(settings, "CHAT_ENABLED", False)
     r = _cliente().post("/api/chat", json={"mensaje": "hola"})
     assert r.status_code == 200
     assert r.json()["deshabilitado"] is True
