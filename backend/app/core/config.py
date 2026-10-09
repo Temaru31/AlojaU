@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     # v13: versión de política de datos vigente (Ley 1581/2012).
     POLITICA_VERSION: str = POLITICA_VERSION_VIGENTE
 
+    # Chatbot MVP (solo lectura, mig 021). Apagado por defecto.
+    # CHAT_ENABLED=true exige CHAT_DATABASE_URL (rol chatbot_ro); sin esa
+    # URL el bot responde deshabilitado, NUNCA usa la conexión principal.
+    CHAT_ENABLED: bool = False
+    CHAT_DATABASE_URL: str = ""
+
     @field_validator("ENV")
     @classmethod
     def check_env(cls, v: str) -> str:
@@ -144,6 +150,14 @@ class Settings(BaseSettings):
     def mock_enabled(self) -> bool:
         # Mock solo si flag True Y ENV!=prod (doble check settings + entorno).
         return bool(self.USE_MOCK_FALLBACK) and self.ENV != "prod" and os.getenv("ENV", "dev") != "prod"
+
+    @property
+    def chat_configurado(self) -> bool:
+        """Chatbot listo: habilitado por flag Y con conexión de solo lectura.
+
+        Sin CHAT_DATABASE_URL el bot está deshabilitado (fail-closed): el
+        código NUNCA cae a DATABASE_URL principal."""
+        return bool(self.CHAT_ENABLED) and bool(self.CHAT_DATABASE_URL.strip())
 
     class Config:
         env_file = ".env"
