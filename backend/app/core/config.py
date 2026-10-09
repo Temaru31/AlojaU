@@ -80,6 +80,19 @@ class Settings(BaseSettings):
     # URL el bot responde deshabilitado, NUNCA usa la conexión principal.
     CHAT_ENABLED: bool = False
     CHAT_DATABASE_URL: str = ""
+    # Proveedor LLM (Fase 2): adapter OpenAI-compatible por urllib stdlib.
+    # "fake" (default) = determinista sin red. La llave NUNCA va al repo:
+    # solo env / Render dashboard. Sin llave/modelo/base → Fake (fallback).
+    CHAT_LLM_PROVIDER: str = "fake"
+    CHAT_LLM_BASE_URL: str = ""
+    CHAT_LLM_API_KEY: str = ""
+    CHAT_LLM_MODEL: str = ""
+    CHAT_TIMEOUT_S: float = 20.0
+    CHAT_MAX_TOKENS_SALIDA: int = 600
+    # Abuso: throttle por IP/usuario (ventana 60 s) + tope diario global.
+    CHAT_LIMITE_IP_MIN: int = 30
+    CHAT_LIMITE_USUARIO_MIN: int = 60
+    CHAT_TOPE_DIARIO: int = 2000
 
     @field_validator("ENV")
     @classmethod

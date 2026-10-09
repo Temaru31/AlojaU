@@ -38,10 +38,12 @@ IMPORTS_PROHIBIDOS = (
     "importlib",
     "pickle",
     "yaml",
-    "urllib",
-    "http",
     "socket",
 )
+
+# Red: solo llm.py puede importar urllib/http (egreso al proveedor LLM con
+# URL fija de settings; el contenido del usuario va en el body, nunca en URL).
+RED_PERMITIDA_SOLO_EN = {"llm.py": ("urllib", "http")}
 
 # Nombres importados sueltos prohibidos (from x import ...).
 NOMBRES_PROHIBIDOS = {
@@ -49,11 +51,13 @@ NOMBRES_PROHIBIDOS = {
     "engine", "eval", "exec", "compile", "__import__",
 }
 
-# Llamadas por atributo prohibidas: obj.<nombre>(...).
+# Llamadas por atributo prohibidas: obj.<nombre>(...). `add` solo cuenta en
+# receptores con pinta de sesión (set.add/dict son benignos y se usan).
 ATRIBUTOS_PROHIBIDOS = {
-    "add", "commit", "flush", "delete", "merge",
+    "commit", "flush", "delete", "merge",
     "execute_raw", "executescript", "system", "popen",
 }
+RECEPTORES_SESION = {"db", "session", "sesion", "sess", "s"}
 
 # Palabras SQL que delatan SQL crudo dentro de un f-string.
 SQL_EN_FSTRING = (
@@ -73,6 +77,11 @@ def _archivos_chat() -> list[pathlib.Path]:
     return archivos
 
 
+def _red_permitida(path: pathlib.Path, nombre: str) -> bool:
+    permitidos = RED_PERMITIDA_SOLO_EN.get(path.name, ())
+    return any(nombre == p or nombre.startswith(p + ".") for p in permitidos)
+
+
 def _modulo_de(node: ast.ImportFrom) -> str:
     return node.module or ""
 
@@ -86,9 +95,11 @@ def auditar_archivo(path: pathlib.Path) -> list[str]:
         if isinstance(nodo, ast.Import):
             for alias in nodo.names:
                 nombre = alias.name or ""
-                if nombre.split(".")[0] in (
-                        "os", "subprocess", "importlib", "pickle", "yaml",
-                        "urllib", "http", "socket"):
+                base = nombre.split(".")[0]
+                if base in ("os", "subprocess", "importlib", "pickle", "yaml",
+                            "socket") or (
+                        base in ("urllib", "http")
+                        and not _red_permitida(path, nombre)):
                     violaciones.append(f"{path.name}:{nodo.lineno} import {nombre}")
                 if any(nombre == p or nombre.startswith(p + ".")
                        for p in IMPORTS_PROHIBIDOS):
@@ -115,6 +126,12 @@ def auditar_archivo(path: pathlib.Path) -> list[str]:
                 nombre = func.attr
                 if nombre in ATRIBUTOS_PROHIBIDOS:
                     violaciones.append(f"{path.name}:{nodo.lineno} .{nombre}(...)")
+                if nombre == "add":
+                    receptor = func.value
+                    if (isinstance(receptor, ast.Name)
+                            and receptor.id in RECEPTORES_SESION):
+                        violaciones.append(
+                            f"{path.name}:{nodo.lineno} sesion.add(...)")
                 if nombre == "execute" and nodo.args:
                     primero = nodo.args[0]
                     if isinstance(primero, (ast.Constant, ast.JoinedStr)):

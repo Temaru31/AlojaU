@@ -582,6 +582,8 @@ async def config_publica(db: AsyncSession = Depends(get_session)):
         "canon_max": 10_000_000,
         "vistas_visibles_publico": str(vals.get("vistas_visibles_publico", "false")).lower() == "true",
         "tipos_vivienda": tipos,
+        # Chatbot MVP: el front oculta el widget si viene false (Fase 3).
+        "chat_enabled": bool(settings.CHAT_ENABLED),
     }
 
 @router.get("/{pub_id}", response_model=PublicacionDetailOut, summary="HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp")
