@@ -63,7 +63,7 @@ const ICONO_TIPO = {
 
 function destinoDe(n) {
   if (n.tipo === 'nuevo_arriendo' && n.publicacion_id) return `/publicacion/${n.publicacion_id}`
-  if (n.tipo === 'moderacion') return '/mis-publicaciones'
+  if (n.tipo === 'moderacion' && n.publicacion_id) return '/mis-publicaciones'
   if (n.tipo === 'telegram') return '/perfil'
   return null
 }
