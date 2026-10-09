@@ -53,7 +53,9 @@ def _dsn() -> str:
         "DATABASE_URL", "postgresql://alojau:alojau123@localhost:5432/alojau")
     if "supabase.co" in raw.lower() or os.getenv("ENV", "dev").lower() == "prod":
         raise RuntimeError("NUNCA contra prod")
-    return raw
+    # asyncpg no entiende el esquema +asyncpg (igual que conftest._dsn_test).
+    from app.db.session import dsn_asyncpg_a_psycopg
+    return dsn_asyncpg_a_psycopg(raw)
 
 
 async def _pg_ok() -> bool:
