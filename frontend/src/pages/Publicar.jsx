@@ -15,6 +15,8 @@ import { SERVICIOS } from '../utils/servicios'
 import InfoTooltip from '../components/InfoTooltip'
 import useTiposVivienda from '../hooks/useTiposVivienda'
 import { getEtiquetaTipo } from '../utils/tiposVivienda'
+import TipoIcono from '../components/TipoIcono'
+import { ArrowRight, CookingPot, FileText, House, MapPin, ShowerHead, Sofa, Sparkles, Star, WashingMachine, Wifi } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
 // Helpers exportados (testeables). Bloque 2 + Bloque 5.
@@ -24,22 +26,22 @@ import { getEtiquetaTipo } from '../utils/tiposVivienda'
 export const DRAFT_KEY = 'alojau_publicar_draft'
 
 const ICONOS_SERVICIOS = {
-  1: '📶',
-  2: '🚿',
-  3: '🍳',
-  4: '🛋️',
-  5: '🧺',
+  1: Wifi,
+  2: ShowerHead,
+  3: CookingPot,
+  4: Sofa,
+  5: WashingMachine,
 }
 
 export function iconoServicio(id, nombre) {
   if (ICONOS_SERVICIOS[id]) return ICONOS_SERVICIOS[id]
   const n = String(nombre || '').toLowerCase()
-  if (n.includes('wifi') || n.includes('internet')) return '📶'
-  if (n.includes('baño')) return '🚿'
-  if (n.includes('amobl')) return '🛋️'
-  if (n.includes('cocina')) return '🍳'
-  if (n.includes('lavad')) return '🧺'
-  return '✨'
+  if (n.includes('wifi') || n.includes('internet')) return Wifi
+  if (n.includes('baño')) return ShowerHead
+  if (n.includes('amobl')) return Sofa
+  if (n.includes('cocina')) return CookingPot
+  if (n.includes('lavad')) return WashingMachine
+  return Sparkles
 }
 
 /**
@@ -142,7 +144,7 @@ export function SelectorTipoPublicar({ value, onChange, id = 'tipo-vivienda' }) 
     >
       {tipos.map((t) => (
         <option key={t.slug} value={t.slug} title={t.descripcion_tooltip || ''}>
-          {t.icono ? `${t.icono} ` : ''}{t.nombre_visible || t.slug}
+          <TipoIcono icono={t.icono} className="w-4 h-4" />{t.nombre_visible || t.slug}
         </option>
       ))}
     </select>
@@ -460,7 +462,7 @@ export default function Publicar() {
           </p>
           {borradorRestaurado && (
             <div className="mt-3 flex items-center justify-between gap-2 rounded-lg bg-navy-50 border border-navy-100 px-3 py-2">
-              <p className="text-xs text-navy-800">📝 Borrador restaurado: seguiste donde ibas.</p>
+              <p className="text-xs text-navy-800 flex items-center gap-1.5"><FileText aria-hidden="true" className="w-4 h-4" /> Borrador restaurado: seguiste donde ibas.</p>
               <button type="button" onClick={descartarBorrador} className="text-xs font-semibold text-neutral-500 hover:text-red-600 underline shrink-0">Descartar</button>
             </div>
           )}
@@ -475,7 +477,7 @@ export default function Publicar() {
               <p className="font-semibold text-emerald-800">¡Publicación enviada! Está en revisión y te avisaremos cuando sea visible.</p>
             </div>
             {submitOk.rol_actualizado && (
-              <p className="text-sm text-emerald-700 mt-1">🎉 Tu cuenta ahora es <b>Arrendador</b>: ya puedes ver tu panel en Mis publicaciones.</p>
+              <p className="text-sm text-emerald-700 mt-1">Tu cuenta ahora es <b>Arrendador</b>: ya puedes ver tu panel en Mis publicaciones.</p>
             )}
             <p className="text-sm text-emerald-700 mt-1">{submitOk.mensaje || ''}</p>
             {submitOk.indice_confianza != null && (
@@ -489,7 +491,7 @@ export default function Publicar() {
             <p className="text-red-700 text-sm break-words">{submitError}</p>
             {submitPhoneGate && (
               <Link to="/perfil#datos" className="inline-block mt-2 text-xs font-semibold text-navy-700 underline hover:text-navy-900">
-                Vincular mi número en Mi Perfil → Datos y contacto
+                Vincular mi número en Mi Perfil <ArrowRight aria-hidden="true" className="w-4 h-4 inline" /> Datos y contacto
               </Link>
             )}
           </div>
@@ -653,8 +655,8 @@ export default function Publicar() {
               <div aria-live="polite">
                 {form.latitud !== '' && form.longitud !== '' ? (
                   <div className="flex items-center justify-between gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2">
-                    <p className="text-xs text-emerald-800">
-                      📍 Ubicación confirmada: <b>{form.latitud}, {form.longitud}</b>
+                    <p className="text-xs text-emerald-800 flex items-center gap-1">
+                      <MapPin aria-hidden="true" className="w-4 h-4" /> Ubicación confirmada: <b>{form.latitud}, {form.longitud}</b>
                     </p>
                     <button
                       type="button"
@@ -673,8 +675,8 @@ export default function Publicar() {
                   <p className="text-xs text-red-600 mt-1">{errors.latitud || errors.longitud}</p>
                 )}
               </div>
-              <p className="text-xs text-neutral-500 bg-navy-50 border border-navy-100 rounded-lg px-3 py-2">
-                📍 Las distancias a Tulcán, Torobajo, Centro y demás puntos se calculan solas con la ubicación que marques en el mapa.
+              <p className="text-xs text-neutral-500 bg-navy-50 border border-navy-100 rounded-lg px-3 py-2 flex items-start gap-1.5">
+                <MapPin aria-hidden="true" className="w-4 h-4 shrink-0 mt-0.5" /> Las distancias a Tulcán, Torobajo, Centro y demás puntos se calculan solas con la ubicación que marques en el mapa.
               </p>
             </section>
 
@@ -691,13 +693,16 @@ export default function Publicar() {
               <div>
                 <label className="block text-sm font-medium text-navy-800 mb-1.5">Servicios *</label>
                 <div className="flex flex-wrap gap-2 mt-1" role="group" aria-label="Servicios">
-                  {SERVICIOS.map(s => (
-                    <label key={s.id} className={`text-xs sm:text-sm px-3 py-2 min-h-[44px] inline-flex items-center gap-1.5 rounded-full border cursor-pointer select-none transition active:scale-[0.97] ${form.servicios_ids.includes(s.id) ? 'bg-navy-800 text-white border-navy-800' : 'bg-white border-neutral-200 text-neutral-600 hover:border-navy-300'}`}>
-                      <input type="checkbox" className="sr-only" checked={form.servicios_ids.includes(s.id)} onChange={() => toggleArray('servicios_ids', s.id)} />
-                      <span aria-hidden="true">{iconoServicio(s.id, s.nombre)}</span>
-                      {s.nombre}
-                    </label>
-                  ))}
+                  {SERVICIOS.map(s => {
+                    const IconoServicio = iconoServicio(s.id, s.nombre)
+                    return (
+                      <label key={s.id} className={`text-xs sm:text-sm px-3 py-2 min-h-[44px] inline-flex items-center gap-1.5 rounded-full border cursor-pointer select-none transition active:scale-[0.97] ${form.servicios_ids.includes(s.id) ? 'bg-navy-800 text-white border-navy-800' : 'bg-white border-neutral-200 text-neutral-600 hover:border-navy-300'}`}>
+                        <input type="checkbox" className="sr-only" checked={form.servicios_ids.includes(s.id)} onChange={() => toggleArray('servicios_ids', s.id)} />
+                        <IconoServicio aria-hidden="true" className="w-4 h-4" />
+                        {s.nombre}
+                      </label>
+                    )
+                  })}
                 </div>
                 {errors.servicios_ids && <p className="text-xs text-red-600 mt-1">{errors.servicios_ids}</p>}
               </div>
@@ -733,7 +738,7 @@ export default function Publicar() {
                         <div key={url} className={`relative aspect-square overflow-hidden rounded-lg border-2 ${idx === 0 ? 'border-gold-400' : 'border-neutral-200'}`}>
                           <img src={url} alt={idx === 0 ? `Portada principal ${idx + 1}` : `Foto ${idx + 1}`} className="w-full h-full object-cover" loading="lazy" />
                           {idx === 0 ? (
-                            <span className="absolute top-1 left-1 bg-gold-400 text-navy-900 text-[10px] font-bold px-1.5 py-0.5 rounded">★ Portada</span>
+                            <span className="absolute top-1 left-1 bg-gold-400 text-navy-900 text-[10px] font-bold px-1.5 py-0.5 rounded inline-flex items-center gap-1"><Star aria-hidden="true" className="w-3 h-3 fill-current" /> Portada</span>
                           ) : (
                             <button
                               type="button"
@@ -757,7 +762,7 @@ export default function Publicar() {
                     </div>
                   </div>
                 )}
-                <p className="text-[11px] text-neutral-400 mt-2">Tip iPhone: si tu foto sale como .HEIC, cámbiala a JPG en Ajustes → Cámara → Formatos → Más compatible.</p>
+                <p className="text-[11px] text-neutral-400 mt-2">Tip iPhone: si tu foto sale como .HEIC, cámbiala a JPG en Ajustes <ArrowRight aria-hidden="true" className="w-3 h-3 inline" /> Cámara <ArrowRight aria-hidden="true" className="w-3 h-3 inline" /> Formatos <ArrowRight aria-hidden="true" className="w-3 h-3 inline" /> Más compatible.</p>
               </div>
             </section>
 
@@ -782,13 +787,13 @@ export default function Publicar() {
                   {preview.foto ? (
                     <img src={preview.foto} alt="Portada del anuncio" className="w-full h-full object-cover" loading="lazy" />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-neutral-300 text-4xl" role="img" aria-label="Sin foto">⌂</div>
+                    <div className="w-full h-full flex items-center justify-center text-neutral-300" role="img" aria-label="Sin foto"><House aria-hidden="true" className="w-10 h-10" /></div>
                   )}
                   <span className="absolute top-2 left-2 bg-white/90 text-navy-900 text-[10px] font-bold px-2 py-1 rounded-full">{preview.tipo}</span>
                 </div>
                 <p className="font-semibold text-navy-900 text-sm mt-3 line-clamp-2">{preview.titulo}</p>
                 <p className="text-sm font-bold text-navy-800 mt-1">{preview.canon}</p>
-                <p className="text-[11px] text-neutral-500 mt-1">{preview.numFotos} fotos · {preview.servicios} servicios{preview.tieneUbi ? ' · 📍 con ubicación' : ''}</p>
+                <p className="text-[11px] text-neutral-500 mt-1">{preview.numFotos} fotos · {preview.servicios} servicios{preview.tieneUbi ? (<> · <MapPin aria-hidden="true" className="w-3 h-3 inline" /> con ubicación</>) : ''}</p>
                 <p className="text-[11px] text-neutral-400 mt-2">Así se verá tu tarjeta en Buscar. La primera foto es la portada.</p>
               </div>
             </div>

@@ -6,6 +6,7 @@
  * eliminar/limpiar/desmontar. Accesible por teclado (Enter/Espacio en la zona).
  */
 import { useState, useRef, useEffect } from 'react'
+import { Check } from 'lucide-react'
 import { api } from '../services/api'
 import { comprimirImagen } from '../utils/compressImage'
 
@@ -224,7 +225,7 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
               ? 'Subiendo…'
               : total === 0
                 ? `0/${UPLOAD_MAX_FILES} fotos • elige al menos ${UPLOAD_MIN_FILES} de tu galería o cámara`
-                : `${total}/${UPLOAD_MAX_FILES} fotos • ${total >= UPLOAD_MIN_FILES ? 'listas para subir ✓ (pulsa el botón de abajo)' : `elige ${UPLOAD_MIN_FILES - total} más para poder subir`}`}
+                : `${total}/${UPLOAD_MAX_FILES} fotos • ${total >= UPLOAD_MIN_FILES ? 'listas para subir (pulsa el botón de abajo)' : `elige ${UPLOAD_MIN_FILES - total} más para poder subir`}`}
         </p>
       </div>
 
@@ -258,7 +259,7 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
           preview y se revocan al quitar/limpiar/desmontar. */}
       {uploadedUrls.length > 0 && (
         <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-          <p className="text-xs font-medium text-green-800">✓ Subidas {uploadedUrls.length} URLs listas para publicar:</p>
+          <p className="text-xs font-medium text-green-800 flex items-center gap-1.5"><Check aria-hidden="true" className="w-3.5 h-3.5" /> Subidas {uploadedUrls.length} URLs listas para publicar:</p>
           <ul className="text-xs text-green-700 truncate mt-1 space-y-1">
             {uploadedUrls.map((u, i) => <li key={i} className="truncate">{u}</li>)}
           </ul>

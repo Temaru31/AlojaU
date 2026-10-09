@@ -5,6 +5,7 @@
 // Uso: <PreferenceChip icono="mascotas" titulo="Tengo mascota" hint="..."
 //        activa={bool} onToggle={() => ...} /> (a11y: aria-pressed).
 import Icono from './Icono'
+import { Check } from 'lucide-react'
 
 // Sin atributo `title`: en táctil no existe hover y duplicaba el nombre
 // accesible; el `hint` vive en el subtítulo de la sección (visible siempre).
@@ -31,7 +32,7 @@ export default function PreferenceChip({ icono, titulo, hint, activa, onToggle }
           activa ? 'bg-navy-800 text-white opacity-100' : 'bg-transparent text-transparent opacity-0'
         }`}
       >
-        ✓
+        <Check aria-hidden="true" className="w-3 h-3" />
       </span>
     </button>
   )

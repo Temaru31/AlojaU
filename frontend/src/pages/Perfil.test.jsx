@@ -176,7 +176,7 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
     await waitFor(() => {
       expect(screen.getByDisplayValue('3001234567')).toBeInTheDocument()
     })
-    expect(screen.getByText('+57 🇨🇴')).toBeInTheDocument()
+    expect(screen.getByText('+57')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /Guardar cambios/i }))
     expect(patchSpy).toHaveBeenCalledOnce()
@@ -251,7 +251,7 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
     )
     await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
     // M3 gamificado: el badge + la checklist (con peso 20%) contienen el texto.
-    expect(screen.getAllByText(/✓ Correo verificado/).length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText(/Correo verificado/).length).toBeGreaterThanOrEqual(1)
   })
 
   it('M2 revocar-todas exige 2 pasos y luego limpia la sesión', async () => {
@@ -340,7 +340,7 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
     expect(screen.getByText('Arrendador', { selector: 'span' })).toBeInTheDocument()
   })
 
-  it('R1 teléfono verificado bloqueado con ✏️; editar lo habilita', async () => {
+  it('R1 teléfono verificado bloqueado con lápiz; editar lo habilita', async () => {
     localStorage.setItem('alojau_token', 'mock-token-test')
     mockPerfil({ ...PERFIL_BASE, telefono_verificado: true })
     render(
@@ -399,7 +399,7 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
     await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
     await user.click(screen.getByRole('button', { name: /Guardar cambios/i }))
     await waitFor(() => expect(patchSpy).toHaveBeenCalledOnce())
-    expect(eventos).toEqual([{ message: '✓ Cambios guardados en tu perfil', href: undefined }])
+    expect(eventos).toEqual([{ message: 'Cambios guardados en tu perfil', href: undefined }])
     window.removeEventListener('alojau:toast', oyente)
   })
 
@@ -453,7 +453,7 @@ describe('Perfil - Perfil verificable + confianza clara', () => {
     )
     await waitFor(() => expect(screen.getByDisplayValue('arrendador@alojau.com')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('tab', { name: /Confianza y Reputación/ }))
-    expect(screen.getByText('+20 pts ✓')).toBeInTheDocument()
+    expect(screen.getByText('+20 pts')).toBeInTheDocument()
     expect(screen.queryByText('0 pts')).not.toBeInTheDocument()
     expect(screen.getByText(/se evalúan individualmente en cada inmueble/)).toBeInTheDocument()
   })

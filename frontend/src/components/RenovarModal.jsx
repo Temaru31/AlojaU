@@ -3,6 +3,7 @@
 // La fecha confirmada siempre viene del backend; si hay error NO se presenta fecha renovada.
 // Uso: <RenovarModal pub={pub} token={token} onClose={() => ...} onRenovada={(upd) => ...} />
 import { useRef, useState } from 'react'
+import { TriangleAlert } from 'lucide-react'
 import { api } from '../services/api'
 import useFocusTrap from '../hooks/useFocusTrap'
 
@@ -153,7 +154,7 @@ export default function RenovarModal({ pub, token, onClose, onRenovada }) {
                   role="alert"
                   id="renovar-error-msg"
                 >
-                  <span className="text-red-500 mt-0.5 shrink-0" aria-hidden="true">⚠</span>
+                  <TriangleAlert aria-hidden="true" className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
                   <p className="text-xs text-red-700">{errorMsg}</p>
                 </div>
               )}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Check } from 'lucide-react'
 import { api } from '../services/api'
 
 const FALLBACK = [{ id: 1, nombre: 'Popayán', departamento: 'Cauca', slug: 'popayan' }]
@@ -67,7 +68,7 @@ export default function CiudadSelector({ value, onChange, inputId = 'ciudad', ci
                 className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-navy-50 ${String(value ?? sel?.id) === String(c.id) ? 'font-semibold text-navy-800 bg-navy-50' : 'text-neutral-700'}`}
               >
                 <span className="truncate">{c.nombre}, {c.departamento}</span>
-                {String(value ?? sel?.id) === String(c.id) && <span aria-hidden="true" className="text-navy-600">✓</span>}
+                {String(value ?? sel?.id) === String(c.id) && <Check aria-hidden="true" className="w-4 h-4 text-navy-600" />}
               </button>
             </li>
           ))}

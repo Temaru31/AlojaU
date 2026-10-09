@@ -5,6 +5,7 @@
 // el backend invalida la caché de 5min. Uso: ruta /admin/tipos-vivienda.
 import { useEffect, useState, useCallback } from 'react'
 import { api } from '../services/api'
+import { House } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import BreadcrumbsAdmin from '../components/BreadcrumbsAdmin'
 
@@ -128,8 +129,8 @@ export default function AdminTipos() {
   return (
     <div className="container-main py-6 md:py-8">
       <BreadcrumbsAdmin actual="Tipos de vivienda" volverA="/admin/dashboard" volverTexto="Panel" />
-      <h1 className="font-display text-xl md:text-2xl font-bold text-navy-900 mb-1">
-        🏠 Tipos de vivienda
+      <h1 className="font-display text-xl md:text-2xl font-bold text-navy-900 mb-1 flex items-center gap-2">
+        <House aria-hidden="true" className="w-5 h-5" /> Tipos de vivienda
       </h1>
       <p className="text-xs text-neutral-400 mb-5">
         Catálogo dinámico de filtros y publicación. Desactivar oculta el tipo sin romper avisos pasados.
@@ -170,12 +171,13 @@ export default function AdminTipos() {
           />
           <input
             aria-label="Icono del nuevo tipo"
-            placeholder="Icono (emoji, opcional)"
+            placeholder="Icono (nombre lucide, opcional)"
             value={nuevo.icono}
             onChange={(e) => setNuevo({ ...nuevo, icono: e.target.value.slice(0, 20) })}
             className="input-field"
           />
         </div>
+        <p className="text-[11px] text-neutral-400">Nombres: house, door-open, building, handshake, building-2, home.</p>
         <button
           type="submit"
           disabled={saving === 'nuevo'}
@@ -256,7 +258,7 @@ export default function AdminTipos() {
                       value={d.icono ?? ''}
                       onChange={(e) => setEdit({ ...edit, [t.slug]: { ...d, icono: e.target.value } })}
                       className="input-field text-xs"
-                      placeholder="🏠"
+                      placeholder="house"
                     />
                     <button
                       type="button"

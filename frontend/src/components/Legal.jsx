@@ -4,6 +4,7 @@
 // - LegalModal: <dialog>-like accesible (role=dialog, Esc cierra, foco ok).
 // - Las rutas públicas /terminos y /privacidad usan el mismo contenido.
 import { useEffect, useRef } from 'react'
+import { X } from 'lucide-react'
 import useFocusTrap from '../hooks/useFocusTrap'
 
 export const POLITICA_VERSION = 'v1.0-ley1581-2026'
@@ -100,7 +101,7 @@ export function LegalModal({ titulo, contenido, abierto, onCerrar }) {
             aria-label="Cerrar documento legal"
             className="p-1.5 rounded-md text-neutral-500 hover:bg-neutral-100"
           >
-            ✕
+            <X aria-hidden="true" className="w-4 h-4" />
           </button>
         </div>
         <div className="px-5 py-4 overflow-y-auto">

@@ -87,7 +87,7 @@ TEXTO_PEDIR_CONTACTO = (
     "con el botón de abajo. Debe ser el mismo que guardaste en tu perfil."
 )
 
-TEXTO_BOTON_CONTACTO = "📱 Compartir mi número de teléfono para verificar"
+TEXTO_BOTON_CONTACTO = "Compartir mi número de teléfono para verificar"
 
 
 def teclado_pedir_contacto() -> dict:

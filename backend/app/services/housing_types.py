@@ -15,22 +15,22 @@ from sqlalchemy import select
 FALLBACK_TIPOS = [
     {"slug": "HABITACION_FAMILIAR", "nombre_visible": "Habitación familiar",
      "descripcion_tooltip": "Habitación en casa de familia, ambiente compartido",
-     "icono": "🏠", "esta_activo": True},
+     "icono": "house", "esta_activo": True},
     {"slug": "HABITACION_INDEPENDIENTE", "nombre_visible": "Habitación independiente",
      "descripcion_tooltip": "Habitación privada con acceso independiente",
-     "icono": "🚪", "esta_activo": True},
+     "icono": "door-open", "esta_activo": True},
     {"slug": "APARTAESTUDIO", "nombre_visible": "Apartaestudio",
      "descripcion_tooltip": "Ambiente integrado con cocina y baño privados",
-     "icono": "🏢", "esta_activo": True},
+     "icono": "building", "esta_activo": True},
     {"slug": "COMPARTIDO", "nombre_visible": "Compartido",
      "descripcion_tooltip": "Cupo en vivienda compartida con otros estudiantes",
-     "icono": "🤝", "esta_activo": True},
+     "icono": "handshake", "esta_activo": True},
     {"slug": "APARTAMENTO_COMPLETO", "nombre_visible": "Apartamento completo",
      "descripcion_tooltip": "Apartamento entero para ti o tu grupo",
-     "icono": "🏘️", "esta_activo": True},
+     "icono": "building-2", "esta_activo": True},
     {"slug": "HABITACION_PISO_COMPARTIDO", "nombre_visible": "Habitación en piso compartido",
      "descripcion_tooltip": "Habitación privada en piso con zonas comunes",
-     "icono": "🏡", "esta_activo": True},
+     "icono": "home", "esta_activo": True},
 ]
 
 _TTL_S = 300.0

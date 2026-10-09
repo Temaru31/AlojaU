@@ -11,6 +11,7 @@ import { LIMITES, estadoRango, RANGO_CLS } from '../constants'
 import { SERVICIOS } from '../utils/servicios'
 import useTiposVivienda, { TIPOS_FALLBACK } from '../hooks/useTiposVivienda'
 import useFocusTrap from '../hooks/useFocusTrap'
+import TipoIcono from './TipoIcono'
 
 // Fallback local (mismo contrato slug). El hook lo reemplaza por /config-publica.
 const TIPOS = TIPOS_FALLBACK.map((t) => t.slug)
@@ -22,7 +23,7 @@ export function SelectorTipoEditar({ value, onChange }) {
     <select id="edit-tipo" value={value} onChange={(e) => onChange(e.target.value)} className="select-field text-sm" aria-label="Tipo de vivienda">
       {(tipos?.length ? tipos : TIPOS_FALLBACK).map((t) => (
         <option key={t.slug} value={t.slug} title={t.descripcion_tooltip || ''}>
-          {t.icono ? `${t.icono} ` : ''}{t.nombre_visible || t.slug}
+          <TipoIcono icono={t.icono} className="w-4 h-4" />{t.nombre_visible || t.slug}
         </option>
       ))}
     </select>

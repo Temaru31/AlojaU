@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import L from 'leaflet'
+import { MapPin } from 'lucide-react'
 import { reverseGeocode } from '../utils/geocode'
 
 // Iconos locales (mismo fix que MapaZona: sin CDN unpkg).
@@ -106,9 +107,9 @@ export default function MapPicker({ lat, lng, onChange, onAddressSuggestion, onG
         <button
           type="button"
           onClick={usarUbicacion}
-          className="text-[11px] font-medium text-navy-700 border border-navy-200 rounded-md px-2.5 py-1.5 hover:bg-navy-50 transition"
+          className="inline-flex items-center gap-1.5 text-[11px] font-medium text-navy-700 border border-navy-200 rounded-md px-2.5 py-1.5 hover:bg-navy-50 transition"
         >
-          📍 Usar mi ubicación
+          <MapPin aria-hidden="true" className="w-3.5 h-3.5" /> Usar mi ubicación
         </button>
         <span className="text-[11px] text-neutral-400">
           {tienePunto

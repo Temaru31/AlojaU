@@ -5,6 +5,7 @@
 // y el contacto por WhatsApp queda deshabilitado.
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
+import { Heart, House, X } from 'lucide-react'
 import { api } from '../services/api'
 import { useFavoritos } from '../contexts/FavoritosContext'
 import { useAuth } from '../contexts/AuthContext'
@@ -118,7 +119,7 @@ export default function Favoritos() {
         <div>
           <h1 className="font-display text-xl md:text-2xl font-bold text-navy-900 flex items-center gap-2">
             <span>Mis Favoritos</span>
-            <span className="text-red-500 text-lg">♥</span>
+            <span className="text-red-500 text-lg"><Heart aria-hidden="true" className="w-5 h-5 fill-current" /></span>
             {count > 0 && (
               <span className="text-sm font-normal text-neutral-400">({count})</span>
             )}
@@ -161,7 +162,7 @@ export default function Favoritos() {
         /* Estado vacío */
         <div className="card p-12 text-center max-w-md mx-auto my-8">
           <div className="w-14 h-14 rounded-full bg-red-50 text-red-400 flex items-center justify-center text-2xl mx-auto mb-4">
-            ♡
+            <Heart aria-hidden="true" className="w-6 h-6" />
           </div>
           <h2 className="text-base font-semibold text-navy-900 mb-1">
             No tienes favoritos guardados
@@ -199,7 +200,7 @@ export default function Favoritos() {
                       />
                     ) : (
                       <div className="w-full h-full flex flex-col items-center justify-center bg-navy-50/50 text-navy-300">
-                        <span className="text-2xl mb-1 opacity-50">🏠</span>
+                        <House aria-hidden="true" className="w-6 h-6 opacity-50 mb-1" />
                         <span className="text-xs text-neutral-400 font-medium">Sin imagen</span>
                       </div>
                     )}
@@ -224,7 +225,7 @@ export default function Favoritos() {
                       className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/90 backdrop-blur-sm text-red-500 hover:bg-white hover:text-red-700 shadow flex items-center justify-center text-sm transition"
                       title="Quitar de favoritos"
                     >
-                      ✕
+                      <X aria-hidden="true" className="w-4 h-4" />
                     </button>
                   </div>
 

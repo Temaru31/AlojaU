@@ -10,6 +10,7 @@ import { formatearSesionFecha } from '../utils/sesion'
 import { etiquetaEvento, describirAuditoria } from '../utils/historial'
 import InfoTooltip from '../components/InfoTooltip'
 import BreadcrumbsAdmin from '../components/BreadcrumbsAdmin'
+import { ChevronLeft, ChevronRight, Eye, Flag, House, Newspaper, ScrollText, Settings, ShieldCheck } from 'lucide-react'
 
 const authHead = (token) => ({ headers: { Authorization: `Bearer ${token}` } })
 
@@ -92,10 +93,16 @@ const SETTING_PENDIENTE = new Set(['auto_aprobar_arrendadores_verificados'])
 
 // v15.x: secciones del panel (agrupan por `seccion` del backend; sin sección -> General).
 const SECCIONES = {
-  publicaciones: { titulo: '📰 Publicaciones y contenido', hint: 'Límites de texto, fotos y vigencia de avisos.' },
-  moderacion: { titulo: '🛡️ Moderación y auto-moderación', hint: 'Reglas automáticas, umbrales e IA.' },
-  visibilidad: { titulo: '👁️ Visibilidad', hint: 'Qué ve cada rol en la plataforma.' },
-  general: { titulo: '⚙️ General', hint: 'Otros ajustes del sistema.' },
+  publicaciones: { titulo: 'Publicaciones y contenido', icono: Newspaper, hint: 'Límites de texto, fotos y vigencia de avisos.' },
+  moderacion: { titulo: 'Moderación y auto-moderación', icono: ShieldCheck, hint: 'Reglas automáticas, umbrales e IA.' },
+  visibilidad: { titulo: 'Visibilidad', icono: Eye, hint: 'Qué ve cada rol en la plataforma.' },
+  general: { titulo: 'General', icono: Settings, hint: 'Otros ajustes del sistema.' },
+}
+
+function IconoSeccion({ sec, className = 'w-4 h-4' }) {
+  const Icono = SECCIONES[sec]?.icono
+  if (!Icono) return null
+  return <Icono aria-hidden="true" className={className} />
 }
 
 function seccionDe(s) {
@@ -165,7 +172,7 @@ function AjustesSistema({ token }) {
       {Object.keys(SECCIONES).filter(sec => (settings || []).some(s => seccionDe(s) === sec)).map((sec) => (
         <section key={sec} aria-label={SECCIONES[sec].titulo} className="space-y-3">
           <div>
-            <h3 className="text-sm font-bold text-navy-900">{SECCIONES[sec].titulo}</h3>
+            <h3 className="text-sm font-bold text-navy-900 flex items-center gap-1.5"><IconoSeccion sec={sec} />{SECCIONES[sec].titulo}</h3>
             <p className="text-[11px] text-neutral-400">{SECCIONES[sec].hint}</p>
           </div>
           {(settings || []).filter(s => seccionDe(s) === sec).map((s) => {
@@ -355,13 +362,13 @@ export function HistorialAdmin({ token }) {
           </ul>
           <div className="flex items-center justify-center gap-3 pt-1">
             <button type="button" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
-              className="px-3 py-1.5 text-xs font-semibold rounded-md border border-neutral-200 disabled:opacity-40">
-              ← Anterior
+              className="px-3 py-1.5 text-xs font-semibold rounded-md border border-neutral-200 disabled:opacity-40 inline-flex items-center gap-1">
+              <ChevronLeft aria-hidden="true" className="w-4 h-4" /> Anterior
             </button>
             <span className="text-xs text-neutral-500">Página {page} de {pages} ({total})</span>
             <button type="button" onClick={() => setPage(p => Math.min(pages, p + 1))} disabled={page >= pages}
-              className="px-3 py-1.5 text-xs font-semibold rounded-md border border-neutral-200 disabled:opacity-40">
-              Siguiente →
+              className="px-3 py-1.5 text-xs font-semibold rounded-md border border-neutral-200 disabled:opacity-40 inline-flex items-center gap-1">
+              Siguiente <ChevronRight aria-hidden="true" className="w-4 h-4" />
             </button>
           </div>
         </>
@@ -435,8 +442,8 @@ export default function AdminDashboard() {
   return (
     <div className="container-main py-6 md:py-8">
       <BreadcrumbsAdmin actual={TAB_LABEL[tab] || 'Moderación'} volverA="/" volverTexto="Inicio" />
-      <h1 className="font-display text-xl md:text-2xl font-bold text-navy-900 mb-1">
-        🛡️ Panel Administrador
+      <h1 className="font-display text-xl md:text-2xl font-bold text-navy-900 mb-1 flex items-center gap-2">
+        <ShieldCheck aria-hidden="true" className="w-5 h-5" /> Panel Administrador
       </h1>
       <p className="text-xs text-neutral-400 mb-5">Métricas, moderación, avisos y ajustes del sistema.</p>
 
@@ -444,24 +451,27 @@ export default function AdminDashboard() {
 
       <div className="flex gap-1 border-b border-neutral-150 mb-5" role="tablist" aria-label="Secciones del panel">
         {[
-          { id: 'moderacion', label: '🛡️ Moderación' },
-          { id: 'ajustes', label: '⚙️ Ajustes del Sistema' },
-          { id: 'historial', label: '📜 Historial' },
-        ].map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            role="tab"
-            aria-selected={tab === t.id}
-            onClick={() => setTab(t.id)}
-            className={`px-4 py-2.5 min-h-[44px] text-xs sm:text-sm font-semibold border-b-2 -mb-px transition ${tab === t.id
-              ? 'border-gold-400 text-navy-900'
-              : 'border-transparent text-neutral-400 hover:text-navy-700'
-              }`}
-          >
-            {t.label}
-          </button>
-        ))}
+          { id: 'moderacion', label: 'Moderación', icono: ShieldCheck },
+          { id: 'ajustes', label: 'Ajustes del Sistema', icono: Settings },
+          { id: 'historial', label: 'Historial', icono: ScrollText },
+        ].map((t) => {
+          const IconoTab = t.icono
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.id}
+              onClick={() => setTab(t.id)}
+              className={`px-4 py-2.5 min-h-[44px] text-xs sm:text-sm font-semibold border-b-2 -mb-px transition inline-flex items-center gap-1.5 ${tab === t.id
+                ? 'border-gold-400 text-navy-900'
+                : 'border-transparent text-neutral-400 hover:text-navy-700'
+                }`}
+            >
+              {IconoTab && <IconoTab aria-hidden="true" className="w-4 h-4" />}{t.label}
+            </button>
+          )
+        })}
       </div>
 
       {tab === 'ajustes' ? (
@@ -497,7 +507,7 @@ export default function AdminDashboard() {
               className="btn-ghost text-xs inline-flex items-center gap-2"
               aria-label={metricas?.reportes_pendientes ? `Bandeja de reportes, ${metricas.reportes_pendientes} pendientes` : 'Bandeja de reportes'}
             >
-              🚩 Bandeja de reportes
+              <Flag aria-hidden="true" className="w-4 h-4" /> Bandeja de reportes
               {(metricas?.reportes_pendientes ?? 0) > 0 && (
                 <span
                   className="inline-flex items-center justify-center min-w-6 h-6 px-2 rounded-full bg-red-600 text-white text-[11px] font-extrabold shadow"
@@ -507,8 +517,8 @@ export default function AdminDashboard() {
                 </span>
               )}
             </Link>
-            <Link to="/admin/tipos-vivienda" className="btn-ghost text-xs">
-              🏠 Tipos de vivienda
+            <Link to="/admin/tipos-vivienda" className="btn-ghost text-xs inline-flex items-center gap-1.5">
+              <House aria-hidden="true" className="w-4 h-4" /> Tipos de vivienda
             </Link>
             <button type="button" onClick={cargar} className="btn-ghost text-xs">Recargar</button>
           </div>
@@ -518,7 +528,7 @@ export default function AdminDashboard() {
           </h2>
           {pendientes.length === 0 ? (
             <div className="card p-8 text-center">
-              <p className="text-sm font-medium text-neutral-700">Sin pendientes 🎉</p>
+              <p className="text-sm font-medium text-neutral-700">Sin pendientes</p>
               <p className="text-xs text-neutral-400">No hay avisos por revisar.</p>
             </div>
           ) : (

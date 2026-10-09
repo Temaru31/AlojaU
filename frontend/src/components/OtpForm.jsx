@@ -4,6 +4,7 @@
 // (o Telegram si el operador lo configuró). Uso:
 //   <OtpForm email="a@b.co" proposito="email_verify" onVerificado={...} />
 import { useState, useEffect, useRef } from 'react'
+import { Check } from 'lucide-react'
 import { api } from '../services/api'
 
 // Pausa anti-spam tras pedir código (el backend limita a 5/15min).
@@ -114,7 +115,7 @@ export default function OtpForm({ email, proposito = 'email_verify', onVerificad
           role={estado === 'error' ? 'alert' : 'status'}
           className={`text-xs ${estado === 'error' ? 'text-red-600' : estado === 'ok' ? 'text-emerald-700' : 'text-neutral-500'}`}
         >
-          {estado === 'ok' ? '✓ ' : ''}{mensaje}
+          {estado === 'ok' && <Check aria-hidden="true" className="w-3.5 h-3.5 inline-block mr-1 align-[-2px]" />}{mensaje}
         </p>
       )}
     </div>

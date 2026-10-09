@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, cleanup, waitFor, fireEvent, within } from '@testing-library/react'
 import App from './App'
 
 vi.mock('./services/api', () => ({ api: { get: vi.fn(), post: vi.fn() }, isCancelError: () => false }))
@@ -38,9 +38,11 @@ describe('App smoke honesto (shell + landing sin red)', () => {
     await waitFor(() => expect(screen.getByText(/Encuentra tu espacio ideal/)).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: 'Abrir menú' }))
     expect(screen.getByRole('link', { name: /Iniciar sesión \/ Registrarse/ })).toHaveAttribute('href', '/perfil')
-    expect(screen.getByRole('link', { name: '🔍 Buscar vivienda' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '🧡 Favoritos' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '🔔 Mis Alertas y Notificaciones' })).toHaveAttribute('href', '/alertas')
+    // Sin emoji el nombre coincide con el footer: se acota al drawer móvil.
+    const drawer = document.getElementById('mobile-menu')
+    expect(within(drawer).getByRole('link', { name: /Buscar vivienda/ })).toBeInTheDocument()
+    expect(within(drawer).getByRole('link', { name: /Favoritos/ })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Mis Alertas y Notificaciones/ })).toHaveAttribute('href', '/alertas')
     expect(screen.getByRole('link', { name: '+ Publicar vivienda' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Cerrar sesión/ })).not.toBeInTheDocument()
   })
@@ -115,7 +117,7 @@ describe('Nav Mis publicaciones dinámico (0 pubs oculto, 1+ visible)', () => {
     expect(screen.queryByRole('link', { name: 'Mis publicaciones' })).not.toBeInTheDocument()
     expect(screen.queryByRole('menuitem', { name: /Mis Publicaciones/ })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Abrir menú' }))
-    expect(screen.queryByRole('link', { name: '📢 Mis Publicaciones' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Mis Publicaciones/ })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: '+ Publicar vivienda' })).toBeInTheDocument()
   })
 
@@ -136,7 +138,7 @@ describe('Nav Mis publicaciones dinámico (0 pubs oculto, 1+ visible)', () => {
     render(<App />)
     await waitFor(() => expect(screen.getByText(/Encuentra tu espacio ideal/)).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: 'Abrir menú' }))
-    expect(screen.queryByRole('link', { name: '📢 Mis Publicaciones' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Mis Publicaciones/ })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: '+ Publicar vivienda' })).toBeInTheDocument()
     expect(api.get).not.toHaveBeenCalledWith(
       '/api/publicaciones/mias', expect.anything(),

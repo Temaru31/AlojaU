@@ -20,6 +20,7 @@ const Restablecer = lazy(() => import('./pages/Restablecer'))
 const Terminos = lazy(() => import('./pages/Terminos'))
 const Privacidad = lazy(() => import('./pages/Privacidad'))
 import ProtectedAdminRoute from './components/ProtectedAdminRoute'
+import { Bell, Heart, LogOut, Megaphone, Scale, Search, ShieldCheck, User } from 'lucide-react'
 import ColdStartBanner from './components/ColdStartBanner'
 import ErrorBoundary from './components/ErrorBoundary'
 import Toaster from './components/Toast'
@@ -154,7 +155,7 @@ function Nav() {
           </div>
 
           <div className="hidden md:flex items-center gap-2">
-            {favCount > 0 && <span className="text-sm text-neutral-500" aria-label={`${favCount} favoritos`}>♡ {favCount}</span>}
+            {favCount > 0 && <span className="text-sm text-neutral-500 inline-flex items-center gap-1" aria-label={`${favCount} favoritos`}><Heart aria-hidden="true" className="w-4 h-4" /> {favCount}</span>}
             {/* Campanita a la izquierda del dropdown de perfil (nunca tras Publicar). */}
             {sesionActiva && <Campanita token={token} />}
             {/* Navbar según sesión verificada; con token sin verificar aún, placeholder neutro. */}
@@ -214,20 +215,20 @@ function Nav() {
                         <span aria-hidden="true" className="text-neutral-400">›</span>
                       </Link>
                       <Link to="/perfil" onClick={closeUser} role="menuitem" className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-xl text-neutral-600 hover:bg-neutral-100 active:bg-neutral-100 transition">
-                        <span aria-hidden="true">👤</span> Mi Perfil
+                        <User aria-hidden="true" className="w-5 h-5" /> Mi Perfil
                       </Link>
                       {muestraMisPubs && (
                         <Link to="/mis-publicaciones" onClick={closeUser} role="menuitem" className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-xl text-neutral-600 hover:bg-neutral-100 active:bg-neutral-100 transition">
-                          <span aria-hidden="true">📢</span> Mis Publicaciones
+                          <Megaphone aria-hidden="true" className="w-5 h-5" /> Mis Publicaciones
                         </Link>
                       )}
                       <Link to="/favoritos" onClick={closeUser} role="menuitem" className="flex items-center justify-between gap-2 px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-xl text-neutral-600 hover:bg-neutral-100 active:bg-neutral-100 transition">
-                        <span><span aria-hidden="true">🧡</span> Favoritos</span>
+                        <span className="inline-flex items-center gap-2"><Heart aria-hidden="true" className="w-5 h-5" /> Favoritos</span>
                         {favCount > 0 && <span className="bg-red-100 text-red-700 text-[11px] font-bold px-1.5 py-0.5 rounded-full" aria-label={`${favCount} favoritos`}>{favCount}</span>}
                       </Link>
                       {(user?.rol || '').toUpperCase() === 'ADMIN' && (
                         <Link to="/admin/dashboard" onClick={closeUser} role="menuitem" className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] text-sm font-bold rounded-xl text-navy-800 bg-navy-50 hover:bg-navy-100 active:bg-navy-100 transition">
-                          <span aria-hidden="true">🛡️</span> Panel Admin
+                          <ShieldCheck aria-hidden="true" className="w-5 h-5" /> Panel Admin
                         </Link>
                       )}
                       <button type="button"
@@ -235,7 +236,7 @@ function Nav() {
                         role="menuitem"
                         className="flex items-center justify-center gap-2 w-full px-3 py-2.5 min-h-[44px] mt-1 text-sm font-bold rounded-xl text-red-600 hover:bg-red-50 active:bg-red-100 transition-colors"
                       >
-                        <span aria-hidden="true">🚪</span> Cerrar sesión
+                        <LogOut aria-hidden="true" className="w-5 h-5" /> Cerrar sesión
                       </button>
                     </div>
                   </>
@@ -320,7 +321,7 @@ function Nav() {
               aria-current={isActive('/') ? 'page' : undefined}
               className={mobileLinkCls(isActive('/'))}
             >
-              🔍 Buscar vivienda
+              <span className="inline-flex items-center gap-2"><Search aria-hidden="true" className="w-5 h-5" /> Buscar vivienda</span>
             </Link>
             <Link
               to="/favoritos"
@@ -328,7 +329,7 @@ function Nav() {
               aria-current={isActive('/favoritos') ? 'page' : undefined}
               className={mobileLinkCls(isActive('/favoritos'))}
             >
-              <span>🧡 Favoritos</span>
+              <span className="inline-flex items-center gap-2"><Heart aria-hidden="true" className="w-5 h-5" /> Favoritos</span>
               {favCount > 0 && <span className="bg-red-100 text-red-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${favCount} favoritos`}>{favCount}</span>}
             </Link>
             <Link
@@ -337,7 +338,7 @@ function Nav() {
               aria-current={isActive('/comparar') ? 'page' : undefined}
               className={mobileLinkCls(isActive('/comparar'))}
             >
-              <span>⚖️ Comparar</span>
+              <span className="inline-flex items-center gap-2"><Scale aria-hidden="true" className="w-5 h-5" /> Comparar</span>
               <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${compCount} de ${compMax} para comparar`}>{compCount}/{compMax}</span>
             </Link>
             {sesionActiva && muestraMisPubs && (
@@ -347,7 +348,7 @@ function Nav() {
                 aria-current={isActive('/mis-publicaciones') ? 'page' : undefined}
                 className={mobileLinkCls(isActive('/mis-publicaciones'))}
               >
-                📢 Mis Publicaciones
+                <span className="inline-flex items-center gap-2"><Megaphone aria-hidden="true" className="w-5 h-5" /> Mis Publicaciones</span>
               </Link>
             )}
             <Link
@@ -356,7 +357,7 @@ function Nav() {
               aria-current={isActive('/alertas') ? 'page' : undefined}
               className={mobileLinkCls(isActive('/alertas'))}
             >
-              🔔 Mis Alertas y Notificaciones
+              <span className="inline-flex items-center gap-2"><Bell aria-hidden="true" className="w-5 h-5" /> Mis Alertas y Notificaciones</span>
             </Link>
             {(user?.rol || '').toUpperCase() === 'ADMIN' && (
               <Link
@@ -365,7 +366,7 @@ function Nav() {
                 aria-current={isActive('/admin/dashboard') ? 'page' : undefined}
                 className={mobileLinkCls(isActive('/admin/dashboard'))}
               >
-                🛡️ Panel Admin
+                <span className="inline-flex items-center gap-2"><ShieldCheck aria-hidden="true" className="w-5 h-5" /> Panel Admin</span>
               </Link>
             )}
             <Link
@@ -381,7 +382,7 @@ function Nav() {
                 onClick={() => { logout(); closeMenu() }}
                 className="w-full px-3 py-3 mt-1 min-h-[44px] text-sm font-bold rounded-xl text-red-600 hover:bg-red-50 active:bg-red-100 transition-colors"
               >
-                🚪 Cerrar sesión
+                <span className="inline-flex items-center justify-center gap-2"><LogOut aria-hidden="true" className="w-5 h-5" /> Cerrar sesión</span>
               </button>
             )}
 

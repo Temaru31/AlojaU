@@ -3,6 +3,7 @@
 // Regla: mínimo 8 caracteres + mayúscula + número + carácter especial.
 // Muestra 4 criterios en vivo (verde/gris) y barra de nivel.
 // Uso: <PasswordStrength value={pw} /> (puro, sin side-effects).
+import { Check } from 'lucide-react'
 export function criteriosPassword(pw = '') {
   const v = String(pw || '')
   return {
@@ -37,7 +38,7 @@ export default function PasswordStrength({ value = '' }) {
       <ul className="space-y-1 text-xs" aria-live="polite">
         {items.map(([ok, texto]) => (
           <li key={texto} className={ok ? 'text-emerald-700' : 'text-neutral-400'}>
-            {ok ? '✓' : '•'} {texto}
+            {ok ? <Check aria-hidden="true" className="w-3.5 h-3.5 inline-block align-[-2px]" /> : <span aria-hidden="true" className="inline-block w-1 h-1 rounded-full bg-current align-middle" />} {texto}
           </li>
         ))}
       </ul>

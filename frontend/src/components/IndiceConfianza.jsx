@@ -1,4 +1,7 @@
 import { useState } from 'react'
+import { CircleCheck, CircleAlert, Search, Check } from 'lucide-react'
+
+const ICONOS_NIVEL = { check: CircleCheck, alert: CircleAlert, search: Search }
 
 const friendly = (indice) => {
   if (indice >= 80) return {
@@ -7,7 +10,7 @@ const friendly = (indice) => {
     bg: 'bg-emerald-500',
     ring: '#10b981',
     light: 'bg-emerald-50 border-emerald-200',
-    emoji: '✅',
+    icon: 'check',
     msg: '¡Se ve bien! Información completa y contacto verificado.',
   }
   if (indice >= 50) return {
@@ -16,7 +19,7 @@ const friendly = (indice) => {
     bg: 'bg-amber-400',
     ring: '#f59e0b',
     light: 'bg-amber-50 border-amber-200',
-    emoji: '⚠️',
+    icon: 'alert',
     msg: 'Bastante bien, pero revisa detalles antes de pagar.',
   }
   return {
@@ -25,7 +28,7 @@ const friendly = (indice) => {
     bg: 'bg-red-500',
     ring: '#ef4444',
     light: 'bg-red-50 border-red-200',
-    emoji: '🔍',
+    icon: 'search',
     msg: 'Revisa con calma, faltan datos importantes.',
   }
 }
@@ -44,6 +47,7 @@ const RING_C = 2 * Math.PI * RING_R
 export default function IndiceConfianza({ indice = 0, desglose = {} }) {
   const [open, setOpen] = useState(false)
   const f = friendly(indice)
+  const IconoNivel = ICONOS_NIVEL[f.icon] || CircleCheck
   const details = friendlyDetails(desglose)
   const clamped = Math.max(0, Math.min(100, Number(indice) || 0))
   const avance = ((RING_C * clamped) / 100).toFixed(1)
@@ -73,7 +77,7 @@ export default function IndiceConfianza({ indice = 0, desglose = {} }) {
         </div>
         <div className="min-w-0 flex-1">
           <p className={`font-bold text-sm sm:text-base flex items-center gap-1.5 ${f.color}`}>
-            <span aria-hidden="true">{f.emoji}</span> {f.label}
+            <IconoNivel aria-hidden="true" className="w-4 h-4" /> {f.label}
           </p>
           <p className="text-xs sm:text-sm text-neutral-600 mt-1 break-words leading-snug">{f.msg}</p>
           <p className="text-[11px] text-neutral-400 mt-1">No es garantía. Verifica en persona antes de pagar.</p>
@@ -97,7 +101,7 @@ export default function IndiceConfianza({ indice = 0, desglose = {} }) {
           {details.map(d => (
             <div key={d.key} className="flex items-start gap-2.5 text-xs sm:text-sm">
               <span className={`mt-0.5 shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs ${d.ok ? 'bg-emerald-100 text-emerald-700' : 'bg-neutral-100 text-neutral-400'}`}>
-                {d.ok ? '✓' : '•'}
+                {d.ok ? <Check aria-hidden="true" className="w-3.5 h-3.5" /> : <span aria-hidden="true" className="w-1 h-1 rounded-full bg-current" />}
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline justify-between gap-2">

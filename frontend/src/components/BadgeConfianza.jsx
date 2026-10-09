@@ -6,9 +6,9 @@
  */
 
 const NIVELES = {
-  alto: { punto: '🟢', etiqueta: 'Confianza Alta' },
-  medio: { punto: '🟡', etiqueta: 'Confianza Media' },
-  bajo: { punto: '🔴', etiqueta: 'Confianza Básica' },
+  alto: { puntoCls: 'bg-emerald-500', etiqueta: 'Confianza Alta' },
+  medio: { puntoCls: 'bg-amber-500', etiqueta: 'Confianza Media' },
+  bajo: { puntoCls: 'bg-rose-500', etiqueta: 'Confianza Básica' },
 }
 
 export function nivelConfianza(indice) {
@@ -21,14 +21,14 @@ export function nivelConfianza(indice) {
 export default function BadgeConfianza({ indice = 0 }) {
   const n = Number(indice) || 0
   const nivel = nivelConfianza(n)
-  const { punto, etiqueta } = NIVELES[nivel]
+  const { puntoCls, etiqueta } = NIVELES[nivel]
   return (
     <div
       className="inline-flex items-center gap-1 backdrop-blur-md bg-black/40 text-white font-semibold px-2 py-0.5 rounded-full text-xs"
       title={`${etiqueta}: ${n}/100`}
       aria-label={`${etiqueta}: ${n} de 100`}
     >
-      <span aria-hidden="true">{punto}</span> {n}
+      <span aria-hidden="true" className={`w-2 h-2 rounded-full ${puntoCls}`} /> {n}
     </div>
   )
 }

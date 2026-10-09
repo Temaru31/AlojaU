@@ -7,12 +7,12 @@ TRUNCATE publicaciones_audit, reportes_publicacion, imagenes_publicacion, public
 
 -- M2 tipos dinámicos (mig 013): catálogo base, nunca renombrar/eliminar slugs.
 INSERT INTO housing_types (slug, nombre_visible, descripcion_tooltip, icono, esta_activo) VALUES
-('HABITACION_FAMILIAR', 'Habitación familiar', 'Habitación en casa de familia, ambiente compartido', '🏠', TRUE),
-('HABITACION_INDEPENDIENTE', 'Habitación independiente', 'Habitación privada con acceso independiente', '🚪', TRUE),
-('APARTAESTUDIO', 'Apartaestudio', 'Ambiente integrado con cocina y baño privados', '🏢', TRUE),
-('COMPARTIDO', 'Compartido', 'Cupo en vivienda compartida con otros estudiantes', '🤝', TRUE),
-('APARTAMENTO_COMPLETO', 'Apartamento completo', 'Apartamento entero para ti o tu grupo', '🏘️', TRUE),
-('HABITACION_PISO_COMPARTIDO', 'Habitación en piso compartido', 'Habitación privada en piso con zonas comunes', '🏡', TRUE)
+('HABITACION_FAMILIAR', 'Habitación familiar', 'Habitación en casa de familia, ambiente compartido', 'house', TRUE),
+('HABITACION_INDEPENDIENTE', 'Habitación independiente', 'Habitación privada con acceso independiente', 'door-open', TRUE),
+('APARTAESTUDIO', 'Apartaestudio', 'Ambiente integrado con cocina y baño privados', 'building', TRUE),
+('COMPARTIDO', 'Compartido', 'Cupo en vivienda compartida con otros estudiantes', 'handshake', TRUE),
+('APARTAMENTO_COMPLETO', 'Apartamento completo', 'Apartamento entero para ti o tu grupo', 'building-2', TRUE),
+('HABITACION_PISO_COMPARTIDO', 'Habitación en piso compartido', 'Habitación privada en piso con zonas comunes', 'home', TRUE)
 ON CONFLICT (slug) DO NOTHING;
 
 -- v15.2: settings canónicos (espejo de migración 005). Sin esto, filas de

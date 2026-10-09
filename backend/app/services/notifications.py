@@ -25,7 +25,7 @@ logger = logging.getLogger("alojau.notificaciones")
 # Lenguaje humano por estado (fuente única backend; el frontend tiene su
 # espejo en HistorialAvisos/infoEvento y MisPublicaciones/ESTADO_LABEL).
 MENSAJE_ESTADO_DUENO: dict[str, str] = {
-    "ACTIVO": "¡Buenas noticias! Tu anuncio «{titulo}» fue aprobado y ya es visible en AlojaU. 🎉",
+    "ACTIVO": "¡Buenas noticias! Tu anuncio «{titulo}» fue aprobado y ya es visible en AlojaU.",
     "RECHAZADO": "Tu anuncio «{titulo}» no fue aprobado en esta revisión. Entra a Mis publicaciones para ver el detalle y volver a intentarlo.",
     "PAUSADO": "Tu anuncio «{titulo}» fue pausado por el equipo de AlojaU. Escríbenos si tienes dudas.",
 }

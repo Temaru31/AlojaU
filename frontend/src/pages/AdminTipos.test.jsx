@@ -9,7 +9,7 @@ vi.mock('../contexts/AuthContext', () => ({ useAuth: () => ({ token: 'mock-token
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 const TIPOS = [
-  { slug: 'APARTAESTUDIO', nombre_visible: 'Apartaestudio', descripcion_tooltip: 'Integrado', icono: '🏢', esta_activo: true },
+  { slug: 'APARTAESTUDIO', nombre_visible: 'Apartaestudio', descripcion_tooltip: 'Integrado', icono: 'building', esta_activo: true },
   { slug: 'LOFT_VIEJO', nombre_visible: 'Loft', descripcion_tooltip: '', icono: '', esta_activo: false },
 ]
 
@@ -32,7 +32,7 @@ describe('AdminTipos (R10 disable lógico)', () => {
     render(<BrowserRouter><AdminTipos /></BrowserRouter>)
     expect(await screen.findByText('APARTAESTUDIO')).toBeInTheDocument()
     expect(screen.getByText('INACTIVO')).toBeInTheDocument()
-    expect(screen.getByText('Tipos de vivienda')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Tipos de vivienda' })).toBeInTheDocument()
   })
 
   it('desactivar llama PATCH con esta_activo=false', async () => {

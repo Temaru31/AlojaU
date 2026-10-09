@@ -5,22 +5,23 @@
 // Uso: <HistorialAvisos token={token} /> (retorna null sin token).
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { FileText, CircleCheck, CircleX, Pause, Play, RotateCw, History } from 'lucide-react'
 import { api, isCancelError } from '../services/api'
 import { haceRelativo } from '../constants'
 
 // Fuente única evento -> lenguaje humano (alineada con ESTADO_LABEL de
 // MisPublicaciones y MENSAJE_ESTADO_DUENO del backend).
 export const EVENTO_INFO = {
-  CREATED: { icono: '📝', etiqueta: 'Aviso creado', tono: 'bg-navy-50 text-navy-700 border-navy-100' },
-  APPROVED: { icono: '✅', etiqueta: 'Aprobado: ya visible', tono: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-  REJECTED: { icono: '❌', etiqueta: 'No aprobado', tono: 'bg-rose-50 text-rose-700 border-rose-200' },
-  PAUSED: { icono: '⏸️', etiqueta: 'Pausado', tono: 'bg-neutral-100 text-neutral-600 border-neutral-200' },
-  RESUMED: { icono: '▶️', etiqueta: 'Reanudado', tono: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-  RENEWED: { icono: '🔄', etiqueta: 'Vigencia renovada', tono: 'bg-navy-50 text-navy-700 border-navy-100' },
+  CREATED: { icono: FileText, etiqueta: 'Aviso creado', tono: 'bg-navy-50 text-navy-700 border-navy-100' },
+  APPROVED: { icono: CircleCheck, etiqueta: 'Aprobado: ya visible', tono: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  REJECTED: { icono: CircleX, etiqueta: 'No aprobado', tono: 'bg-rose-50 text-rose-700 border-rose-200' },
+  PAUSED: { icono: Pause, etiqueta: 'Pausado', tono: 'bg-neutral-100 text-neutral-600 border-neutral-200' },
+  RESUMED: { icono: Play, etiqueta: 'Reanudado', tono: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  RENEWED: { icono: RotateCw, etiqueta: 'Vigencia renovada', tono: 'bg-navy-50 text-navy-700 border-navy-100' },
 }
 
 export function infoEvento(evento) {
-  return EVENTO_INFO[evento] || { icono: '•', etiqueta: String(evento || 'Evento'), tono: 'bg-neutral-100 text-neutral-600 border-neutral-200' }
+  return EVENTO_INFO[evento] || { icono: History, etiqueta: String(evento || 'Evento'), tono: 'bg-neutral-100 text-neutral-600 border-neutral-200' }
 }
 
 export default function HistorialAvisos({ token }) {
@@ -75,8 +76,8 @@ export default function HistorialAvisos({ token }) {
         aria-expanded={abierto}
         className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left"
       >
-        <span className="text-sm font-semibold text-navy-800">
-          🕘 Actividad reciente
+        <span className="text-sm font-semibold text-navy-800 inline-flex items-center gap-1.5">
+          <History aria-hidden="true" className="w-4 h-4" /> Actividad reciente
           {total > 0 && (
             <span className="ml-2 inline-flex items-center rounded-full bg-navy-50 px-2 py-0.5 text-[11px] font-bold text-navy-700 border border-navy-100">
               {total}
@@ -107,13 +108,14 @@ export default function HistorialAvisos({ token }) {
             <ol className="relative space-y-0 border-l-2 border-neutral-150 ml-1.5 pl-0">
               {items.map((it) => {
                 const info = infoEvento(it.evento)
+                const Icono = info.icono
                 const destino = it.publicacion_id != null ? `/publicacion/${it.publicacion_id}` : null
                 return (
                   <li key={it.id} className="relative pl-5 pb-3 last:pb-0">
                     <span aria-hidden="true" className="absolute -left-[7px] top-1 w-3 h-3 rounded-full bg-white border-2 border-navy-200" />
                     <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                       <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold border ${info.tono}`}>
-                        <span aria-hidden="true">{info.icono}</span> {info.etiqueta}
+                        {Icono && <Icono aria-hidden="true" className="w-3.5 h-3.5" />} {info.etiqueta}
                       </span>
                       {destino ? (
                         <Link to={destino} className="text-xs font-medium text-navy-700 hover:underline line-clamp-1">

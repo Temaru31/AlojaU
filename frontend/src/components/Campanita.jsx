@@ -11,6 +11,7 @@
 // Uso: <Campanita token={token} /> dentro del Router (usa useNavigate).
 import { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { Settings } from 'lucide-react'
 import useNotificaciones from '../hooks/useNotificaciones'
 import { haceRelativo } from '../constants'
 
@@ -197,7 +198,7 @@ export default function Campanita({ token }) {
                 onClick={() => setAbierto(false)}
                 className="flex items-center justify-center gap-2 w-full px-4 py-2.5 min-h-[44px] text-xs font-bold text-navy-800 bg-slate-100 border border-slate-200 rounded-xl hover:bg-slate-200 active:bg-slate-200 transition"
               >
-                <span aria-hidden="true">⚙️</span> Gestionar mis alertas de búsqueda
+                <Settings aria-hidden="true" className="w-4 h-4" /> Gestionar mis alertas de búsqueda
               </Link>
             </div>
           </div>

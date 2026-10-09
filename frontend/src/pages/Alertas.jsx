@@ -4,11 +4,12 @@
 //   activas con mensaje amigable) y eliminar con ConfirmDialog.
 // - filtrosABusqueda(): mapea los filtros de Buscar -> payload de alerta
 //   (misma normalización en Buscar y aquí; testeado sin backend).
-// - GuardarAlerta: botón para Buscar ("🔔 Guardar alerta") que publica los
+// - GuardarAlerta: botón para Buscar ("Guardar alerta") que publica los
 //   filtros actuales; sin sesión lleva a /perfil.
 // Uso: <Route path="/alertas" element={<Alertas />} /> (requiere sesión).
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { Bell } from 'lucide-react'
 import { api } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 import { notifyToast } from '../components/Toast'
@@ -38,7 +39,7 @@ export function GuardarAlerta({ filtros, campusId }) {
       await api.post('/api/busquedas-guardadas', body, {
         headers: { Authorization: `Bearer ${token}` },
       })
-      notifyToast('🔔 Alerta guardada: te avisaremos de nuevos arriendos.')
+      notifyToast('Alerta guardada: te avisaremos de nuevos arriendos.')
     } catch (e) {
       const d = e?.response?.data?.detail
       const mensaje = typeof d === 'string' && d ? d : 'No se pudo guardar la alerta.'
@@ -56,7 +57,7 @@ export function GuardarAlerta({ filtros, campusId }) {
       disabled={guardando}
       className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[44px] text-xs font-semibold text-navy-700 border border-navy-200 rounded-lg hover:bg-navy-50 active:bg-navy-100 transition disabled:opacity-50"
     >
-      {guardando ? 'Guardando…' : '🔔 Guardar alerta'}
+      {guardando ? 'Guardando…' : (<><Bell aria-hidden="true" className="w-4 h-4" /> Guardar alerta</>)}
     </button>
   )
 }
@@ -123,7 +124,7 @@ export default function Alertas() {
       if (!vivoRef.current) return
       setAlertas((cur) => [r.data, ...cur])
       setForm(FORM_INICIAL)
-      notifyToast('🔔 Alerta creada.')
+      notifyToast('Alerta creada.')
     } catch (err) {
       if (!vivoRef.current) return
       const d = err?.response?.data?.detail
@@ -162,7 +163,7 @@ export default function Alertas() {
     return (
       <div className="container-main py-12">
         <div className="max-w-md mx-auto card p-8 text-center space-y-3">
-          <p className="text-3xl" aria-hidden="true">🔔</p>
+          <Bell aria-hidden="true" className="w-8 h-8 mx-auto text-navy-300" />
           <h1 className="text-lg font-bold text-navy-900">Alertas de búsqueda</h1>
           <p className="text-sm text-neutral-500">Inicia sesión para guardar alertas y recibir avisos de arriendos nuevos.</p>
           <Link to="/perfil" className="btn-accent inline-flex justify-center">Iniciar sesión</Link>
@@ -276,7 +277,7 @@ export default function Alertas() {
         )}
         {alertas.map((a) => (
           <article key={a.id} className="card rounded-2xl p-4 flex items-center gap-3">
-            <span aria-hidden="true" className="text-xl shrink-0">🔔</span>
+            <Bell aria-hidden="true" className="w-5 h-5 shrink-0 text-navy-400" />
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-navy-900 truncate">{a.nombre || 'Alerta sin nombre'}</p>
               <p className="text-xs text-neutral-500 truncate">

@@ -7,6 +7,7 @@
 // cuenta como vinculada (solo demuestra el flujo visual del PIN de 6).
 // Uso: <TelegramVincular token={token} vinculado={perfil?.telegram_vinculado} />
 import { useEffect, useRef, useState } from 'react'
+import { Check } from 'lucide-react'
 import { api } from '../services/api'
 import { notifyToast } from './Toast'
 import ConfirmDialog from './ConfirmDialog'
@@ -75,7 +76,7 @@ export default function TelegramVincular({
           if (cancelado || !vivoRef.current) return
           if (r.data?.telegram_vinculado) {
             onVinculadoRef.current?.(true)
-            notifyToast('¡Número verificado con éxito en AlojaU! 🎉')
+            notifyToast('¡Número verificado con éxito en AlojaU!')
             return
           }
         } catch {
@@ -222,11 +223,11 @@ export default function TelegramVincular({
         {vinculado ? (
           telefonoVerificado ? (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
-              ✓ Teléfono y Telegram Verificados (+20 pts)
+              <Check aria-hidden="true" className="w-3.5 h-3.5" /> Teléfono y Telegram Verificados (+20 pts)
             </span>
           ) : (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
-              ✓ Vinculado
+              <Check aria-hidden="true" className="w-3.5 h-3.5" /> Vinculado
             </span>
           )
         ) : (
@@ -301,7 +302,7 @@ export default function TelegramVincular({
             <div className="flex-1">
               <p className="text-xs text-neutral-600 leading-relaxed">
                 Dentro de Telegram presiona el botón <code className="px-1.5 py-0.5 rounded bg-neutral-100 border border-neutral-200 font-mono text-[11px]">/start</code> y
-                luego comparte tu número con <b>📱 Compartir mi número de teléfono para verificar</b> para confirmar que la cuenta es tuya (debe ser el guardado en tu perfil).
+                luego comparte tu número con Compartir mi número de teléfono para verificar para confirmar que la cuenta es tuya (debe ser el guardado en tu perfil).
               </p>
               {enlace && (
                 <p className="text-[11px] text-neutral-500 mt-1 break-all">
@@ -339,8 +340,8 @@ export default function TelegramVincular({
             Simulación visual: no vincula tu cuenta ni envía nada a Telegram.
           </p>
           {pinOk ? (
-            <p className="text-[11px] font-semibold text-emerald-700" role="status">
-              ✓ Flujo simulado correcto (en producción el bot confirmaría aquí).
+            <p className="text-[11px] font-semibold text-emerald-700 flex items-center gap-1.5" role="status">
+              <Check aria-hidden="true" className="w-3.5 h-3.5" /> Flujo simulado correcto (en producción el bot confirmaría aquí).
             </p>
           ) : (
             <form onSubmit={probarPinSimulado} className="flex gap-2">

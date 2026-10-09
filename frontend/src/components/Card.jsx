@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { Check, Heart, Plus } from 'lucide-react'
 import { formatDistancia } from '../utils/formatters'
 import { formatTiempoCaminando } from '../utils/formatters'
 import SmartImage from './SmartImage'
@@ -127,7 +128,7 @@ export default function Card({ pub, lugarNombre = null }) {
           className={`absolute top-3 right-3 w-7 h-7 rounded-full flex items-center justify-center text-sm backdrop-blur-sm border transition active:scale-90 ${isFav ? 'bg-red-500 text-white border-red-500' : 'bg-white/90 text-neutral-600 border-white hover:bg-white'}`}
           title={isFav ? 'En favoritos' : 'Añadir a favoritos'}
         >
-          {isFav ? '♥' : '♡'}
+          <Heart aria-hidden="true" className={`w-5 h-5${isFav ? ' fill-current' : ''}`} />
         </button>
         {/* Comparar */}
         <button
@@ -142,7 +143,7 @@ export default function Card({ pub, lugarNombre = null }) {
           className={`absolute bottom-3 right-3 w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold backdrop-blur-sm border transition active:scale-90 ${isComp ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white/90 text-neutral-600 border-white hover:bg-white'}`}
           title={isComp ? 'En comparar' : 'Añadir a comparar (máx 3)'}
         >
-          {isComp ? '✓' : '+'}
+          {isComp ? <Check aria-hidden="true" className="w-4 h-4" /> : <Plus aria-hidden="true" className="w-4 h-4" />}
         </button>
       </div>
 

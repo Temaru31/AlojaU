@@ -18,8 +18,8 @@ describe('BadgeConfianza', () => {
   it('píldora minimalista con tooltip y aria', () => {
     render(<Badge indice={65} />)
     const pill = screen.getByLabelText('Confianza Media: 65 de 100')
-    expect(pill).toHaveTextContent('🟡')
     expect(pill).toHaveTextContent('65')
+    expect(pill.querySelector('span.rounded-full')).not.toBeNull()
     expect(pill).toHaveAttribute('title', 'Confianza Media: 65/100')
   })
 })

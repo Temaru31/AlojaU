@@ -277,10 +277,10 @@ describe('Detalle ramas sin cubrir (contacto, errores, fallbacks)', () => {
     localStorage.clear()
     api.get.mockResolvedValue({ data: pub })
     renderDetalle()
-    await waitFor(() => expect(screen.getByRole('button', { name: '♡ Añadir a favoritos' })).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('button', { name: '♡ Añadir a favoritos' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Añadir a favoritos/ })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /Añadir a favoritos/ }))
     expect(await screen.findByText(/Guardado en favoritos/)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Ver →' })).toHaveAttribute('href', '/favoritos')
+    expect(screen.getByRole('link', { name: 'Ver' })).toHaveAttribute('href', '/favoritos')
   })
 
   it('comparar alterna sin toast cuando hay menos de 2', async () => {
@@ -288,8 +288,8 @@ describe('Detalle ramas sin cubrir (contacto, errores, fallbacks)', () => {
     localStorage.clear()
     api.get.mockResolvedValue({ data: pub })
     renderDetalle()
-    await waitFor(() => expect(screen.getByRole('button', { name: '+ Comparar (máx 3)' })).toBeInTheDocument())
-    fireEvent.click(screen.getByRole('button', { name: '+ Comparar (máx 3)' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Comparar \(máx 3\)/ })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /Comparar \(máx 3\)/ }))
     expect(screen.queryByText(/Añadido a comparar/)).not.toBeInTheDocument()
   })
 
@@ -301,7 +301,7 @@ describe('Detalle ramas sin cubrir (contacto, errores, fallbacks)', () => {
     const btn = await screen.findByRole('button', { name: 'Copiar número' })
     fireEvent.click(btn)
     expect(screen.getByRole('button', { name: 'Copiar número' })).toBeInTheDocument()
-    expect(screen.queryByText('✓ Número copiado')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Número copiado/)).not.toBeInTheDocument()
   })
 
   it('Ya contacté por otro medio marca y oculta la acción', async () => {
@@ -355,7 +355,7 @@ describe('Detalle ramas sin cubrir (contacto, errores, fallbacks)', () => {
 })
 
 describe('Detalle sticky: precio reactivo sin staleness entre avisos', () => {
-  it('al navegar 1→2 no muestra el precio viejo mientras carga el nuevo', async () => {
+  it('al navegar 1 a 2 no muestra el precio viejo mientras carga el nuevo', async () => {
     window.scrollTo = vi.fn()
     localStorage.clear()
     const pub2 = { ...pub, id: 2, titulo: 'Apartaestudio segundo aviso', canon_mensual: 900000 }

@@ -15,6 +15,7 @@ import { notifyToast } from '../components/Toast'
 import PreferenceChip from '../components/PreferenceChip'
 import TelegramVincular from '../components/TelegramVincular'
 import { signInWithGoogle } from '../services/supabaseClient'
+import { ArrowRight, Check, Heart, House, Lock, Mail, Pencil, Smartphone, Sparkles, User } from 'lucide-react'
 
 // Iconos del set propio (aria-hidden): misma gramática que PreferenceChip.
 const TABS = [
@@ -116,7 +117,7 @@ export default function Perfil() {
 
   // Formulario de edición (M3: la foto va por POST /avatar, no en este form).
   const [telefono, setTelefono] = useState('')
-  // R1: el teléfono verificado se bloquea hasta pulsar ✏️ (editar resetea a sin verificar al guardar).
+  // R1: el teléfono verificado se bloquea hasta pulsar editar (editar resetea a sin verificar al guardar).
   const [telefonoEditando, setTelefonoEditando] = useState(false)
   const [nombre, setNombre] = useState('')
   // v13.2 marketplace flexible: bio y etiquetas (la foto vive en AvatarPerfil).
@@ -363,7 +364,7 @@ export default function Perfil() {
       setTags(res.data.preferencias || {})
       setTagsDirty(false)
       // Toast flotante (visible sin importar el scroll) en vez de banner fijo.
-      notifyToast('✓ Cambios guardados en tu perfil')
+      notifyToast('Cambios guardados en tu perfil')
     } catch (err) {
       setError(err?.response?.data?.detail || 'Error al actualizar el perfil')
     } finally {
@@ -412,7 +413,7 @@ export default function Perfil() {
         { actual: pwActual, nueva: pwNueva },
         { headers: { Authorization: `Bearer ${token}` } }
       )
-      notifyToast('✓ Contraseña actualizada con éxito')
+      notifyToast('Contraseña actualizada con éxito')
       setPwActual('')
       setPwNueva('')
     } catch (err) {
@@ -607,17 +608,17 @@ export default function Perfil() {
                               {i.id === 'aviso' ? (
                                 <Link
                                   to="/publicar"
-                                  className="text-xs font-semibold text-navy-700 hover:text-navy-900 hover:underline"
+                                  className="text-xs font-semibold text-navy-700 hover:text-navy-900 hover:underline inline-flex items-center gap-1"
                                 >
-                                  → Publicar aviso
+                                  <ArrowRight aria-hidden="true" className="w-4 h-4" /> Publicar aviso
                                 </Link>
                               ) : (
                                 <button
                                   type="button"
                                   onClick={() => irTabGuard('datos')}
-                                  className="text-xs font-semibold text-navy-700 hover:text-navy-900 hover:underline"
+                                  className="text-xs font-semibold text-navy-700 hover:text-navy-900 hover:underline inline-flex items-center gap-1"
                                 >
-                                  → {{
+                                  <ArrowRight aria-hidden="true" className="w-4 h-4" /> {{
                                     email: 'Verificar correo',
                                     telefono: 'Vincular teléfono',
                                     foto: 'Subir foto',
@@ -664,7 +665,7 @@ export default function Perfil() {
             <form onSubmit={handleGuardarDatos} className="space-y-4">
             {/* Tarjeta identidad editable: nombre */}
             <section aria-label="Identidad" className="card rounded-2xl p-4 sm:p-6 space-y-4 shadow-sm">
-              <h3 className="text-sm font-bold text-navy-900">👤 Identidad</h3>
+              <h3 className="text-sm font-bold text-navy-900 flex items-center gap-1.5"><User aria-hidden="true" className="w-4 h-4" /> Identidad</h3>
               <div>
                 <label htmlFor="perfil-nombre" className="block text-sm font-semibold text-navy-800 mb-1.5">Nombre completo</label>
                 <input
@@ -682,15 +683,15 @@ export default function Perfil() {
 
             {/* F3 Contacto en tarjetas de estado independientes (verde/ámbar claro). */}
             <section aria-label="Contacto" className="card rounded-2xl p-4 sm:p-6 space-y-3 shadow-sm">
-              <h3 className="text-sm font-bold text-navy-900">📱 Contacto</h3>
+              <h3 className="text-sm font-bold text-navy-900 flex items-center gap-1.5"><Smartphone aria-hidden="true" className="w-4 h-4" /> Contacto</h3>
               <p className="text-xs text-neutral-500 -mt-2">Cómo te contactan los interesados. El teléfono verificado suma +20 de confianza.</p>
               {/* Correo */}
               <div className={`rounded-xl border p-4 space-y-2 ${perfil?.email_verificado ? 'border-emerald-200 bg-emerald-50/40' : 'border-amber-200 bg-amber-50/40'}`}>
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-navy-800">✉️ Correo electrónico</p>
+                  <p className="text-sm font-semibold text-navy-800 flex items-center gap-1.5"><Mail aria-hidden="true" className="w-4 h-4" /> Correo electrónico</p>
                   {perfil?.email_verificado ? (
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                      ✓ Correo verificado
+                      <Check aria-hidden="true" className="w-4 h-4" /> Correo verificado
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-300">
@@ -716,14 +717,14 @@ export default function Perfil() {
                   <span className="inline-flex items-center gap-2">
                     {estaVerificado ? (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                        ✓ Verificado (+20 pts)
+                        <Check aria-hidden="true" className="w-4 h-4" /> Verificado (+20 pts)
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-300">
                         Sin verificar (0 pts)
                       </span>
                     )}
-                    {/* R1: número verificado bloqueado; ✏️ lo habilita (guardar resetea a sin verificar). */}
+                    {/* R1: número verificado bloqueado; editar lo habilita (guardar resetea a sin verificar). */}
                     {estaVerificado && !telefonoEditando && (
                       <button
                         type="button"
@@ -732,14 +733,14 @@ export default function Perfil() {
                         title="Editar número (pierde la verificación)"
                         className="inline-flex items-center justify-center w-11 h-11 min-w-[44px] rounded-full border border-navy-200 text-navy-700 hover:bg-navy-50 active:bg-navy-100 transition"
                       >
-                        <span aria-hidden="true">✏️</span>
+                        <Pencil aria-hidden="true" className="w-4 h-4" />
                       </button>
                     )}
                   </span>
                 </div>
                 <div className="flex">
                   <span aria-hidden="true" className="inline-flex items-center gap-1 px-3 rounded-l-lg border border-r-0 border-neutral-200 bg-neutral-100 text-sm font-bold text-neutral-600 shrink-0">
-                    +57 🇨🇴
+                    +57
                   </span>
                   <input
                     id="perfil-telefono"
@@ -755,7 +756,7 @@ export default function Perfil() {
                 </div>
                 <p id="telefono-ayuda" className="text-xs text-neutral-500">
                   {estaVerificado && !telefonoEditando
-                    ? 'Número verificado y bloqueado. Pulsa ✏️ para cambiarlo (volverá a "Sin verificar").'
+                    ? (<>Número verificado y bloqueado. Pulsa <Pencil aria-hidden="true" className="w-3.5 h-3.5 inline" /> para cambiarlo (volverá a "Sin verificar").</>)
                     : 'Solo los 10 dígitos de tu línea (el +57 ya va incluido). Vacío = sin vincular (no podrás publicar hasta vincularlo).'}
                 </p>
                 {/* R1: verificación vía Telegram unificada junto al teléfono. */}
@@ -767,7 +768,7 @@ export default function Perfil() {
                     telefonoVerificado={!!perfil?.telefono_verificado}
                     onVinculado={() => {
                       setPerfil((p) => (p ? { ...p, telegram_vinculado: true, telefono_verificado: true } : p))
-                      notifyToast('¡Número verificado con éxito en AlojaU! 🎉 (+20 pts de confianza)')
+                      notifyToast('¡Número verificado con éxito en AlojaU! (+20 pts de confianza)')
                     }}
                     onDesvinculado={() => {
                       setPerfil((p) => (p ? {
@@ -783,7 +784,7 @@ export default function Perfil() {
 
             {/* Tarjeta presentación: bio (la foto vive en el avatar superior, sin URL expuesta) */}
             <section aria-label="Presentación" className="card rounded-2xl p-4 sm:p-6 space-y-4 shadow-sm">
-              <h3 className="text-sm font-bold text-navy-900">✨ Presentación</h3>
+              <h3 className="text-sm font-bold text-navy-900 flex items-center gap-1.5"><Sparkles aria-hidden="true" className="w-4 h-4" /> Presentación</h3>
               <p className="text-xs text-neutral-500 -mt-2">Opcional. Cuéntales a otros quién eres y qué buscas.</p>
               <div>
                 <label htmlFor="perfil-bio" className="block text-sm font-semibold text-navy-800 mb-1.5">Presentación <span className="text-neutral-400 font-normal">(opcional, máx 500)</span></label>
@@ -846,8 +847,8 @@ export default function Perfil() {
             <h2 className="text-base font-semibold text-navy-900">Cambiar contraseña</h2>
             {perfil?.auth_provider === 'google' ? (
               <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4" role="note">
-                <p className="text-sm font-semibold text-emerald-800">
-                  🔐 Tu cuenta utiliza inicio de sesión seguro con Google.
+                <p className="text-sm font-semibold text-emerald-800 flex items-start gap-1.5">
+                  <Lock aria-hidden="true" className="w-4 h-4 shrink-0 mt-0.5" /> Tu cuenta utiliza inicio de sesión seguro con Google.
                 </p>
                 <p className="text-xs text-emerald-700 mt-1">
                   No requiere una contraseña local: entras con tu cuenta de Google y ya está verificada.
@@ -881,14 +882,14 @@ export default function Perfil() {
                   required
                 />
                 <ul className="mt-2 space-y-1 text-xs" aria-live="polite">
-                  <li className={fort.longitud ? 'text-emerald-700' : 'text-neutral-400'}>
-                    {fort.longitud ? '✓' : '•'} Mínimo 8 caracteres
+                  <li className={`${fort.longitud ? 'text-emerald-700' : 'text-neutral-400'} flex items-center gap-1.5`}>
+                    {fort.longitud ? <Check aria-hidden="true" className="w-4 h-4" /> : <span aria-hidden="true" className="w-1.5 h-1.5 rounded-full bg-current inline-block ml-1 mr-1" />} Mínimo 8 caracteres
                   </li>
-                  <li className={fort.alfanumerica ? 'text-emerald-700' : 'text-neutral-400'}>
-                    {fort.alfanumerica ? '✓' : '•'} Incluye letras y números
+                  <li className={`${fort.alfanumerica ? 'text-emerald-700' : 'text-neutral-400'} flex items-center gap-1.5`}>
+                    {fort.alfanumerica ? <Check aria-hidden="true" className="w-4 h-4" /> : <span aria-hidden="true" className="w-1.5 h-1.5 rounded-full bg-current inline-block ml-1 mr-1" />} Incluye letras y números
                   </li>
-                  <li className={pwNueva && pwNueva !== pwActual ? 'text-emerald-700' : 'text-neutral-400'}>
-                    {pwNueva && pwNueva !== pwActual ? '✓' : '•'} Distinta de la actual
+                  <li className={`${pwNueva && pwNueva !== pwActual ? 'text-emerald-700' : 'text-neutral-400'} flex items-center gap-1.5`}>
+                    {pwNueva && pwNueva !== pwActual ? <Check aria-hidden="true" className="w-4 h-4" /> : <span aria-hidden="true" className="w-1.5 h-1.5 rounded-full bg-current inline-block ml-1 mr-1" />} Distinta de la actual
                   </li>
                 </ul>
               </div>
@@ -986,7 +987,7 @@ export default function Perfil() {
                     />
                     <p id="delEmail-ayuda" className="text-xs text-neutral-500" aria-live="polite">
                       {delEmail.trim() === (perfil?.email || '').trim()
-                        ? '✓ El correo coincide.'
+                        ? 'El correo coincide.'
                         : 'Escríbelo letra por letra, igual que tu correo de cuenta.'}
                     </p>
                     {perfil?.auth_provider === 'password' && (
@@ -1030,15 +1031,15 @@ export default function Perfil() {
               </div>
               <div className={`flex justify-between items-center gap-2 py-1.5 px-2 rounded ${estaVerificado ? 'bg-emerald-50 text-emerald-800 font-semibold' : 'bg-amber-50 text-amber-800'}`}>
                 <span>Teléfono verificado {estaVerificado ? '(activo en tu cuenta)' : '(pendiente en tu cuenta)'}</span>
-                <span className="font-bold shrink-0">{estaVerificado ? '+20 pts ✓' : '0 pts'}</span>
+                <span className="font-bold shrink-0 inline-flex items-center gap-1">{estaVerificado ? (<>+20 pts <Check aria-hidden="true" className="w-4 h-4" /></>) : '0 pts'}</span>
               </div>
               {!estaVerificado && (
                 <button
                   type="button"
                   onClick={() => irTabGuard('datos')}
-                  className="text-[11px] font-semibold text-navy-700 underline hover:text-navy-900"
+                  className="text-[11px] font-semibold text-navy-700 underline hover:text-navy-900 inline-flex items-center gap-1"
                 >
-                  → Vincula tu teléfono en Datos y contacto
+                  <ArrowRight aria-hidden="true" className="w-4 h-4" /> Vincula tu teléfono en Datos y contacto
                 </button>
               )}
             </div>
@@ -1076,7 +1077,7 @@ export default function Perfil() {
                       <li key={i.id}>
                         {destino(i.id) ? (
                           <Link to={destino(i.id)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-navy-700 underline hover:text-navy-900">
-                            → {i.id === 'aviso' ? 'Publicar mi primer aviso' : i.label} <span className="text-neutral-400 font-normal">(+{i.peso} pts)</span>
+                            <ArrowRight aria-hidden="true" className="w-4 h-4" /> {i.id === 'aviso' ? 'Publicar mi primer aviso' : i.label} <span className="text-neutral-400 font-normal">(+{i.peso} pts)</span>
                           </Link>
                         ) : (
                           <button
@@ -1084,7 +1085,7 @@ export default function Perfil() {
                             onClick={() => irTabGuard('datos')}
                             className="inline-flex items-center gap-1.5 text-xs font-semibold text-navy-700 underline hover:text-navy-900"
                           >
-                            → {{
+                            <ArrowRight aria-hidden="true" className="w-4 h-4" /> {{
                               email: 'Verificar mi correo',
                               telefono: 'Vincular mi teléfono',
                               foto: 'Subir mi foto',
@@ -1125,14 +1126,14 @@ export default function Perfil() {
         )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Link to="/mis-publicaciones" className="card rounded-2xl p-5 hover:border-navy-300 transition block shadow-sm">
-                <p className="text-sm font-semibold text-navy-800">🏠 Mis publicaciones</p>
+                <p className="text-sm font-semibold text-navy-800 flex items-center gap-1.5"><House aria-hidden="true" className="w-4 h-4" /> Mis publicaciones</p>
                 <p className="text-xs text-neutral-500 mt-1">Crea, edita y renueva tus avisos.</p>
-                <span className="inline-block mt-3 text-xs font-semibold text-navy-700">Abrir →</span>
+                <span className="inline-flex items-center gap-1 mt-3 text-xs font-semibold text-navy-700">Abrir <ArrowRight aria-hidden="true" className="w-4 h-4" /></span>
               </Link>
               <Link to="/favoritos" className="card rounded-2xl p-5 hover:border-navy-300 transition block shadow-sm">
-                <p className="text-sm font-semibold text-navy-800">♡ Favoritos</p>
+                <p className="text-sm font-semibold text-navy-800 flex items-center gap-1.5"><Heart aria-hidden="true" className="w-4 h-4" /> Favoritos</p>
                 <p className="text-xs text-neutral-500 mt-1">Tus alojamientos guardados.</p>
-                <span className="inline-block mt-3 text-xs font-semibold text-navy-700">Abrir →</span>
+                <span className="inline-flex items-center gap-1 mt-3 text-xs font-semibold text-navy-700">Abrir <ArrowRight aria-hidden="true" className="w-4 h-4" /></span>
               </Link>
             </div>
           </div>

@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
+import { ArrowRight, Check, Eye, Flag, Heart, Pause, Pencil, Plus } from 'lucide-react'
 import { api } from '../services/api'
 import Indice from '../components/IndiceConfianza'
 import MapaZona from '../components/MapaZona'
@@ -359,7 +360,7 @@ export default function Detalle() {
         <div className="lg:col-span-2 space-y-6">
           {!isActivo && pub.estado === 'PAUSADO_POR_REPORTE' && (
             <div className="bg-red-50 border border-red-200 text-red-700 rounded-md p-4 text-sm" role="alert">
-              <p className="font-bold mb-1">⏸️ Anuncio pausado temporalmente</p>
+              <p className="font-bold mb-1 flex items-center gap-1.5"><Pause aria-hidden="true" className="w-4 h-4" /> Anuncio pausado temporalmente</p>
               <p className="text-xs leading-relaxed">
                 Esta publicación recibió varios reportes de la comunidad y está suspendida mientras nuestro equipo la revisa.
                 Por tu seguridad, el contacto está deshabilitado hasta que se resuelva la revisión.
@@ -394,7 +395,7 @@ export default function Detalle() {
                     title={isFav ? 'Quitar de favoritos' : 'Guardar en favoritos'}
                     className={`w-11 h-11 rounded-full text-lg flex items-center justify-center backdrop-blur-sm border border-white/20 active:scale-95 transition ${isFav ? 'bg-red-500 text-white' : 'bg-black/60 text-white'}`}
                   >
-                    <span aria-hidden="true">{isFav ? '♥' : '♡'}</span>
+                    {isFav ? <Heart aria-hidden="true" className="w-5 h-5 fill-current" /> : <Heart aria-hidden="true" className="w-5 h-5" />}
                   </button>
                   <button
                     type="button"
@@ -404,7 +405,7 @@ export default function Detalle() {
                     title={isComp ? 'Quitar de comparar' : 'Agregar a comparar'}
                     className={`w-11 h-11 rounded-full text-lg font-bold flex items-center justify-center backdrop-blur-sm border border-white/20 active:scale-95 transition ${isComp ? 'bg-indigo-600 text-white' : 'bg-black/60 text-white'}`}
                   >
-                    <span aria-hidden="true">{isComp ? '✓' : '+'}</span>
+                    {isComp ? <Check aria-hidden="true" className="w-5 h-5" /> : <Plus aria-hidden="true" className="w-5 h-5" />}
                   </button>
                   <BotonCompartir
                     titulo={`${pub.titulo} en AlojaU`}
@@ -441,16 +442,16 @@ export default function Detalle() {
             <button type="button"
               onClick={handleToggleFav}
               aria-pressed={isFav}
-              className={`hidden sm:inline-block px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition active:scale-95 ${isFav ? 'bg-red-500 text-white border-red-500' : 'bg-white border-neutral-200 hover:bg-neutral-50'}`}
+              className={`hidden sm:inline-flex sm:items-center sm:gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition active:scale-95 ${isFav ? 'bg-red-500 text-white border-red-500' : 'bg-white border-neutral-200 hover:bg-neutral-50'}`}
             >
-              {isFav ? '♥ En favoritos' : '♡ Añadir a favoritos'}
+              {isFav ? (<><Heart aria-hidden="true" className="w-4 h-4 fill-current" /> En favoritos</>) : (<><Heart aria-hidden="true" className="w-4 h-4" /> Añadir a favoritos</>)}
             </button>
             <button type="button"
               onClick={handleToggleComp}
               aria-pressed={isComp}
-              className={`hidden sm:inline-block px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition active:scale-95 ${isComp ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-neutral-200 hover:bg-neutral-50'}`}
+              className={`hidden sm:inline-flex sm:items-center sm:gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition active:scale-95 ${isComp ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-neutral-200 hover:bg-neutral-50'}`}
             >
-              {isComp ? '✓ En comparar' : '+ Comparar (máx 3)'}
+              {isComp ? (<><Check aria-hidden="true" className="w-4 h-4" /> En comparar</>) : (<><Plus aria-hidden="true" className="w-4 h-4" /> Comparar (máx 3)</>)}
             </button>
             <span className="hidden sm:inline-block">
               <BotonCompartir
@@ -463,18 +464,18 @@ export default function Detalle() {
             <button type="button"
               onClick={() => setReportOpen(true)}
               aria-label="Reportar este aviso"
-              className="px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition bg-white border-neutral-200 text-neutral-500 hover:text-red-600 hover:border-red-200 hover:bg-red-50"
+              className="px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition bg-white border-neutral-200 text-neutral-500 hover:text-red-600 hover:border-red-200 hover:bg-red-50 inline-flex items-center gap-1.5"
             >
-              ⚑ Reportar aviso
+              <Flag aria-hidden="true" className="w-4 h-4" /> Reportar aviso
             </button>
             {/* v15.2 acceso directo del dueño (verificado por usuario_id). */}
             {esDueno && (
               <button type="button"
                 onClick={() => setEditando(true)}
                 aria-label={`Editar ${pub.titulo}`}
-                className="px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition bg-navy-800 border-navy-800 text-white hover:bg-navy-900"
+                className="px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition bg-navy-800 border-navy-800 text-white hover:bg-navy-900 inline-flex items-center gap-1.5"
               >
-                ✎ Editar publicación
+                <Pencil aria-hidden="true" className="w-4 h-4" /> Editar publicación
               </button>
             )}
           </div>
@@ -483,8 +484,8 @@ export default function Detalle() {
           {toast && (
             <div className="flex items-center justify-between gap-3 text-xs bg-navy-900 text-white rounded-md px-3 py-2" role="status">
               <span>{toast}</span>
-              {toast.includes('Favoritos') && <Link to="/favoritos" className="font-semibold text-gold-400 hover:text-gold-500 shrink-0">Ver →</Link>}
-              {toast.includes('Comparar') && <Link to="/comparar" className="font-semibold text-gold-400 hover:text-gold-500 shrink-0">Comparar →</Link>}
+              {toast.includes('Favoritos') && <Link to="/favoritos" className="font-semibold text-gold-400 hover:text-gold-500 shrink-0 inline-flex items-center gap-1">Ver <ArrowRight aria-hidden="true" className="w-4 h-4" /></Link>}
+              {toast.includes('Comparar') && <Link to="/comparar" className="font-semibold text-gold-400 hover:text-gold-500 shrink-0 inline-flex items-center gap-1">Comparar <ArrowRight aria-hidden="true" className="w-4 h-4" /></Link>}
             </div>
           )}
 
@@ -496,7 +497,7 @@ export default function Detalle() {
             <div className="flex flex-wrap items-center gap-2 text-[11px] text-neutral-400 mb-2">
               {actualizadoHace && <span>Actualizado {actualizadoHace}</span>}
               {typeof pub.vistas === 'number' && (
-                <span aria-label={`${pub.vistas} vistas`}>· 👁 {pub.vistas} {pub.vistas === 1 ? 'vista' : 'vistas'}</span>
+                <span aria-label={`${pub.vistas} vistas`} className="inline-flex items-center gap-1">· <Eye aria-hidden="true" className="w-4 h-4" /> {pub.vistas} {pub.vistas === 1 ? 'vista' : 'vistas'}</span>
               )}
               {desactualizada && (
                 <span className="font-semibold px-2 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-300">
@@ -656,7 +657,7 @@ export default function Detalle() {
                   <p className="text-xs text-neutral-500">Respuesta directa por WhatsApp</p>
                   {yaContactado && (
                     <p className="text-xs font-medium text-emerald-700 mt-1.5 inline-flex items-center gap-1">
-                      <span aria-hidden="true">✓</span> Ya contactaste este aviso
+                      <Check aria-hidden="true" className="w-4 h-4" /> Ya contactaste este aviso
                     </p>
                   )}
                 </div>
@@ -678,14 +679,14 @@ export default function Detalle() {
                     onClick={() => handleCopiar(pub.telefono_whatsapp, 'numero')}
                     className="text-xs text-neutral-500 hover:text-navy-800 hover:underline transition py-1"
                   >
-                    {copiado === 'numero' ? '✓ Número copiado' : 'Copiar número'}
+                    {copiado === 'numero' ? (<span className="inline-flex items-center gap-1"><Check aria-hidden="true" className="w-4 h-4" /> Número copiado</span>) : 'Copiar número'}
                   </button>
                   <button
                     type="button"
                     onClick={() => handleCopiar(mensajeWa, 'mensaje')}
                     className="text-xs text-neutral-500 hover:text-navy-800 hover:underline transition py-1"
                   >
-                    {copiado === 'mensaje' ? '✓ Mensaje copiado' : 'Copiar mensaje'}
+                    {copiado === 'mensaje' ? (<span className="inline-flex items-center gap-1"><Check aria-hidden="true" className="w-4 h-4" /> Mensaje copiado</span>) : 'Copiar mensaje'}
                   </button>
                   {!yaContactado && (
                     <button
@@ -717,7 +718,7 @@ export default function Detalle() {
                     onClick={handleToggleFav}
                     className="text-xs text-neutral-500 hover:text-navy-800 hover:underline transition py-1"
                   >
-                    {isFav ? '♥ Guardado en favoritos' : '♡ Guardar y avísame si habilita contacto'}
+                    {isFav ? (<span className="inline-flex items-center gap-1"><Heart aria-hidden="true" className="w-4 h-4 fill-current" /> Guardado en favoritos</span>) : (<span className="inline-flex items-center gap-1"><Heart aria-hidden="true" className="w-4 h-4" /> Guardar y avísame si habilita contacto</span>)}
                   </button>
                   {!yaContactado && (
                     <button
@@ -736,7 +737,7 @@ export default function Detalle() {
               onClick={() => setReportOpen(true)}
               className="mt-3 w-full inline-flex items-center justify-center gap-1.5 text-xs font-medium text-neutral-600 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-100 rounded-md py-2 transition-colors"
             >
-              <span aria-hidden="true">🚩</span> ¿Hay algún problema con este anuncio?
+              <Flag aria-hidden="true" className="w-4 h-4" /> ¿Hay algún problema con este anuncio?
             </button>
           </div>
         </div>

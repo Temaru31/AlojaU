@@ -122,8 +122,11 @@ describe('MapaZona Oleada 2', () => {
     fireEvent.click(screen.getByRole('button', { name: /Auto/ }))
     const cta = screen.getByRole('link', { name: /Cómo llegar en Google Maps/ })
     expect(cta.getAttribute('href')).toContain('travelmode=driving')
-    // El icono va en span aria-hidden (no cuenta en el nombre accesible).
-    expect(cta.textContent).toContain('🚗')
+    // El icono de modo es un componente lucide (aria-hidden, no cuenta en el
+    // nombre accesible): se verifica por los textos de modo.
+    expect(screen.getByRole('button', { name: 'A pie' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Auto' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Bus' })).toBeInTheDocument()
   })
 })
 

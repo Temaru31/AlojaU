@@ -10,12 +10,12 @@ import { fetchConfigPublica, leerConfigCache } from '../constants'
 
 // Fallback local (espejo del seed backend, nunca se elimina un slug).
 export const TIPOS_FALLBACK = [
-  { slug: 'HABITACION_FAMILIAR', nombre_visible: 'Habitación familiar', descripcion_tooltip: 'Habitación en casa de familia', icono: '🏠', esta_activo: true },
-  { slug: 'HABITACION_INDEPENDIENTE', nombre_visible: 'Habitación independiente', descripcion_tooltip: 'Habitación privada', icono: '🚪', esta_activo: true },
-  { slug: 'APARTAESTUDIO', nombre_visible: 'Apartaestudio', descripcion_tooltip: 'Ambiente integrado', icono: '🏢', esta_activo: true },
-  { slug: 'COMPARTIDO', nombre_visible: 'Compartido', descripcion_tooltip: 'Cupo compartido', icono: '🤝', esta_activo: true },
-  { slug: 'APARTAMENTO_COMPLETO', nombre_visible: 'Apartamento completo', descripcion_tooltip: 'Apartamento entero', icono: '🏘️', esta_activo: true },
-  { slug: 'HABITACION_PISO_COMPARTIDO', nombre_visible: 'Habitación en piso compartido', descripcion_tooltip: 'Habitación en piso común', icono: '🏡', esta_activo: true },
+  { slug: 'HABITACION_FAMILIAR', nombre_visible: 'Habitación familiar', descripcion_tooltip: 'Habitación en casa de familia', icono: 'house', esta_activo: true },
+  { slug: 'HABITACION_INDEPENDIENTE', nombre_visible: 'Habitación independiente', descripcion_tooltip: 'Habitación privada', icono: 'door-open', esta_activo: true },
+  { slug: 'APARTAESTUDIO', nombre_visible: 'Apartaestudio', descripcion_tooltip: 'Ambiente integrado', icono: 'building', esta_activo: true },
+  { slug: 'COMPARTIDO', nombre_visible: 'Compartido', descripcion_tooltip: 'Cupo compartido', icono: 'handshake', esta_activo: true },
+  { slug: 'APARTAMENTO_COMPLETO', nombre_visible: 'Apartamento completo', descripcion_tooltip: 'Apartamento entero', icono: 'building-2', esta_activo: true },
+  { slug: 'HABITACION_PISO_COMPARTIDO', nombre_visible: 'Habitación en piso compartido', descripcion_tooltip: 'Habitación en piso común', icono: 'home', esta_activo: true },
 ]
 
 export function nombreTipo(tipos, slug, fallback = null) {

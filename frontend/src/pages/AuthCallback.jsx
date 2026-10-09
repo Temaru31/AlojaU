@@ -11,6 +11,7 @@
 // 3. Se guarda el token y se redirige al inicio.
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { CircleCheck, CircleAlert } from 'lucide-react'
 import { api } from '../services/api'
 import { parseAuthCallbackHash, getCallbackCode, exchangeCodeForSession, leerRedirectPostLogin } from '../services/supabaseClient'
 import { emitAuthChange } from '../contexts/AuthContext'
@@ -159,7 +160,7 @@ export default function AuthCallback() {
         )}
         {estado === 'ok' && (
           <>
-            <p className="text-3xl" aria-hidden="true">✅</p>
+            <CircleCheck aria-hidden="true" className="w-8 h-8 mx-auto text-emerald-500" />
             <h1 className="text-lg font-bold text-emerald-800">
               {esNuevo ? '¡Cuenta creada con Google!' : '¡Bienvenido de nuevo!'}
             </h1>
@@ -172,7 +173,7 @@ export default function AuthCallback() {
         )}
         {estado === 'error' && (
           <>
-            <p className="text-3xl" aria-hidden="true">⚠️</p>
+            <CircleAlert aria-hidden="true" className="w-8 h-8 mx-auto text-amber-500" />
             <h1 className="text-lg font-bold text-red-700">No se pudo completar</h1>
             <p className="text-sm text-neutral-500 break-words">{detalle}</p>
             <Link to="/perfil" className="btn-accent inline-flex justify-center">Volver a Mi Perfil</Link>

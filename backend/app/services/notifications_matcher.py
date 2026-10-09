@@ -198,7 +198,7 @@ async def notificar_telegram_vinculado(db: AsyncSession, *, usuario_id: int) -> 
     ahora = int(datetime.now(timezone.utc).timestamp())
     return await crear_notificacion(
         db, usuario_id=usuario_id, tipo="telegram",
-        titulo="¡Número verificado con éxito en AlojaU! 🎉",
+        titulo="¡Número verificado con éxito en AlojaU!",
         cuerpo="Tu Telegram quedó vinculado y tu número verificado (+20 pts de confianza).",
         evento_id=f"telegram_vinculado:{int(usuario_id)}:{ahora}",
     )

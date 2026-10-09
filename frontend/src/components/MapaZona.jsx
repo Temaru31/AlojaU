@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { MapContainer, TileLayer, Circle, Marker, Popup, Polyline, useMap } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import L from 'leaflet'
+import { Footprints, Car, Bus, MapPin, Map, Check } from 'lucide-react'
 import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
 import { obtenerRutaPie } from '../utils/osrm'
 // Fix icon
@@ -14,9 +15,9 @@ L.Icon.Default.mergeOptions({
 })
 
 const MODOS_VIAJE = [
-  { id: 'walking', etiqueta: 'A pie', icono: '🚶' },
-  { id: 'driving', etiqueta: 'Auto', icono: '🚗' },
-  { id: 'transit', etiqueta: 'Bus', icono: '🚌' },
+  { id: 'walking', etiqueta: 'A pie', icono: Footprints },
+  { id: 'driving', etiqueta: 'Auto', icono: Car },
+  { id: 'transit', etiqueta: 'Bus', icono: Bus },
 ]
 
 /** Deep-link universal Google Maps (costo-cero: sin API key ni cuotas). */
@@ -229,7 +230,7 @@ export default function MapaZona({
           <>
             Ubicación aproximada (radio 150 m, no es la dirección exacta)
             {rutaReal ? (
-              <span aria-live="polite"> · 🚶 ~{rutaReal.mins} min por ruta</span>
+              <span aria-live="polite" className="inline-flex items-center gap-1"> · <Footprints aria-hidden="true" className="w-3.5 h-3.5" /> ~{rutaReal.mins} min por ruta</span>
             ) : hasDist ? (
               <> · {tiempo ? `${tiempo} del campus` : `${formatDistancia(dist_m)} del campus`}</>
             ) : null}
@@ -254,7 +255,7 @@ export default function MapaZona({
                   aria-pressed={modoViaje === m.id}
                   className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full transition ${modoViaje === m.id ? 'bg-white text-navy-900 shadow-sm' : 'text-neutral-500 hover:text-navy-800'}`}
                 >
-                  <span aria-hidden="true">{m.icono}</span> {m.etiqueta}
+                  {(() => { const Icono = m.icono; return Icono && <Icono aria-hidden="true" className="w-4 h-4" /> })()} {m.etiqueta}
                 </button>
               ))}
             </div>
@@ -264,7 +265,7 @@ export default function MapaZona({
               rel="noopener"
               className="inline-flex w-full md:w-auto md:flex-1 md:max-w-xs items-center justify-center gap-2 px-4 py-3 bg-navy-800 text-white font-semibold text-sm rounded-lg hover:bg-navy-900 active:scale-[0.98] transition"
             >
-              <span aria-hidden="true">{modoActual.icono}</span> Cómo llegar en Google Maps
+              {(() => { const Icono = modoActual.icono; return Icono && <Icono aria-hidden="true" className="w-4 h-4" /> })()} Cómo llegar en Google Maps
             </a>
           </div>
           <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5">
@@ -274,7 +275,7 @@ export default function MapaZona({
               disabled={buscandoGps}
               className="inline-flex items-center gap-1.5 text-[11px] font-medium text-navy-700 hover:text-navy-900 hover:underline transition disabled:opacity-50"
             >
-              <span aria-hidden="true">📍</span> {origenGps ? 'Ruta desde mi ubicación ✓' : (buscandoGps ? 'Ubicándote…' : 'Cómo llegar desde mi ubicación')}
+              <MapPin aria-hidden="true" className="w-3.5 h-3.5" /> {origenGps ? (<span className="inline-flex items-center gap-1">Ruta desde mi ubicación <Check aria-hidden="true" className="w-3.5 h-3.5" /></span>) : (buscandoGps ? 'Ubicándote…' : 'Cómo llegar desde mi ubicación')}
             </button>
             {osmUrl && (
               <a
@@ -283,7 +284,7 @@ export default function MapaZona({
                 rel="noopener"
                 className="inline-flex items-center gap-1.5 text-[11px] font-medium text-neutral-500 hover:text-navy-800 hover:underline transition"
               >
-                <span aria-hidden="true">🗺️</span> Abrir ubicación en OpenStreetMap
+                <Map aria-hidden="true" className="w-3.5 h-3.5" /> Abrir ubicación en OpenStreetMap
               </a>
             )}
           </div>

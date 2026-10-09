@@ -1,5 +1,6 @@
 import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { Settings, SlidersHorizontal, X } from 'lucide-react'
 import { api, isCancelError } from '../services/api'
 import Card from '../components/Card'
 import useMediaQuery from '../hooks/useMediaQuery'
@@ -479,7 +480,7 @@ export default function Buscar() {
               aria-label={`Abrir filtros${numAvanzados > 0 ? `, ${numAvanzados} activos` : ''}`}
               className="shrink-0 inline-flex items-center gap-1.5 rounded-full bg-navy-800 text-white text-xs font-bold px-3.5 py-2.5"
             >
-              <span aria-hidden="true">⚙️</span> Filtros
+              <Settings aria-hidden="true" className="w-4 h-4" /> Filtros
               {numAvanzados > 0 && (
                 <span className="inline-flex items-center rounded-full bg-gold-400 px-1.5 py-px text-[10px] font-bold text-navy-900" aria-hidden="true">
                   {numAvanzados}
@@ -616,7 +617,7 @@ export default function Buscar() {
                 aria-controls="panel-avanzados"
                 className="shrink-0 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border transition bg-navy-800 text-white border-navy-800 hover:bg-navy-900"
               >
-                <span aria-hidden="true">🎛️</span> Filtros
+                <SlidersHorizontal aria-hidden="true" className="w-4 h-4" /> Filtros
                 {numAvanzados > 0 && (
                   <span className="inline-flex items-center rounded-full bg-gold-400 px-2 py-0.5 text-[11px] font-bold text-navy-900" aria-label={`${numAvanzados} filtros activos`}>
                     {numAvanzados}
@@ -634,7 +635,7 @@ export default function Buscar() {
                   aria-label="Limpiar filtros"
                   className="shrink-0 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-bold text-neutral-500 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-200 transition"
                 >
-                  <span aria-hidden="true">✕</span> Limpiar
+                  <X aria-hidden="true" className="w-4 h-4" /> Limpiar
                 </button>
               )}
             </div>

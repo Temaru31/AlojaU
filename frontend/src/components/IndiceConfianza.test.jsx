@@ -23,8 +23,8 @@ describe('IndiceConfianza - HU-007 amigable', ()=>{
     await user.click(screen.getByRole('button', { name: /Ver por qué/ }))
     expect(screen.getByText('Sin reportes')).toBeInTheDocument()
     expect(screen.getByText('10/10')).toBeInTheDocument()
-    // checks verdes: 5 factores ok -> 5 ✓ (más el de la insignia si aplica)
-    expect(screen.getAllByText('✓').length).toBeGreaterThanOrEqual(5)
+    // checks verdes: 5 factores ok -> 5 iconos Check (svg) en los detalles
+    expect(document.querySelectorAll('svg').length).toBeGreaterThanOrEqual(5)
   })
   it('anillo SVG con avance proporcional y colores dinámicos', ()=>{
     const { container, rerender } = render(<Indice indice={50} desglose={{completitud:20, telefono:10, fotos:10, vigencia:5, reportes:5}} />)

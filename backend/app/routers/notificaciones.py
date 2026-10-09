@@ -29,7 +29,7 @@ router_busquedas = APIRouter(prefix="/api/busquedas-guardadas", tags=["busquedas
 MAX_ALERTAS_ACTIVAS = 10
 
 MENSAJE_SIN_FILTROS = (
-    "⚠️️ Selecciona al menos un filtro (zona, precio o tipo) "
+    "Selecciona al menos un filtro (zona, precio o tipo) "
     "para crear una alerta relevante."
 )
 

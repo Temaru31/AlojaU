@@ -2092,7 +2092,7 @@ async def _webhook_contacto(db: AsyncSession, chat_id: str, from_id, contacto: d
             await _telegram_send_message_async(
                 chat_id,
                 "No pudimos confirmar que ese contacto sea tuyo. Usa el botón "
-                "«📱 Compartir mi número de teléfono para verificar» y vuelve "
+                "«Compartir mi número de teléfono para verificar» y vuelve "
                 "a intentarlo.",
                 reply_markup=quitar,
             )
@@ -2197,7 +2197,7 @@ async def _webhook_contacto(db: AsyncSession, chat_id: str, from_id, contacto: d
             return {"ok": True, "vinculado": False, "motivo": "persistencia"}
         await _telegram_send_message_async(
             chat_id,
-            "¡Número verificado con éxito en AlojaU! 🎉 Puedes volver a la "
+                "¡Número verificado con éxito en AlojaU! Puedes volver a la "
             "aplicación web.",
             reply_markup=quitar,
         )
@@ -2312,7 +2312,7 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_sess
         await _telegram_send_message_async(
             chat_id,
             "Por seguridad no acepto números escritos a mano: cualquiera "
-            "podría escribir el de otra persona. Usa el botón «📱 Compartir "
+            "podría escribir el de otra persona. Usa el botón «Compartir "
             "mi número de teléfono para verificar» para probar que la "
             "cuenta es tuya.",
             reply_markup=_tg_txt.teclado_quitar(),

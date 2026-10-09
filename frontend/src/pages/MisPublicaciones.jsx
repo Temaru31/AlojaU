@@ -4,6 +4,7 @@
 // cálculo de días restantes según reglas de vigencia y botón de renovación.
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { ArrowRight, Eye, Hourglass, Pause, Play, RefreshCw } from 'lucide-react'
 import { api, isCancelError } from '../services/api'
 import { useAuth, emitMiasChange } from '../contexts/AuthContext'
 import { formatDistancia } from '../utils/formatters'
@@ -92,9 +93,9 @@ const ESTADO_LABEL = {
   ACTIVO: 'Publicada',
   PENDIENTE: 'En revisión',
   EXPIRADO: 'Vencida',
-  PAUSADO: '⏸️ Pausada por el Arrendador',
-  PAUSADO_POR_REPORTE: '⚠️ Pausada por Moderación',
-  REVISION_REQUERIDA: '⚠️ En revisión de Moderación',
+  PAUSADO: 'Pausada por el Arrendador',
+  PAUSADO_POR_REPORTE: 'Pausada por Moderación',
+  REVISION_REQUERIDA: 'En revisión de Moderación',
   RECHAZADO: 'Rechazada',
   ARRENDADO: 'Arrendada',
   DESACTIVADO: 'Desactivada',
@@ -279,7 +280,7 @@ export default function MisPublicaciones() {
           {items.some((p) => p.estado === 'PENDIENTE') && (
             <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5" role="status">
               <p className="text-xs text-amber-800">
-                <b>⏳ {items.filter((p) => p.estado === 'PENDIENTE').length} aviso(s) en revisión.</b>{' '}
+                <b className="inline-flex items-center gap-1"><Hourglass aria-hidden="true" className="w-4 h-4" /> {items.filter((p) => p.estado === 'PENDIENTE').length} aviso(s) en revisión.</b>{' '}
                 El equipo de AlojaU los está verificando. Te avisaremos aquí mismo cuando sean visibles.
                 {!user?.telegram_vinculado && (
                   <> Vincula tu Telegram en <Link to="/perfil" className="font-semibold underline hover:text-amber-900">Mi Perfil</Link> para enterarte al instante, estés o no en la app.</>
@@ -463,8 +464,8 @@ export default function MisPublicaciones() {
                           </span>
                         )}
                         {typeof p.vistas === 'number' && (
-                          <span className="text-xs font-normal text-neutral-400 ml-2" aria-label={`${p.vistas} vistas`}>
-                            · 👁 {p.vistas}
+                          <span className="text-xs font-normal text-neutral-400 ml-2 inline-flex items-center gap-1" aria-label={`${p.vistas} vistas`}>
+                            · <Eye aria-hidden="true" className="w-4 h-4" /> {p.vistas}
                           </span>
                         )}
                       </p>
@@ -508,8 +509,8 @@ export default function MisPublicaciones() {
                             }`}
                         >
                           {cambiandoEstado === p.id ? '…' : p.estado === 'ACTIVO'
-                            ? (aPausar === p.id ? '¿Pausar?' : '⏸ Pausar')
-                            : '▶ Reanudar'}
+                            ? (aPausar === p.id ? '¿Pausar?' : (<span className="inline-flex items-center gap-1"><Pause aria-hidden="true" className="w-4 h-4" /> Pausar</span>))
+                            : (<span className="inline-flex items-center gap-1"><Play aria-hidden="true" className="w-4 h-4" /> Reanudar</span>)}
                         </button>
                       )}
                       <button
@@ -517,7 +518,7 @@ export default function MisPublicaciones() {
                         aria-label={`Renovar ${p.titulo}`}
                         className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white transition flex items-center gap-1 shadow-sm"
                       >
-                        ↻ Renovar
+                        <RefreshCw aria-hidden="true" className="w-4 h-4" /> Renovar
                       </button>
 
                       <button
@@ -538,9 +539,9 @@ export default function MisPublicaciones() {
 
                       <Link
                         to={`/publicacion/${p.id}`}
-                        className="px-3 py-1.5 rounded-lg text-xs font-medium text-navy-700 hover:text-navy-900 hover:bg-neutral-100 transition"
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium text-navy-700 hover:text-navy-900 hover:bg-neutral-100 transition inline-flex items-center gap-1"
                       >
-                        Ver detalle →
+                        Ver detalle <ArrowRight aria-hidden="true" className="w-4 h-4" />
                       </Link>
                     </div>
                   </div>

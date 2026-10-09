@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { School, ShoppingBag, Hospital, Bus, MapPin, Globe, Check } from 'lucide-react'
 
 export const CATEGORIAS_LUGAR = [
-  { id: 'UNIVERSIDAD', etiqueta: 'Universidades', icono: '🏫' },
-  { id: 'CENTRO_COMERCIAL', etiqueta: 'Centros comerciales', icono: '🛍️' },
-  { id: 'SALUD', etiqueta: 'Salud', icono: '🏥' },
-  { id: 'TRANSPORTE', etiqueta: 'Transporte', icono: '🚌' },
-  { id: 'OTRO', etiqueta: 'Otros puntos', icono: '📍' },
+  { id: 'UNIVERSIDAD', etiqueta: 'Universidades', icono: School },
+  { id: 'CENTRO_COMERCIAL', etiqueta: 'Centros comerciales', icono: ShoppingBag },
+  { id: 'SALUD', etiqueta: 'Salud', icono: Hospital },
+  { id: 'TRANSPORTE', etiqueta: 'Transporte', icono: Bus },
+  { id: 'OTRO', etiqueta: 'Otros puntos', icono: MapPin },
 ]
 
 export function etiquetaLugar(lugar) {
@@ -34,6 +35,7 @@ export default function CercanoA({ lugares = [], value, onChange, inputId = 'cer
   const focoTimer = useRef(null)
   useEffect(() => () => window.clearTimeout(focoTimer.current), [])
   const seleccionado = lugares.find(l => String(l.id) === String(value))
+  const IconoSel = seleccionado ? iconoCategoria(seleccionado.categoria) : null
 
   useEffect(() => {
     if (!abierto) return
@@ -78,8 +80,13 @@ export default function CercanoA({ lugares = [], value, onChange, inputId = 'cer
         }}
         className="select-field flex w-full items-center justify-between gap-2 text-left"
       >
-        <span className="truncate">
-          {seleccionado ? `${iconoCategoria(seleccionado.categoria)} ${etiquetaLugar(seleccionado)}` : 'Todos los lugares'}
+        <span className="truncate inline-flex items-center gap-1.5">
+          {seleccionado ? (
+            <>
+              {IconoSel && <IconoSel aria-hidden="true" className="w-4 h-4" />}
+              <span className="truncate">{etiquetaLugar(seleccionado)}</span>
+            </>
+          ) : 'Todos los lugares'}
         </span>
         <svg className={`w-4 h-4 shrink-0 text-neutral-400 transition ${abierto ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
           <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
@@ -101,13 +108,13 @@ export default function CercanoA({ lugares = [], value, onChange, inputId = 'cer
           <ul role="listbox" aria-label="Lugares de referencia" className="max-h-64 overflow-auto py-1">
             <li role="presentation">
               <button type="button" role="option" aria-selected={value == null || value === ''} onClick={() => elegir(null)} className="flex w-full items-center gap-2 px-3 py-2 text-sm text-neutral-600 hover:bg-neutral-50">
-                <span aria-hidden="true">🌐</span> Todos los lugares
+                <Globe aria-hidden="true" className="w-4 h-4" /> Todos los lugares
               </button>
             </li>
             {grupos.map(g => (
               <li key={g.id} role="presentation">
-                <p className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-400" aria-hidden="true">
-                  {g.icono} {g.etiqueta}
+                <p className="px-3 pt-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-400 flex items-center gap-1.5" aria-hidden="true">
+                  {(() => { const Icono = g.icono; return Icono && <Icono aria-hidden="true" className="w-4 h-4" /> })()} {g.etiqueta}
                 </p>
                 <ul role="group" aria-label={g.etiqueta}>
                   {g.items.map(l => (
@@ -120,7 +127,7 @@ export default function CercanoA({ lugares = [], value, onChange, inputId = 'cer
                         className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-navy-50 ${String(value) === String(l.id) ? 'font-semibold text-navy-800 bg-navy-50' : 'text-neutral-700'}`}
                       >
                         <span className="truncate">{etiquetaLugar(l)}</span>
-                        {String(value) === String(l.id) && <span aria-hidden="true" className="text-navy-600">✓</span>}
+                        {String(value) === String(l.id) && <Check aria-hidden="true" className="w-4 h-4 text-navy-600" />}
                       </button>
                     </li>
                   ))}

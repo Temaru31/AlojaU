@@ -175,12 +175,12 @@ CREATE TABLE IF NOT EXISTS housing_types (
   esta_activo BOOLEAN NOT NULL DEFAULT TRUE
 );
 INSERT INTO housing_types (slug, nombre_visible, descripcion_tooltip, icono, esta_activo) VALUES
-  ('HABITACION_FAMILIAR', 'Habitación familiar', 'Habitación en casa de familia, ambiente compartido', '🏠', TRUE),
-  ('HABITACION_INDEPENDIENTE', 'Habitación independiente', 'Habitación privada con acceso independiente', '🚪', TRUE),
-  ('APARTAESTUDIO', 'Apartaestudio', 'Ambiente integrado con cocina y baño privados', '🏢', TRUE),
-  ('COMPARTIDO', 'Compartido', 'Cupo en vivienda compartida con otros estudiantes', '🤝', TRUE),
-  ('APARTAMENTO_COMPLETO', 'Apartamento completo', 'Apartamento entero para ti o tu grupo', '🏘️', TRUE),
-  ('HABITACION_PISO_COMPARTIDO', 'Habitación en piso compartido', 'Habitación privada en piso con zonas comunes', '🏡', TRUE)
+  ('HABITACION_FAMILIAR', 'Habitación familiar', 'Habitación en casa de familia, ambiente compartido', 'house', TRUE),
+  ('HABITACION_INDEPENDIENTE', 'Habitación independiente', 'Habitación privada con acceso independiente', 'door-open', TRUE),
+  ('APARTAESTUDIO', 'Apartaestudio', 'Ambiente integrado con cocina y baño privados', 'building', TRUE),
+  ('COMPARTIDO', 'Compartido', 'Cupo en vivienda compartida con otros estudiantes', 'handshake', TRUE),
+  ('APARTAMENTO_COMPLETO', 'Apartamento completo', 'Apartamento entero para ti o tu grupo', 'building-2', TRUE),
+  ('HABITACION_PISO_COMPARTIDO', 'Habitación en piso compartido', 'Habitación privada en piso con zonas comunes', 'home', TRUE)
 ON CONFLICT (slug) DO NOTHING;
 
 -- 6. Publicaciones (oferta central) - FIX lat/lng + indice_confianza

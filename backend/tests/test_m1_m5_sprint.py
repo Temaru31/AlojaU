@@ -93,7 +93,7 @@ def test_m2_admin_crud_y_restrict_y_cache():
     # Crear.
     r = client.post("/api/admin/housing-types", json={
         "slug": "LOFT_TEST", "nombre_visible": "Loft Test",
-        "descripcion_tooltip": "Para test", "icono": "🏠", "esta_activo": True,
+        "descripcion_tooltip": "Para test", "icono": "house", "esta_activo": True,
     }, headers=ADMIN)
     assert r.status_code in (201, 409)
     if r.status_code == 201:

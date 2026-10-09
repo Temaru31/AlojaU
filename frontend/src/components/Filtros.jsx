@@ -1,5 +1,7 @@
 import { useRef, useState } from 'react'
+import { Settings } from 'lucide-react'
 import InfoTooltip from './InfoTooltip'
+import TipoIcono from './TipoIcono'
 import useTiposVivienda, { TIPOS_FALLBACK } from '../hooks/useTiposVivienda'
 import useFocusTrap from '../hooks/useFocusTrap'
 
@@ -74,12 +76,12 @@ export function SelectorTipoChips({ filtros, setFiltros, envolver = false }) {
             onClick={() => setFiltros({ ...filtros, tipo: t.slug })}
             aria-pressed={activo}
             title={t.descripcion_tooltip || t.nombre_visible}
-            className={`shrink-0 min-h-[44px] px-3.5 py-2 rounded-full border text-xs font-bold transition active:scale-[0.97] ${activo
+            className={`shrink-0 min-h-[44px] px-3.5 py-2 rounded-full border text-xs font-bold transition active:scale-[0.97] inline-flex items-center gap-1.5 ${activo
               ? 'border-navy-800 ring-2 ring-navy-800/25 bg-navy-800 text-white'
               : 'border-neutral-200 bg-white text-neutral-600 active:bg-neutral-50'
               }`}
           >
-            {t.icono ? `${t.icono} ` : ''}{t.nombre_visible}
+            <TipoIcono icono={t.icono} className="w-4 h-4" />{t.nombre_visible}
           </button>
         )
       })}
@@ -132,9 +134,9 @@ function SelectorTipo({ filtros, setFiltros, id = 'filtro-tipo' }) {
       >
         <option value="">Todos los tipos</option>
         {tipos.map((t) => (
-          <option key={t.slug} value={t.slug} title={t.descripcion_tooltip || ''}>
-            {t.icono ? `${t.icono} ` : ''}{t.nombre_visible || t.slug}
-          </option>
+            <option key={t.slug} value={t.slug} title={t.descripcion_tooltip || ''}>
+              {t.nombre_visible || t.slug}
+            </option>
         ))}
       </select>
     </div>
@@ -272,7 +274,7 @@ export function MasFiltrosModal({ filtros, setFiltros, totalResultados = null, o
         aria-label={`Abrir más filtros${activos > 0 ? `, ${activos} activos` : ''}`}
         className="shrink-0 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border transition bg-white text-navy-800 border-neutral-200 hover:border-navy-300"
       >
-        <span aria-hidden="true">⚙️</span> Más Filtros
+        <Settings aria-hidden="true" className="w-4 h-4" /> Más Filtros
         {activos > 0 && (
           <span className="inline-flex items-center rounded-full bg-navy-800 px-2 py-0.5 text-[11px] font-bold text-white" aria-label={`${activos} filtros activos`}>
             {activos}

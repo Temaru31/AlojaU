@@ -41,13 +41,13 @@ describe('OtpForm canal explícito (M3)', () => {
     expect(api.post).toHaveBeenCalledTimes(1)
   })
 
-  it('código correcto muestra ✓ y llama onVerificado', async () => {
+  it('código correcto muestra mensaje y llama onVerificado', async () => {
     api.post.mockResolvedValue({ data: { email_verificado: true } })
     const onVerificado = vi.fn()
     render(<OtpForm email="a@b.co" onVerificado={onVerificado} />)
     fireEvent.change(screen.getByLabelText(/6 dígitos/i), { target: { value: '123456' } })
     fireEvent.click(screen.getByRole('button', { name: /Confirmar código/ }))
-    expect(await screen.findByText(/✓.*Correo verificado/i)).toBeInTheDocument()
+    expect(await screen.findByText(/Correo verificado/i)).toBeInTheDocument()
     expect(onVerificado).toHaveBeenCalled()
   })
 

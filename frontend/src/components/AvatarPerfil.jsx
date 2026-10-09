@@ -5,6 +5,7 @@
 // - Quitar invoca DELETE /api/auth/avatar (foto=null -> iniciales).
 // Uso: <AvatarPerfil perfil={perfil} token={token} onCambio={(url) => ...} />
 import { useRef, useState } from 'react'
+import { Eye, Pencil, Trash2 } from 'lucide-react'
 import { api } from '../services/api'
 import { inicialesDe } from '../contexts/AuthContext'
 import useFocusTrap from '../hooks/useFocusTrap'
@@ -121,7 +122,7 @@ export default function AvatarPerfil({ perfil, token, onCambio, tamano }) {
                 onClick={() => { setSheet(false); setVer(true) }}
                 className="w-full text-left px-3 py-3 min-h-[44px] text-sm rounded-lg hover:bg-neutral-50 flex items-center gap-2"
               >
-                <span aria-hidden="true">👁️</span> Ver foto en tamaño completo
+                <Eye aria-hidden="true" className="w-4 h-4" /> Ver foto en tamaño completo
               </button>
             )}
             <button
@@ -130,7 +131,7 @@ export default function AvatarPerfil({ perfil, token, onCambio, tamano }) {
               onClick={() => fileRef.current?.click()}
               className="w-full text-left px-3 py-3 min-h-[44px] text-sm rounded-lg hover:bg-neutral-50 flex items-center gap-2 disabled:opacity-50"
             >
-              <span aria-hidden="true">✏️</span> {subiendo ? 'Subiendo…' : 'Cambiar foto'}
+              <Pencil aria-hidden="true" className="w-4 h-4" /> {subiendo ? 'Subiendo…' : 'Cambiar foto'}
             </button>
             {foto && (
               <button
@@ -139,7 +140,7 @@ export default function AvatarPerfil({ perfil, token, onCambio, tamano }) {
                 onClick={quitar}
                 className="w-full text-left px-3 py-3 min-h-[44px] text-sm rounded-lg hover:bg-red-50 text-red-700 flex items-center gap-2 disabled:opacity-50"
               >
-                <span aria-hidden="true">🗑️</span> Quitar foto
+                <Trash2 aria-hidden="true" className="w-4 h-4" /> Quitar foto
               </button>
             )}
             <button

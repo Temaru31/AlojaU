@@ -1,4 +1,5 @@
 import { Component } from 'react'
+import { Wrench } from 'lucide-react'
 
 /**
  * ErrorBoundary global: captura fallos inesperados de
@@ -26,7 +27,7 @@ export default class ErrorBoundary extends Component {
         <div className="min-h-screen flex items-center justify-center bg-neutral-50 px-4">
           <div className="card p-8 max-w-md w-full text-center" role="alert">
             <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <span aria-hidden="true" className="text-xl">🔧</span>
+              <Wrench aria-hidden="true" className="w-6 h-6 text-amber-600" />
             </div>
             <h1 className="font-display text-lg font-bold text-navy-900 mb-2">
               Algo no salió como esperábamos
