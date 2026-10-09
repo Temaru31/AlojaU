@@ -19,6 +19,8 @@ const Recuperar = lazy(() => import('./pages/Recuperar'))
 const Restablecer = lazy(() => import('./pages/Restablecer'))
 const Terminos = lazy(() => import('./pages/Terminos'))
 const Privacidad = lazy(() => import('./pages/Privacidad'))
+// Chatbot MVP solo lectura: chunk separado, no pesa el bundle inicial.
+const ChatWidget = lazy(() => import('./components/ChatWidget'))
 import ProtectedAdminRoute from './components/ProtectedAdminRoute'
 import { Bell, Heart, LogOut, Megaphone, Scale, Search, ShieldCheck, User } from 'lucide-react'
 import ColdStartBanner from './components/ColdStartBanner'
@@ -482,6 +484,9 @@ function App() {
                 <Toaster />
 
               </main>
+              <Suspense fallback={null}>
+                <ChatWidget />
+              </Suspense>
               <Footer />
             </div>
           </CompararProvider>

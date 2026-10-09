@@ -15,6 +15,17 @@ export default function Privacidad() {
           Política de Tratamiento de Datos Personales
         </h1>
         <p className="text-xs text-neutral-400 mb-4">Ley 1581 de 2012 · Versión {POLITICA_VERSION}</p>
+        <section aria-label="Asistente virtual" className="mb-5 rounded-xl border border-navy-100 bg-navy-50/50 p-4">
+          <h2 className="text-sm font-bold text-navy-900 mb-1">Asistente virtual (chatbot)</h2>
+          <p className="text-sm leading-relaxed text-neutral-600">
+            El asistente automático de AlojaU te ayuda a buscar vivienda y a usar
+            la plataforma. No guarda tus conversaciones: cada mensaje se procesa
+            y se descarta. Para responder, el texto de tu pregunta puede enviarse
+            al proveedor de inteligencia artificial configurado, junto con los
+            datos públicos de los avisos (nunca tus datos personales). No le
+            compartas documentos, claves ni datos bancarios.
+          </p>
+        </section>
         <pre className="whitespace-pre-wrap text-sm leading-relaxed text-neutral-600 font-sans">{POLITICA_COMPLETA}</pre>
       </div>
     </div>
