@@ -113,6 +113,22 @@ describe('Detalle UX', () => {
     await waitFor(() => expect(screen.getByTestId('mapa')).toBeInTheDocument())
     expect(screen.getByTestId('mapa').dataset.aviso).toBe('')
   })
+
+  it('publicidad v1: muestra banner de vigencia cuando el aviso es destacado', async () => {
+    window.scrollTo = vi.fn()
+    api.get.mockResolvedValue({ data: { ...pub, destacado: true, destacado_vence: '2026-11-15T00:00:00-05:00' } })
+    renderDetalle()
+    await waitFor(() => expect(screen.getByRole('status')).toBeInTheDocument())
+    expect(screen.getByText('Aviso destacado')).toBeInTheDocument()
+  })
+
+  it('publicidad v1: sin destacado no hay banner', async () => {
+    window.scrollTo = vi.fn()
+    api.get.mockResolvedValue({ data: { ...pub, destacado: false } })
+    renderDetalle()
+    await waitFor(() => expect(screen.getAllByText('Habitación cerca Tulcán').length).toBeGreaterThan(0))
+    expect(screen.queryByText('Aviso destacado')).not.toBeInTheDocument()
+  })
 })
 
 describe('Detalle 004 sincronización dinámica del mapa', () => {

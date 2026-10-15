@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Check, Heart, Plus } from 'lucide-react'
+import { Check, Heart, Plus, Star } from 'lucide-react'
 import { formatDistancia } from '../utils/formatters'
 import { formatTiempoCaminando } from '../utils/formatters'
 import SmartImage from './SmartImage'
@@ -70,7 +70,7 @@ export default function Card({ pub, lugarNombre = null }) {
   }
 
   return (
-    <div className="card-hover group p-0 overflow-hidden min-w-0">
+    <div className={`card-hover group p-0 overflow-hidden min-w-0${pub.destacado ? ' ring-1 ring-gold-400' : ''}`}>
       {/* Image + carousel táctil */}
       <div
         className="h-36 sm:h-40 w-full overflow-hidden bg-gradient-to-br from-navy-50 to-neutral-100 relative"
@@ -94,8 +94,14 @@ export default function Card({ pub, lugarNombre = null }) {
           </div>
         )}
         {/* Badge minimalista de confianza (tooltip con el detalle) */}
-        <div className="absolute top-3 left-3">
+        <div className="absolute top-3 left-3 flex flex-col items-start gap-1">
           <BadgeConfianza indice={indice} />
+          {/* Publicidad v1: badge Destacado (pub.destacado lo resuelve el backend). */}
+          {pub.destacado && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-gold-400 text-navy-900 shadow">
+              <Star aria-hidden="true" className="w-3 h-3" /> Destacado
+            </span>
+          )}
         </div>
         {/* Dots + contador del carousel (stopPropagation: no navegan al detalle) */}
         {totalFotos > 1 && (

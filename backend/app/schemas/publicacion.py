@@ -224,6 +224,9 @@ class PublicacionCardOut(BaseModel):
     nivel: str  # alias compat
     telefono_whatsapp: Optional[str] = None
     usuario_id: int
+    # Publicidad v1: badge "Destacado" (vigente = ACTIVO y vence futuro).
+    destacado: bool = False
+    destacado_vence: Optional[datetime] = None
     # v15.2 frescura + métricas (aditivos).
     fecha_publicacion: Optional[datetime] = None
     created_at: Optional[datetime] = None  # alias = fecha_publicacion
@@ -282,6 +285,9 @@ class PublicacionDetailOut(BaseModel):
     advertencia: Optional[str] = None
     telefono_whatsapp: Optional[str] = None
     whatsapp_url: Optional[str] = None
+    # Publicidad v1: banner vigencia en Detalle (vigente = ACTIVO y vence futuro).
+    destacado: bool = False
+    destacado_vence: Optional[datetime] = None
     # Oleada 2: coords del aviso (para mapa + deep-link; null si el dueño no las informó).
     latitud: Optional[float] = None
     longitud: Optional[float] = None

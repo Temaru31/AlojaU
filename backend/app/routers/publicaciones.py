@@ -358,7 +358,8 @@ async def list_publicaciones(
             ciudad_id_res, None,
         )
         mostrar = await repo.vistas_publicas(db)
-        items = view.cards_for_page(pubs, rep_map, user_map, dist_map, campus_id, mostrar)
+        dest_map = await repo.fetch_destacados_map(db, [p.id for p in pubs])
+        items = view.cards_for_page(pubs, rep_map, user_map, dist_map, campus_id, mostrar, dest_map)
         return build_paginated(items, total, page, size_norm)
     except HTTPException:
         raise
@@ -376,7 +377,18 @@ async def list_publicaciones(
             MOCK_PUBS, campus_id, precio_min, precio_max, tipo, servicios_ids, q,
             ciudad_id=ciudad_id, ciudad_slug=ciudad_slug,
         )
-        items = [view.mock_to_out(p, campus_id, False) for p in filtradas]
+        # Publicidad v1 (mock): vigentes primero por prioridad desc; el sort
+        # estable conserva el orden actual dentro de cada grupo.
+        from app.routers import publicidad as _pub
+        _dest_map = _pub.mock_destacados_map([p["id"] for p in filtradas])
+        filtradas.sort(key=lambda p: (
+            0, -_dest_map[p["id"]]["prioridad"]
+        ) if p["id"] in _dest_map else (1, 0))
+        items = [view.mock_to_out(
+            p, campus_id, False,
+            p["id"] in _dest_map,
+            _dest_map[p["id"]]["vence"] if p["id"] in _dest_map else None,
+        ) for p in filtradas]
         total = len(items)
         offset, size_norm = paginate_params(page, size)
         paginated_items = items[offset:offset+size_norm]
@@ -629,9 +641,13 @@ async def get_publicacion(
                     "dist_m": dist_ref,
                     "tiempo_pie_min": tiempo_pie_min(dist_ref),
                 }
+            _dest_map = await repo.fetch_destacados_map(db, [p.id])
+            _info = _dest_map.get(p.id)
             return view.build_detail(
                 p, reportes_activos, u, dist, campus_ref,
                 await repo.vistas_publicas(db) or await _is_owner_or_admin(current_user, p.usuario_id),
+                _info is not None,
+                _info["vence"] if _info else None,
             )
     except HTTPException:
         raise
@@ -665,8 +681,12 @@ async def get_publicacion(
         dist_ref = None
         if pub.get("latitud") is not None and pub.get("longitud") is not None:
             dist_ref = haversine_m(pub["latitud"], pub["longitud"], lugar["lat"], lugar["lng"])
+        from app.routers import publicidad as _pub
+        _info = _pub.mock_destacados_map([pub_id]).get(pub_id)
         out = view.mock_to_out(pub, campus_id,
-                               await _is_owner_or_admin(current_user, pub.get("usuario_id")))
+                               await _is_owner_or_admin(current_user, pub.get("usuario_id")),
+                               _info is not None,
+                               _info["vence"] if _info else None)
         out["campus_ref"] = {
             "campus_id": campus_id,
             "institucion": lugar["institucion"],
@@ -677,8 +697,12 @@ async def get_publicacion(
             "tiempo_pie_min": tiempo_pie_min(dist_ref),
         }
         return out
+    from app.routers import publicidad as _pub_mock
+    _info_plain = _pub_mock.mock_destacados_map([pub_id]).get(pub_id)
     return view.mock_to_out(pub, None,
-                            await _is_owner_or_admin(current_user, pub.get("usuario_id")))
+                            await _is_owner_or_admin(current_user, pub.get("usuario_id")),
+                            _info_plain is not None,
+                            _info_plain["vence"] if _info_plain else None)
 
 @router.patch("/{pub_id}", response_model=PublicacionCardOut, summary="UX Editar aviso del dueño (solo owner/ADMIN)")
 async def editar_publicacion(

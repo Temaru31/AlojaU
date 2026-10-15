@@ -521,6 +521,17 @@ export default function MisPublicaciones() {
                         <RefreshCw aria-hidden="true" className="w-4 h-4" /> Renovar
                       </button>
 
+                      {/* Publicidad v1: destacar aviso activo (pago manual + aprobación). */}
+                      {p.estado === 'ACTIVO' && (
+                        <Link
+                          to={`/publicitar?publicacion_id=${p.id}`}
+                          aria-label={`Destacar ${p.titulo}`}
+                          className="px-3 py-1.5 rounded-lg text-xs font-semibold border border-gold-400 text-navy-800 hover:bg-gold-400/10 transition inline-flex items-center gap-1"
+                        >
+                          Destacar
+                        </Link>
+                      )}
+
                       <button
                         onClick={() => setEditando(p)}
                         aria-label={`Editar ${p.titulo}`}

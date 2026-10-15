@@ -7,6 +7,7 @@ import MisPublicaciones from './pages/MisPublicaciones'
 // quedan eager (landing + auth críticas y livianas).
 const Detalle = lazy(() => import('./pages/Detalle'))
 const Publicar = lazy(() => import('./pages/Publicar'))
+const Publicitar = lazy(() => import('./pages/Publicitar'))
 const Comparar = lazy(() => import('./pages/Comparar'))
 const Favoritos = lazy(() => import('./pages/Favoritos'))
 const Alertas = lazy(() => import('./pages/Alertas'))
@@ -469,6 +470,7 @@ function App() {
                     <Route path="/favoritos" element={<Favoritos />} />
                     <Route path="/comparar" element={<Comparar />} />
                     <Route path="/publicar" element={<Publicar />} />
+                    <Route path="/publicitar" element={<Publicitar />} />
                     <Route path="/perfil" element={<Perfil />} />
                     <Route path="/auth/callback" element={<AuthCallback />} />
                     <Route path="/recuperar" element={<Recuperar />} />
