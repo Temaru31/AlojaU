@@ -356,6 +356,20 @@ export default function Detalle() {
         </div>
       )}
 
+      {/* Publicidad v1: banner de vigencia del destacado. */}
+      {pub.destacado && (
+        <div className="mb-4 rounded-lg border border-gold-400 bg-gold-400/10 px-4 py-3" role="status">
+          <p className="text-xs sm:text-sm font-semibold text-navy-800">
+            Aviso destacado
+          </p>
+          <p className="text-[11px] text-neutral-600 mt-0.5">
+            {pub.destacado_vence
+              ? `Visible primero en la búsqueda hasta el ${new Date(pub.destacado_vence).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'America/Bogota' })}.`
+              : 'Visible primero en la búsqueda.'}
+          </p>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
         <div className="lg:col-span-2 space-y-6">
           {!isActivo && pub.estado === 'PAUSADO_POR_REPORTE' && (

@@ -103,6 +103,19 @@ describe('Card - HU-001/003 y overflow', ()=>{
   })
 })
 
+describe('Card - publicidad v1 (badge Destacado)', ()=>{
+  it('muestra badge Destacado y borde cuando pub.destacado es true', ()=>{
+    const { container } = render(<Card pub={{...basePub, destacado: true}} />)
+    expect(screen.getByText('Destacado')).toBeInTheDocument()
+    expect(container.firstChild.className).toContain('ring-gold-400')
+  })
+
+  it('no muestra badge Destacado sin destacado', ()=>{
+    render(<Card pub={{...basePub}} />)
+    expect(screen.queryByText('Destacado')).not.toBeInTheDocument()
+  })
+})
+
 describe('Card - carousel táctil (v4)', ()=>{
   it('muestra contador 1/4 y dots con labels', ()=>{
     render(<Card pub={basePub} />)
