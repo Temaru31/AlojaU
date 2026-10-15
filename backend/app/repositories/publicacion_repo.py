@@ -196,6 +196,12 @@ async def fetch_page(db: AsyncSession, conds, campus_id: Optional[int], limit: i
         .options(selectinload(Publicacion.imagenes), selectinload(Publicacion.servicios))
         .where(*conds)
     )
+    # Publicidad v1: vigentes primero (prioridad desc, NULLS LAST = el resto
+    # conserva el orden actual cuando no hay destacados). El LEFT JOIN no
+    # filtra ni duplica filas (1 vigente por pub por unique parcial).
+    _dest = destacados_vigentes_subq()
+    stmt = stmt.outerjoin(_dest, _dest.c.publicacion_id == Publicacion.id)
+    _destacado_primero = _dest.c.prioridad.desc().nulls_last()
     tokens = tokenize_query(q) if q else []
     fts_q = clean_query_for_fts(tokens) if tokens else None
     if campus_id:
@@ -205,6 +211,7 @@ async def fetch_page(db: AsyncSession, conds, campus_id: Optional[int], limit: i
         )
         if q_mode == "fts" and fts_q:
             stmt = stmt.order_by(
+                _destacado_primero,
                 ts_rank_order(Publicacion, fts_q),
                 tokens_relevance(Publicacion, tokens).desc() if tokens else Publicacion.id.asc(),
                 Publicacion.fecha_renovacion.desc(),
@@ -212,14 +219,16 @@ async def fetch_page(db: AsyncSession, conds, campus_id: Optional[int], limit: i
             )
         elif tokens:
             stmt = stmt.order_by(
+                _destacado_primero,
                 tokens_relevance(Publicacion, tokens).desc(),
                 Publicacion.fecha_renovacion.desc(),
                 Publicacion.id.asc(),
             )
         else:
-            stmt = stmt.order_by(PublicacionCampus.distancia_geodesica_m.asc().nullslast(), Publicacion.id.asc())
+            stmt = stmt.order_by(_destacado_primero, PublicacionCampus.distancia_geodesica_m.asc().nullslast(), Publicacion.id.asc())
     elif q_mode == "fts" and fts_q:
         stmt = stmt.order_by(
+            _destacado_primero,
             ts_rank_order(Publicacion, fts_q),
             tokens_relevance(Publicacion, tokens).desc() if tokens else Publicacion.id.asc(),
             Publicacion.fecha_renovacion.desc(),
@@ -227,14 +236,60 @@ async def fetch_page(db: AsyncSession, conds, campus_id: Optional[int], limit: i
         )
     elif tokens:
         stmt = stmt.order_by(
+            _destacado_primero,
             tokens_relevance(Publicacion, tokens).desc(),
             Publicacion.fecha_renovacion.desc(),
             Publicacion.id.asc(),
         )
     else:
-        stmt = stmt.order_by(Publicacion.id.asc())
+        stmt = stmt.order_by(_destacado_primero, Publicacion.id.asc())
     stmt = stmt.limit(limit).offset(offset)
     return (await db.execute(stmt)).scalars().unique().all()
+
+
+def destacados_vigentes_subq():
+    """Subquery de destacados vigentes (ACTIVO y vence futuro) + prioridad.
+
+    Uso: fetch_page (LEFT JOIN + orden) y fetch_destacados_map (flags).
+    Vigente = estado ACTIVO AND vence > now() (spec publicidad §4).
+    """
+    from app.models import PlanPublicidad, PublicacionDestacado
+
+    return (
+        select(
+            PublicacionDestacado.publicacion_id.label("publicacion_id"),
+            PlanPublicidad.prioridad.label("prioridad"),
+            PublicacionDestacado.vence.label("vence"),
+        )
+        .join(PlanPublicidad, PlanPublicidad.id == PublicacionDestacado.plan_id)
+        .where(
+            PublicacionDestacado.estado == "ACTIVO",
+            PublicacionDestacado.vence > func.now(),
+        )
+        .subquery()
+    )
+
+
+async def fetch_destacados_map(db: AsyncSession, ids) -> dict:
+    """{publicacion_id: {"vence", "prioridad"}} vigentes para los ids dados.
+
+    1 query fija (JOIN a planes por prioridad). Vacío si no hay vigentes.
+    Uso: routers/publicaciones.py lista/detalle para el flag destacado.
+    """
+    ids = list({i for i in (ids or []) if i is not None})
+    if not ids:
+        return {}
+    _dest = destacados_vigentes_subq()
+    rows = (await db.execute(
+        select(_dest.c.publicacion_id, _dest.c.vence, _dest.c.prioridad)
+        .where(_dest.c.publicacion_id.in_(ids))
+    )).all()
+    out = {}
+    for pub_id, vence, prioridad in rows:
+        prev = out.get(pub_id)
+        if prev is None or (prioridad or 0) > prev["prioridad"]:
+            out[pub_id] = {"vence": vence, "prioridad": int(prioridad or 0)}
+    return out
 
 
 async def fetch_page_aggregates(db: AsyncSession, pubs, campus_id: Optional[int]):

@@ -36,7 +36,8 @@ def mock_foto_ids(pub: dict) -> list[int]:
 
 
 def mock_to_out(pub: dict, campus_id: Optional[int] = None,
-                mostrar_vistas: bool = True) -> dict:
+                mostrar_vistas: bool = True, destacado: bool = False,
+                destacado_vence=None) -> dict:
     """Convierte dict mock a payload detalle (Haversine + Trust + alias compat).
 
     mostrar_vistas=False en lista/similares públicas (el contador es solo del
@@ -107,6 +108,9 @@ def mock_to_out(pub: dict, campus_id: Optional[int] = None,
         # Oleada 2: coords para MapaZona modo aviso + deep-link (eran internas, ahora visibles).
         "latitud": pub.get("latitud"),
         "longitud": pub.get("longitud"),
+        # Publicidad v1: badge "Destacado" (el router resuelve vigencia).
+        "destacado": bool(destacado),
+        "destacado_vence": destacado_vence,
     }
 
 
@@ -166,7 +170,8 @@ def _ordenadas(imagenes) -> list:
 
 
 def build_card(p, dist, trust: dict, zona_nombre, tel: Optional[str],
-               mostrar_vistas: bool = True) -> dict:
+               mostrar_vistas: bool = True, destacado: bool = False,
+               destacado_vence=None) -> dict:
     """Item GET /api/publicaciones (canónicos + alias compat).
 
     fotos[0] es siempre la portada (orden=1): ver _ordenadas/BUG#1.
@@ -188,6 +193,9 @@ def build_card(p, dist, trust: dict, zona_nombre, tel: Optional[str],
         "nivel_confianza": trust["nivel"], "nivel": trust["nivel"],
         "telefono_whatsapp": tel if tel else None,
         "usuario_id": p.usuario_id,
+        # Publicidad v1: badge "Destacado" (el router resuelve vigencia).
+        "destacado": bool(destacado),
+        "destacado_vence": destacado_vence,
         # v15.2 frescura + métricas (aditivos, sin romper contratos).
         "fecha_publicacion": p.fecha_publicacion,
         "created_at": p.fecha_publicacion,
@@ -197,7 +205,8 @@ def build_card(p, dist, trust: dict, zona_nombre, tel: Optional[str],
 
 
 def build_detail(p, reportes_activos: int, u, dist, campus_ref: Optional[dict] = None,
-                 mostrar_vistas: bool = True) -> dict:
+                 mostrar_vistas: bool = True, destacado: bool = False,
+                 destacado_vence=None) -> dict:
     """Detalle GET /api/publicaciones/{id} (canónicos + alias compat).
 
     BUG#1: fotos e imagenes comparten el mismo orden (portada primero).
@@ -224,6 +233,9 @@ def build_detail(p, reportes_activos: int, u, dist, campus_ref: Optional[dict] =
         "nivel": trust["nivel"], "nivel_confianza": trust["nivel"],
         "advertencia": trust["advertencia"], "telefono_whatsapp": tel,
         "whatsapp_url": whatsapp_link(p.titulo, p.id, tel),
+        # Publicidad v1: banner vigencia (el router resuelve vigencia).
+        "destacado": bool(destacado),
+        "destacado_vence": destacado_vence,
         # Oleada 2: coords para MapaZona modo aviso + deep-link (eran internas, ahora visibles).
         "latitud": float(p.latitud) if p.latitud is not None else None,
         "longitud": float(p.longitud) if p.longitud is not None else None,
@@ -243,7 +255,7 @@ def build_detail(p, reportes_activos: int, u, dist, campus_ref: Optional[dict] =
 
 
 def cards_for_page(pubs, reportes_map: dict, users_map: dict, dist_map: dict, campus_id=None,
-                   mostrar_vistas: bool = True) -> list:
+                   mostrar_vistas: bool = True, destacados_map: Optional[dict] = None) -> list:
     """Items GET /api/publicaciones desde agregados en memoria (sin queries)."""
     out = []
     for p in pubs:
@@ -252,8 +264,10 @@ def cards_for_page(pubs, reportes_map: dict, users_map: dict, dist_map: dict, ca
         trust = trust_for_row(p, reportes_map.get(p.id, 0), tel_ver)
         zona_nombre = _zona_display(p)
         tel = u.telefono_whatsapp if tel_ver and u else None
+        info = (destacados_map or {}).get(p.id)
         out.append(build_card(p, dist_map.get(p.id) if campus_id else None, trust, zona_nombre, tel,
-                              mostrar_vistas))
+                              mostrar_vistas, info is not None,
+                              info["vence"] if info else None))
     return out
 
 

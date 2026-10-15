@@ -158,6 +158,36 @@ def _mock_vigente(pub_id: int) -> bool:
     )
 
 
+def mock_destacados_map(ids=None) -> dict:
+    """{publicacion_id: {"vence", "prioridad"}} vigentes en el store mock.
+
+    Solo dev sin PG. Vigente = ACTIVO y vence futuro (PENDIENTE no muestra
+    badge, igual que en DB). Misma forma que repo.fetch_destacados_map.
+    """
+    ahora = datetime.now(timezone.utc)
+    prio = {p["id"]: p.get("prioridad", 0) for p in MOCK_PLANES}
+    wanted = set(ids) if ids is not None else None
+    out: dict = {}
+    for d in MOCK_DESTACADOS:
+        if d.get("estado") != "ACTIVO":
+            continue
+        vence = d.get("vence")
+        if vence is None:
+            continue
+        if getattr(vence, "tzinfo", None) is None:
+            vence = vence.replace(tzinfo=timezone.utc)
+        if vence <= ahora:
+            continue
+        pid = d["publicacion_id"]
+        if wanted is not None and pid not in wanted:
+            continue
+        cur = {"vence": d["vence"], "prioridad": int(prio.get(d["plan_id"], 0) or 0)}
+        prev = out.get(pid)
+        if prev is None or cur["prioridad"] > prev["prioridad"]:
+            out[pid] = cur
+    return out
+
+
 def _destacado_out(d, plan_nombre: str | None = None) -> dict:
     get = (lambda k: d.get(k)) if isinstance(d, dict) else (lambda k: getattr(d, k))
     return {
