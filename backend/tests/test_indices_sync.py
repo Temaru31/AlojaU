@@ -58,6 +58,12 @@ POST_019 = ["idx_bg_matching", "idx_notif_bandeja", "idx_notif_noleidas"]
 MIG_019 = REPO / "alembic" / "versions" / "019_notificaciones_y_busquedas.py"
 SQL_019 = REPO / "db" / "migrations" / "019_notificaciones_y_busquedas.sql"
 
+# Publicidad v1: índices nacidos en la 022.
+POST_022 = ["idx_destacados_pub_estado", "idx_destacados_estado_vence",
+            "uq_destacado_pub_activo"]
+MIG_022 = REPO / "alembic" / "versions" / "022_publicidad_destacados.py"
+SQL_022 = REPO / "db" / "migrations" / "022_publicidad_destacados.sql"
+
 
 def _model_index_names() -> list[str]:
     return re.findall(r'Index\("([^"]+)"', MODELS.read_text(encoding="utf-8"))
@@ -81,7 +87,7 @@ def test_migracion_002_cubre_drift_y_fk_nuevas():
         # ...y salvo los nacidos en migraciones posteriores (tienen su propia cobertura).
         if n in POST_002 or n in POST_007 or n in POST_008 or n in POST_011 \
                 or n in POST_015 or n in POST_016 or n in POST_017 or n in POST_018 \
-                or n in POST_019:
+                or n in POST_019 or n in POST_022:
             continue
         assert n in mig, f"{n} falta en 002_alineacion_indices.py"
     # ...y las FK nuevas en ambos lados.
@@ -218,3 +224,22 @@ def test_migracion_019_cubre_indices_notificaciones():
         assert pieza in schema, f"{pieza} falta en schema.sql"
     modelos = MODELS.read_text(encoding="utf-8")
     assert "class BusquedaGuardada" in modelos and "class Notificacion" in modelos
+
+
+def test_migracion_022_cubre_indices_publicidad():
+    """Publicidad v1: idx_destacados_* + uq_destacado_pub_activo viven en la 022."""
+    mig = MIG_022.read_text(encoding="utf-8")
+    sql = SQL_022.read_text(encoding="utf-8")
+    schema = SCHEMA.read_text(encoding="utf-8")
+    assert "down_revision" in mig and "021_chatbot_readonly" in mig
+    for n in POST_022:
+        assert n in mig, f"{n} falta en 022_publicidad_destacados.py"
+        assert n in sql, f"{n} falta en 022_publicidad_destacados.sql"
+        assert n in schema, f"{n} falta en schema.sql"
+    for pieza in ("planes_publicidad", "publicacion_destacados", "plan_id",
+                  "pago_ref", "PENDIENTE", "VENCIDO"):
+        assert pieza in mig, f"{pieza} falta en 022_publicidad_destacados.py"
+        assert pieza in sql, f"{pieza} falta en 022_publicidad_destacados.sql"
+        assert pieza in schema, f"{pieza} falta en schema.sql"
+    modelos = MODELS.read_text(encoding="utf-8")
+    assert "class PlanPublicidad" in modelos and "class PublicacionDestacado" in modelos
