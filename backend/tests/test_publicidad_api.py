@@ -14,7 +14,7 @@ que cada test la vacía antes (si hay PG) + limpia el store mock.
 """
 import asyncio
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -307,3 +307,91 @@ def test_admin_pendientes_aprueba_rechaza():
     por_id = {x["id"]: x["estado"] for x in rm}
     assert por_id.get(d1["id"]) == "RECHAZADO"
     assert por_id.get(d2["id"]) == "ACTIVO"
+
+
+def _forzar_vence_pasado(destacado_id: int):
+    """Pone vence en el pasado (PG o store mock)."""
+    async def _run():
+        import asyncpg
+        conn = await asyncpg.connect(_dsn())
+        try:
+            await conn.execute(
+                "UPDATE publicacion_destacados SET inicia = now() - interval '2 days', "
+                "vence = now() - interval '1 hour' WHERE id = $1;",
+                destacado_id,
+            )
+        finally:
+            await conn.close()
+    try:
+        asyncio.run(_run())
+    except Exception:
+        from app.routers import publicidad as _pub
+        d = next(x for x in _pub.MOCK_DESTACADOS if x["id"] == destacado_id)
+        pasado = datetime.now(timezone.utc) - timedelta(hours=1)
+        d["inicia"] = pasado - timedelta(days=1)
+        d["vence"] = pasado
+
+
+def _pub_estado_set(pub_id: int, estado: str) -> str:
+    """Fija estado de la publicación (PG o MOCK_PUBS). Retorna el previo."""
+    async def _run():
+        import asyncpg
+        conn = await asyncpg.connect(_dsn())
+        try:
+            prev = await conn.fetchval("SELECT estado FROM publicaciones WHERE id = $1;", pub_id)
+            await conn.execute("UPDATE publicaciones SET estado = $1 WHERE id = $2;", estado, pub_id)
+            return prev
+        finally:
+            await conn.close()
+    try:
+        return asyncio.run(_run())
+    except Exception:
+        from app.routers.publicaciones import MOCK_PUBS
+        pub = next(p for p in MOCK_PUBS if p["id"] == pub_id)
+        prev = pub["estado"]
+        pub["estado"] = estado
+        return prev
+
+
+def test_admin_aprueba_vencido_409():
+    """I1: aprobar PENDIENTE con vence pasado -> 409, no activa, sin APPROVED."""
+    plan = _plan_7d()
+    pub_id = _pub_activo_propia()
+    r = client.post(
+        "/api/publicidad/destacar",
+        json={"publicacion_id": pub_id, "plan_id": plan["id"]},
+        headers={**ARR, "Idempotency-Key": "test-aprueba-vencido-01"},
+    )
+    assert r.status_code == 201, r.text
+    d = r.json()
+    _forzar_vence_pasado(d["id"])
+
+    ra = client.patch(f"/api/admin/publicidad/{d['id']}", json={"accion": "aprobar"}, headers=ADMIN)
+    assert ra.status_code == 409, ra.text
+
+    rm = client.get("/api/publicidad/mias", headers=ARR).json()
+    rm = rm["items"] if isinstance(rm, dict) else rm
+    assert {x["id"]: x["estado"] for x in rm}.get(d["id"]) != "ACTIVO"
+
+
+def test_admin_aprueba_pub_no_activo_409():
+    """I1: aprobar con pub ya no-ACTIVO (pausada) -> 409, no activa."""
+    plan = _plan_7d()
+    pub_id = _pub_activo_propia()
+    r = client.post(
+        "/api/publicidad/destacar",
+        json={"publicacion_id": pub_id, "plan_id": plan["id"]},
+        headers={**ARR, "Idempotency-Key": "test-aprueba-noactivo-01"},
+    )
+    assert r.status_code == 201, r.text
+    d = r.json()
+    prev = _pub_estado_set(pub_id, "PAUSADO")
+    try:
+        ra = client.patch(f"/api/admin/publicidad/{d['id']}", json={"accion": "aprobar"}, headers=ADMIN)
+        assert ra.status_code == 409, ra.text
+    finally:
+        _pub_estado_set(pub_id, prev)
+
+    rm = client.get("/api/publicidad/mias", headers=ARR).json()
+    rm = rm["items"] if isinstance(rm, dict) else rm
+    assert {x["id"]: x["estado"] for x in rm}.get(d["id"]) != "ACTIVO"

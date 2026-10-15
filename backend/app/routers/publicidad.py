@@ -446,13 +446,22 @@ async def decidir(
     colisiona con otro ACTIVO vigente (unique parcial).
     """
     try:
-        from app.models import PlanPublicidad, PublicacionDestacado, PublicacionesAudit
+        from app.models import PlanPublicidad, Publicacion, PublicacionDestacado, PublicacionesAudit
 
         d = await db.get(PublicacionDestacado, destacado_id)
         if not d:
             raise HTTPException(status_code=404, detail="Destacado no encontrado")
         if d.estado != "PENDIENTE":
             raise HTTPException(status_code=409, detail=f"El destacado ya fue procesado ({d.estado})")
+        if payload.accion == "aprobar":
+            vence = d.vence
+            if getattr(vence, "tzinfo", None) is None:
+                vence = vence.replace(tzinfo=timezone.utc)
+            if vence <= datetime.now(timezone.utc):
+                raise HTTPException(status_code=409, detail="El destacado ya venció")
+            pub = await db.get(Publicacion, d.publicacion_id)
+            if not pub or pub.estado != "ACTIVO":
+                raise HTTPException(status_code=409, detail="La publicación ya no está ACTIVO")
         if payload.accion == "aprobar":
             d.estado, evento = "ACTIVO", "APPROVED"
         else:
@@ -494,5 +503,16 @@ async def decidir(
         raise HTTPException(status_code=404, detail="Destacado no encontrado")
     if d["estado"] != "PENDIENTE":
         raise HTTPException(status_code=409, detail=f"El destacado ya fue procesado ({d['estado']})")
+    if payload.accion == "aprobar":
+        from app.routers.publicaciones import MOCK_PUBS
+
+        vence = d.get("vence")
+        if getattr(vence, "tzinfo", None) is None:
+            vence = vence.replace(tzinfo=timezone.utc)
+        if vence <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=409, detail="El destacado ya venció")
+        pub = next((p for p in MOCK_PUBS if p["id"] == d["publicacion_id"]), None)
+        if not pub or pub.get("estado") != "ACTIVO":
+            raise HTTPException(status_code=409, detail="La publicación ya no está ACTIVO")
     d["estado"] = "ACTIVO" if payload.accion == "aprobar" else "RECHAZADO"
     return dict(d)
