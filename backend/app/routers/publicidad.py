@@ -397,6 +397,42 @@ async def pendientes(
             if d.get("estado") == "PENDIENTE"]
 
 
+@router_admin.post("/vencer", summary="Admin: job vencimiento de destacados")
+async def vencer(
+    admin: dict = Depends(require_admin),
+    db: AsyncSession = Depends(get_session),
+):
+    """Marca VENCIDO los destacados con vence pasado (PENDIENTE/ACTIVO).
+
+    Job diario (cron o manual): UPDATE masivo, sin borrar historial,
+    idempotente (sin vencidos -> {"vencidos": 0}). Solo ADMIN (401/403).
+    Patrón POST /evaluar de admin_automation.
+    """
+    try:
+        from app.services import publicidad as _svc
+
+        n = await _svc.vencer_destacados(db)
+        return {"vencidos": n}
+    except Exception as e:
+        logger.error(f"[DB fallback] vencer destacados falló: {exc_resumen(e)}", exc_info=True)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        if not _mock_enabled():
+            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    ahora = datetime.now(timezone.utc)
+    n = 0
+    for d in MOCK_DESTACADOS:
+        vence = d.get("vence")
+        if getattr(vence, "tzinfo", None) is None:
+            vence = vence.replace(tzinfo=timezone.utc)
+        if d.get("estado") in ("PENDIENTE", "ACTIVO") and vence <= ahora:
+            d["estado"] = "VENCIDO"
+            n += 1
+    return {"vencidos": n}
+
+
 @router_admin.patch("/{destacado_id}", response_model=DestacadoOut, summary="Admin: aprobar o rechazar destacado")
 async def decidir(
     destacado_id: int = Path(..., ge=1, le=1000000),
