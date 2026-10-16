@@ -28,8 +28,8 @@ _ETIQUETAS = {
     "manana_6am_11am": "Mañana (6AM-11AM)",
     "tarde_12pm_6pm": "Tarde (12PM-6PM)",
     "noche_7pm_9pm": "Noche (7PM-9PM)",
-    "organizad@": "Organizad@",
-    "desorganizad@": "Desorganizad@",
+    "organizado": "Organizad@",
+    "desorganizado": "Desorganizad@",
     "inmediatamente": "Inmediatamente",
     "a_lo_largo_del_dia": "A lo largo del día",
     "otro_dia_cuando_se_necesite": "Otro día cuando lo vuelvas a necesitar",
@@ -45,8 +45,8 @@ _ETIQUETAS = {
     "buena_vibra": "Buena vibra",
     "impaciente": "Impaciente (Al menos un poco)",
     "bajo_manejo_frustracion": "Bajo manejo de frustración",
-    "malhumorad@": "Malhumorad@ (Al menos algunas veces)",
-    "terc@_orgullos@": "Terc@/Orgullos@",
+    "malhumorado": "Malhumorad@ (Al menos algunas veces)",
+    "terco_orgulloso": "Terc@/Orgullos@",
 }
 
 _ETIQUETAS_SUENO = {

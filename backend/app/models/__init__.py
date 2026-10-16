@@ -98,10 +98,10 @@ class HorarioAseo(str, enum.Enum):
 
 
 class EstiloCocina(str, enum.Enum):
-    """Punto 1: cómo eres en la cocina."""
+    """Punto 1: cómo eres en la cocina (el @ solo vive en etiquetas UI)."""
     SIN_DATO = "sin_dato"
-    ORGANIZADO = "organizad@"
-    DESORGANIZADO = "desorganizad@"
+    ORGANIZADO = "organizado"
+    DESORGANIZADO = "desorganizado"
 
 
 class TiempoLavarLoza(str, enum.Enum):
@@ -142,8 +142,8 @@ class RasgoNegativo(str, enum.Enum):
     SIN_DATO = "sin_dato"
     IMPACIENTE = "impaciente"
     BAJO_MANEJO_FRUSTRACION = "bajo_manejo_frustracion"
-    MALHUMORADO = "malhumorad@"
-    TERCO_ORGULLOSO = "terc@_orgullos@"
+    MALHUMORADO = "malhumorado"
+    TERCO_ORGULLOSO = "terco_orgulloso"
 
 
 class TipoHorarioSueno(str, enum.Enum):
@@ -153,6 +153,16 @@ class TipoHorarioSueno(str, enum.Enum):
     VARIABLE = "variable"
 
 
+# Valores legacy con "@" (v1 del PDF): se aceptan al LEER (compatibilidad
+# con datos ya guardados), pero ya no se emiten (ver from_dict/to_dict).
+_ALIAS_ENUM_LEGACY = {
+    "organizad@": "organizado",
+    "desorganizad@": "desorganizado",
+    "malhumorad@": "malhumorado",
+    "terc@_orgullos@": "terco_orgulloso",
+}
+
+
 def _coerce_enum(enum_cls, valor, por_defecto):
     """Convierte str/Enum a miembro del enum; desconocido -> por_defecto."""
     if isinstance(valor, enum_cls):
@@ -160,7 +170,9 @@ def _coerce_enum(enum_cls, valor, por_defecto):
     if valor is None:
         return por_defecto
     try:
-        return enum_cls(str(valor).strip().lower())
+        texto = str(valor).strip().lower()
+        texto = _ALIAS_ENUM_LEGACY.get(texto, texto)
+        return enum_cls(texto)
     except (ValueError, AttributeError):
         return por_defecto
 
@@ -201,6 +213,19 @@ def _hora_a_str(valor: time | None) -> str | None:
     return valor.strftime("%H:%M") if isinstance(valor, time) else None
 
 
+def _coerce_bool3(valor) -> bool | None:
+    """Tri-estado Sí/No/sin responder: True/False estrictos, resto -> None.
+
+    Distingue "No" (False) de "no respondió" (None) para no distorsionar
+    el matching (un NULL nunca suma ni resta, la dimensión se renormaliza).
+    """
+    if valor is True:
+        return True
+    if valor is False:
+        return False
+    return None
+
+
 # Claves JSONB (namespace roomie.*) compatibles con validar_preferencias.
 CLAVES_PREFERENCIAS = {
     "momento_aseo_semana": "roomie.aseo_momento_semana",
@@ -218,6 +243,8 @@ CLAVES_PREFERENCIAS = {
     "tiene_pareja_invitar": "roomie.invitados_pareja",
     "tiene_mascotas": "roomie.mascotas",
     "planea_invitados": "roomie.invitados_plan",
+    "acepta_mascotas": "roomie.acepta_mascotas",
+    "acepta_invitados": "roomie.acepta_invitados",
 }
 
 
@@ -225,8 +252,8 @@ CLAVES_PREFERENCIAS = {
 class Preferencias:
     """Preferencias de convivencia del usuario (puntos 1-5 del PDF).
 
-    Constructor recibe los 15 atributos (todos con defecto: enums en
-    SIN_DATO, booleanos en False, listas vacías, horas en None).
+    Constructor recibe los 17 atributos (todos con defecto: enums en
+    SIN_DATO, tri-estados en None = no respondió, listas vacías, horas None).
     Se persiste vía `to_dict()`/`from_dict()` en `Usuario.preferencias`.
     """
 
@@ -235,10 +262,10 @@ class Preferencias:
     horario_aseo: HorarioAseo = HorarioAseo.SIN_DATO
     estilo_cocina: EstiloCocina = EstiloCocina.SIN_DATO
     tiempo_lavar_loza: TiempoLavarLoza = TiempoLavarLoza.SIN_DATO
-    # Punto 2: solvencia (la puntualidad es booleano, no enum).
+    # Punto 2: solvencia (la puntualidad es tri-estado, no enum).
     fuente_ingresos: FuenteIngresos = FuenteIngresos.SIN_DATO
     estabilidad_ingresos: EstabilidadIngresos = EstabilidadIngresos.SIN_DATO
-    puntual_pagos: bool = False
+    puntual_pagos: bool | None = None
     # Punto 3: rasgos (listas).
     rasgos_positivos: list = field(default_factory=list)
     rasgos_negativos: list = field(default_factory=list)
@@ -246,10 +273,12 @@ class Preferencias:
     hora_dormir: time | None = None
     hora_despertar: time | None = None
     tipo_horario_sueno: TipoHorarioSueno = TipoHorarioSueno.SIN_DATO
-    # Punto 5: invitados y mascotas.
-    tiene_pareja_invitar: bool = False
-    tiene_mascotas: bool = False
-    planea_invitados: bool = False
+    # Punto 5: invitados y mascotas (tri-estado) + aceptación (filtros duros).
+    tiene_pareja_invitar: bool | None = None
+    tiene_mascotas: bool | None = None
+    planea_invitados: bool | None = None
+    acepta_mascotas: bool | None = None
+    acepta_invitados: bool | None = None
 
     def __post_init__(self):
         self.momento_aseo_semana = _coerce_enum(
@@ -268,14 +297,17 @@ class Preferencias:
         self.rasgos_negativos = _coerce_lista_enum(RasgoNegativo, self.rasgos_negativos)
         self.hora_dormir = _coerce_hora(self.hora_dormir)
         self.hora_despertar = _coerce_hora(self.hora_despertar)
-        self.puntual_pagos = self.puntual_pagos is True
-        self.tiene_pareja_invitar = self.tiene_pareja_invitar is True
-        self.tiene_mascotas = self.tiene_mascotas is True
-        self.planea_invitados = self.planea_invitados is True
+        self.puntual_pagos = _coerce_bool3(self.puntual_pagos)
+        self.tiene_pareja_invitar = _coerce_bool3(self.tiene_pareja_invitar)
+        self.tiene_mascotas = _coerce_bool3(self.tiene_mascotas)
+        self.planea_invitados = _coerce_bool3(self.planea_invitados)
+        self.acepta_mascotas = _coerce_bool3(self.acepta_mascotas)
+        self.acepta_invitados = _coerce_bool3(self.acepta_invitados)
 
     def to_dict(self, solo_informados: bool = False) -> dict:
-        """Serializa a JSONB (claves roomie.*). Con solo_informados=True
-        omite SIN_DATO/None/vacíos/False (útil para PATCH parcial)."""
+        """Serializa a JSONB (claves roomie.*). None = no respondió y se
+        persiste como null. Con solo_informados=True omite SIN_DATO/None/
+        vacíos/False (útil para PATCH parcial)."""
         d = {
             CLAVES_PREFERENCIAS["momento_aseo_semana"]: self.momento_aseo_semana.value,
             CLAVES_PREFERENCIAS["horario_aseo"]: self.horario_aseo.value,
@@ -283,20 +315,37 @@ class Preferencias:
             CLAVES_PREFERENCIAS["tiempo_lavar_loza"]: self.tiempo_lavar_loza.value,
             CLAVES_PREFERENCIAS["fuente_ingresos"]: self.fuente_ingresos.value,
             CLAVES_PREFERENCIAS["estabilidad_ingresos"]: self.estabilidad_ingresos.value,
-            CLAVES_PREFERENCIAS["puntual_pagos"]: bool(self.puntual_pagos),
+            CLAVES_PREFERENCIAS["puntual_pagos"]: self.puntual_pagos,
             CLAVES_PREFERENCIAS["rasgos_positivos"]: [r.value for r in self.rasgos_positivos],
             CLAVES_PREFERENCIAS["rasgos_negativos"]: [r.value for r in self.rasgos_negativos],
             CLAVES_PREFERENCIAS["hora_dormir"]: _hora_a_str(self.hora_dormir),
             CLAVES_PREFERENCIAS["hora_despertar"]: _hora_a_str(self.hora_despertar),
             CLAVES_PREFERENCIAS["tipo_horario_sueno"]: self.tipo_horario_sueno.value,
-            CLAVES_PREFERENCIAS["tiene_pareja_invitar"]: bool(self.tiene_pareja_invitar),
-            CLAVES_PREFERENCIAS["tiene_mascotas"]: bool(self.tiene_mascotas),
-            CLAVES_PREFERENCIAS["planea_invitados"]: bool(self.planea_invitados),
+            CLAVES_PREFERENCIAS["tiene_pareja_invitar"]: self.tiene_pareja_invitar,
+            CLAVES_PREFERENCIAS["tiene_mascotas"]: self.tiene_mascotas,
+            CLAVES_PREFERENCIAS["planea_invitados"]: self.planea_invitados,
+            CLAVES_PREFERENCIAS["acepta_mascotas"]: self.acepta_mascotas,
+            CLAVES_PREFERENCIAS["acepta_invitados"]: self.acepta_invitados,
         }
         if not solo_informados:
             return d
         return {k: v for k, v in d.items()
                 if v not in (None, False, [], "sin_dato")}
+
+    def tiene_datos(self) -> bool:
+        """True si al menos un campo fue respondido (un False explícito
+        cuenta como dato; solo el defecto total da False)."""
+        if any(e != e.__class__.SIN_DATO for e in (
+                self.momento_aseo_semana, self.horario_aseo, self.estilo_cocina,
+                self.tiempo_lavar_loza, self.fuente_ingresos,
+                self.estabilidad_ingresos, self.tipo_horario_sueno)):
+            return True
+        if any(v is not None for v in (
+                self.puntual_pagos, self.tiene_pareja_invitar, self.tiene_mascotas,
+                self.planea_invitados, self.acepta_mascotas, self.acepta_invitados)):
+            return True
+        return bool(self.rasgos_positivos or self.rasgos_negativos
+                    or self.hora_dormir or self.hora_despertar)
 
     @classmethod
     def from_dict(cls, data: dict | None) -> "Preferencias":
@@ -322,7 +371,7 @@ class Preferencias:
             estabilidad_ingresos=_coerce_enum(
                 EstabilidadIngresos, g(CLAVES_PREFERENCIAS["estabilidad_ingresos"]),
                 EstabilidadIngresos.SIN_DATO),
-            puntual_pagos=g(CLAVES_PREFERENCIAS["puntual_pagos"]) is True,
+            puntual_pagos=_coerce_bool3(g(CLAVES_PREFERENCIAS["puntual_pagos"])),
             rasgos_positivos=_coerce_lista_enum(
                 RasgoPositivo, g(CLAVES_PREFERENCIAS["rasgos_positivos"])),
             rasgos_negativos=_coerce_lista_enum(
@@ -332,9 +381,11 @@ class Preferencias:
             tipo_horario_sueno=_coerce_enum(
                 TipoHorarioSueno, g(CLAVES_PREFERENCIAS["tipo_horario_sueno"]),
                 TipoHorarioSueno.SIN_DATO),
-            tiene_pareja_invitar=g(CLAVES_PREFERENCIAS["tiene_pareja_invitar"]) is True,
-            tiene_mascotas=g(CLAVES_PREFERENCIAS["tiene_mascotas"]) is True,
-            planea_invitados=g(CLAVES_PREFERENCIAS["planea_invitados"]) is True,
+            tiene_pareja_invitar=_coerce_bool3(g(CLAVES_PREFERENCIAS["tiene_pareja_invitar"])),
+            tiene_mascotas=_coerce_bool3(g(CLAVES_PREFERENCIAS["tiene_mascotas"])),
+            planea_invitados=_coerce_bool3(g(CLAVES_PREFERENCIAS["planea_invitados"])),
+            acepta_mascotas=_coerce_bool3(g(CLAVES_PREFERENCIAS["acepta_mascotas"])),
+            acepta_invitados=_coerce_bool3(g(CLAVES_PREFERENCIAS["acepta_invitados"])),
         )
 
 
