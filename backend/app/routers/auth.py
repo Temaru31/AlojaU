@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from ..core.security import hash_password, verify_password, create_token, get_current_user
 from ..core.config import settings
@@ -157,6 +158,16 @@ def validar_preferencias(prefs) -> dict:
                 status_code=422,
                 detail=f"Preferencia no permitida: '{k}' (usa filtros.* roomie.* notis.*)",
             )
+        # Listas planas (punto 3 del PDF: rasgos positivos/negativos).
+        if isinstance(v, (list, tuple)):
+            if len(v) > 20:
+                raise HTTPException(status_code=422, detail=f"Lista muy larga en '{k}' (máx 20)")
+            for item in v:
+                if not isinstance(item, (bool, int, float, str, type(None))):
+                    raise HTTPException(status_code=422, detail=f"Valor no permitido en '{k}'")
+                if isinstance(item, str) and len(item) > 200:
+                    raise HTTPException(status_code=422, detail=f"Valor muy largo en '{k}' (máx 200)")
+            continue
         if not isinstance(v, (bool, int, float, str, type(None))):
             raise HTTPException(status_code=422, detail=f"Valor no permitido en '{k}'")
         if isinstance(v, str) and len(v) > 200:
@@ -1257,7 +1268,6 @@ async def update_perfil(
                     actual = {}
                 actual.update(cambios["preferencias"])
                 u.preferencias = dict(actual)
-                from sqlalchemy.orm.attributes import flag_modified
                 flag_modified(u, "preferencias")
             await db.commit()
             await db.refresh(u)

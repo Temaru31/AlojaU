@@ -15,6 +15,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from app.core.config import settings
+from app.routers import publicaciones, campus, auth, uploads, reportes, admin, ciudades, admin_automation, zonas, housing_types, notificaciones, chat, preferencias, matching
 from app.routers import publicaciones, campus, auth, uploads, reportes, admin, ciudades, admin_automation, zonas, housing_types, notificaciones, chat, publicidad
 
 # Detalle #7 DX local: el OTP se loguea con logger.info pero uvicorn deja el
@@ -266,6 +267,8 @@ app.include_router(housing_types.router_admin)
 app.include_router(notificaciones.router)
 app.include_router(notificaciones.router_busquedas)
 app.include_router(chat.router)  # Chatbot MVP solo lectura (CHAT_ENABLED)
+app.include_router(preferencias.router)
+app.include_router(matching.router)  # Mockup 501 (contrato futuro, sin lógica)
 app.include_router(publicidad.router)
 app.include_router(publicidad.router_admin)
 
