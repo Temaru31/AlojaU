@@ -6,7 +6,7 @@ pydantic==2.7.1
 pydantic-settings==2.15.0
 email-validator==2.3.0
 alembic==1.13.1
-python-dotenv>=1.2.2
+python-dotenv>=1.2.3
 bcrypt==4.0.1  # hashing directo (passlib abandonado, removido; ver app/core/security.py)
 PyJWT>=2.10  # OLA1: reemplaza python-jose (abandonado + CVEs JWT bomb); HS256 local + RS256/ES256 Supabase vía JWKS
 cryptography>=41.0.0  # requerido por PyJWT para RS256/ES256 (Supabase rotó a ES256); sin esto el callback Google da 401
