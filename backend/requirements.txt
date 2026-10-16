@@ -12,4 +12,4 @@ PyJWT>=2.10  # OLA1: reemplaza python-jose (abandonado + CVEs JWT bomb); HS256 l
 cryptography>=41.0.0  # requerido por PyJWT para RS256/ES256 (Supabase rotó a ES256); sin esto el callback Google da 401
 python-multipart>=0.0.31
 httpx==0.28.1  # solo para TestClient / tests
-cloudinary==1.40.0  # F3: persistencia prod (opcional en dev; import lazy con fallback local)
+cloudinary==1.46.2  # F3: persistencia prod (opcional en dev; import lazy con fallback local)
