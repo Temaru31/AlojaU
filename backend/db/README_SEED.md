@@ -1,6 +1,15 @@
 # BD - Cómo cargar schema y seed
 
-## Docker (recomendado)
+## Automático (recomendado, v7)
+```bash
+python3 backend/scripts/seed_all.py
+# aplica seed.sql (16 pubs: 13 ACTIVO + 3 PAUSADO_POR_REPORTE, 7 lugares,
+# 6 zonas, 3 usuarios), garantiza system_settings e imprime el resumen.
+# debe dar 16 pubs (13 ACTIVO + 3 PAUSADO_POR_REPORTE), 112 dist, 45 fotos
+```
+Supabase: `ALOJAU_SEED_CONFIRM=yes DATABASE_URL=... python3 backend/scripts/seed_all.py`
+
+## Docker
 ```bash
 docker-compose up -d
 # espera 5s
@@ -8,7 +17,7 @@ docker exec -i alojau_db psql -U alojau -d alojau < backend/db/schema.sql
 docker exec -i alojau_db psql -U alojau -d alojau < backend/db/seed.sql
 # verifica
 docker exec -i alojau_db psql -U alojau -d alojau -c "SELECT 'pubs',COUNT(*) FROM publicaciones UNION ALL SELECT 'dist',COUNT(*) FROM publicacion_campus;"
-# debe dar 6 pubs, 12 dist, 20 fotos
+# debe dar 16 pubs, 112 dist, 45 fotos
 ```
 
 ## Sin Docker (Supabase)

@@ -5,22 +5,26 @@
 // y el contacto por WhatsApp queda deshabilitado.
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
+import { Heart, House, X } from 'lucide-react'
 import { api } from '../services/api'
 import { useFavoritos } from '../contexts/FavoritosContext'
+import { useAuth } from '../contexts/AuthContext'
 import SmartImage from '../components/SmartImage'
 import { formatDistancia } from '../utils/formatters'
-
-const TIPO_LABEL = {
-  HABITACION_INDEPENDIENTE: 'Habitación independiente',
-  HABITACION_FAMILIAR: 'Habitación familiar',
-  APARTAESTUDIO: 'Apartaestudio',
-  COMPARTIDO: 'Compartido',
-}
+import { portadaUrl } from '../utils/portada'
+import { getEtiquetaTipo } from '../utils/tiposVivienda'
+import useTiposVivienda from '../hooks/useTiposVivienda'
 
 export default function Favoritos() {
   const { ids, remove, clear, count } = useFavoritos()
+  // v14.1: con sesión, el dueño ve sus PENDIENTE en vez de "No vigente".
+  const { token: authToken } = useAuth()
+  // Bloque 3: etiquetas desde la fuente única (dinámico + fallback central).
+  const { tipos: tiposCatalogo } = useTiposVivienda()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
+  // FASE 2: confirmación explícita en 2 pasos (sin window.confirm nativo).
+  const [confirmaLimpiar, setConfirmaLimpiar] = useState(false)
 
   // Consulta en paralelo los datos frescos de cada publicación favorita
   useEffect(() => {
@@ -33,9 +37,10 @@ export default function Favoritos() {
     let isMounted = true
     setLoading(true)
 
+    const cfg = authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : {}
     const fetchPromises = ids.map(async (id) => {
       try {
-        const res = await api.get(`/api/publicaciones/${id}`)
+        const res = await api.get(`/api/publicaciones/${id}`, cfg)
         const pub = res.data
 
         const ahora = new Date()
@@ -54,6 +59,7 @@ export default function Favoritos() {
           distancia_geodesica_m: pub.distancia_geodesica_m ?? pub.dist_m,
           indice_confianza: pub.indice_confianza ?? pub.indice,
           fotos: pub.fotos || [],
+          imagenes: pub.imagenes || [],
           whatsapp_url: pub.whatsapp_url,
           telefono_whatsapp: pub.telefono_whatsapp,
           estado: pub.estado,
@@ -87,13 +93,16 @@ export default function Favoritos() {
     return () => {
       isMounted = false
     }
-  }, [ids])
+  }, [ids, authToken])
 
-  // Manejador para limpiar todos los favoritos
+  // Manejador para limpiar todos los favoritos (2 pasos: armar → confirmar).
   const handleLimpiar = () => {
-    if (window.confirm('¿Seguro que deseas eliminar todos tus favoritos guardados?')) {
-      clear()
+    if (!confirmaLimpiar) {
+      setConfirmaLimpiar(true)
+      return
     }
+    clear()
+    setConfirmaLimpiar(false)
   }
 
   return (
@@ -110,7 +119,7 @@ export default function Favoritos() {
         <div>
           <h1 className="font-display text-xl md:text-2xl font-bold text-navy-900 flex items-center gap-2">
             <span>Mis Favoritos</span>
-            <span className="text-red-500 text-lg">♥</span>
+            <span className="text-red-500 text-lg"><Heart aria-hidden="true" className="w-5 h-5 fill-current" /></span>
             {count > 0 && (
               <span className="text-sm font-normal text-neutral-400">({count})</span>
             )}
@@ -123,9 +132,14 @@ export default function Favoritos() {
         {count > 0 && (
           <button
             onClick={handleLimpiar}
-            className="text-xs font-semibold text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-2 rounded-lg border border-red-200 transition shrink-0"
+            onBlur={() => setConfirmaLimpiar(false)}
+            aria-label={confirmaLimpiar ? 'Confirmar limpieza de favoritos' : 'Limpiar favoritos'}
+            className={`text-xs font-semibold px-3 py-2 rounded-lg border transition shrink-0 ${confirmaLimpiar
+              ? 'bg-red-600 border-red-600 text-white hover:bg-red-700'
+              : 'text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200'
+              }`}
           >
-            Limpiar favoritos
+            {confirmaLimpiar ? '¿Confirmar limpieza?' : 'Limpiar favoritos'}
           </button>
         )}
       </div>
@@ -148,7 +162,7 @@ export default function Favoritos() {
         /* Estado vacío */
         <div className="card p-12 text-center max-w-md mx-auto my-8">
           <div className="w-14 h-14 rounded-full bg-red-50 text-red-400 flex items-center justify-center text-2xl mx-auto mb-4">
-            ♡
+            <Heart aria-hidden="true" className="w-6 h-6" />
           </div>
           <h2 className="text-base font-semibold text-navy-900 mb-1">
             No tienes favoritos guardados
@@ -166,8 +180,9 @@ export default function Favoritos() {
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {items.map((pub) => {
-              const cover = pub.fotos && pub.fotos.length > 0 ? pub.fotos[0] : null
-              const tipo = TIPO_LABEL[pub.tipo_inmueble] || pub.tipo_inmueble || 'Vivienda'
+              // BUG#1: portada = orden=1 (helper central; sobrevive a refetch).
+              const cover = portadaUrl(pub)
+              const tipo = getEtiquetaTipo(pub.tipo_inmueble, tiposCatalogo, 'Vivienda')
               const zona = pub.zona_nombre || 'Zona no informada'
 
               return (
@@ -185,7 +200,7 @@ export default function Favoritos() {
                       />
                     ) : (
                       <div className="w-full h-full flex flex-col items-center justify-center bg-navy-50/50 text-navy-300">
-                        <span className="text-2xl mb-1 opacity-50">🏠</span>
+                        <House aria-hidden="true" className="w-6 h-6 opacity-50 mb-1" />
                         <span className="text-xs text-neutral-400 font-medium">Sin imagen</span>
                       </div>
                     )}
@@ -210,7 +225,7 @@ export default function Favoritos() {
                       className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/90 backdrop-blur-sm text-red-500 hover:bg-white hover:text-red-700 shadow flex items-center justify-center text-sm transition"
                       title="Quitar de favoritos"
                     >
-                      ✕
+                      <X aria-hidden="true" className="w-4 h-4" />
                     </button>
                   </div>
 

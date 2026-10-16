@@ -174,9 +174,13 @@ def test_hu005_c1_solo_arrendador():
     # con token Bearer vacío 401
     r3 = client.post("/api/publicaciones", json=BASE_PAYLOAD, headers={"Authorization": "Bearer "})
     assert r3.status_code == 401
-    # con mock admin (no arrendador) 403
+    # v13 RBAC por scopes: ADMIN incluye `publications:write` (superset de
+    # ARRENDADOR), así que publica (201). Sin scope de escritura -> 403:
+    # AUDITOR_LEGAL no tiene publications:write ni promoción automática.
     r4 = client.post("/api/publicaciones", json=BASE_PAYLOAD, headers=auth_header("mock-token-admin"))
-    assert r4.status_code == 403
+    assert r4.status_code == 201
+    r5 = client.post("/api/publicaciones", json=BASE_PAYLOAD, headers=auth_header("mock-token-auditor"))
+    assert r5.status_code == 403
 
 def test_hu005_c2_menos_de_3_fotos_rechazado():
     payload = {**BASE_PAYLOAD, "fotos": ["https://a.com/1.jpg", "https://a.com/2.jpg"]}
@@ -293,11 +297,15 @@ def test_hu008_whatsapp_solo_verificado():
     p = r.json()
     # Si telefono verificado, debe tener wa.me
     if p.get("telefono_whatsapp"):
+        from urllib.parse import urlsplit
         assert p.get("whatsapp_url") is not None
-        assert "wa.me" in p["whatsapp_url"]
+        # Host exacto wa.me con esquema https (CodeQL: sin substring, que
+        # aceptaría "wa.me.evil" o paths raros).
+        partes = urlsplit(p["whatsapp_url"])
+        assert partes.scheme == "https" and partes.hostname == "wa.me"
         assert str(p["id"]) in p["whatsapp_url"]
         # sin + y con encode
-        assert "https://wa.me/" in p["whatsapp_url"]
+        assert p["whatsapp_url"].startswith("https://wa.me/")
     # Crear una con teléfono no verificado? Nuestro mock arrendador es verificado, siempre tendrá whatsapp
     # Pero probamos que PENDIENTE también oculta? Frontend oculta, backend sigue dando whatsapp si verificado, es ok
     pass

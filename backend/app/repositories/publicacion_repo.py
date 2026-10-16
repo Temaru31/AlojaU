@@ -2,11 +2,17 @@
 Uso: routers/publicaciones.py. Ej: total, pubs = await repo.query_lista(db, ...)."""
 from typing import List, Optional
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.pagination import paginate_params, build_paginated
+from app.services.search import (
+    clean_query_for_fts,
+    escape_ilike,
+    tipo_canonico_para_token,
+    tokenize_query,
+)
 
 # Oleada 2: umbrales de búsqueda por texto (alineados al prompt táctico).
 Q_MIN_FTS_LEN = 3  # q más corta -> solo fallback difuso (ILIKE/trigrama)
@@ -19,19 +25,70 @@ def _texto_busqueda(Publicacion):
 
 
 def fts_condition(Publicacion, q: str):
-    """Coincidencia Full-Text español (usa idx_publicaciones_fts)."""
+    """Coincidencia Full-Text español (usa idx_publicaciones_fts).
+
+    ``q`` debe venir ya limpio (tokens sin stop-words ni símbolos) vía
+    clean_query_for_fts(); websearch_to_tsquery es tolerante pero así se
+    evitan fallos de sintaxis con %, _, comillas, etc.
+    """
     return func.to_tsvector("spanish", _texto_busqueda(Publicacion)).op("@@")(
         func.websearch_to_tsquery("spanish", q)
     )
 
 
-def fuzzy_condition(Publicacion, q: str):
-    """Fallback tolerante a typos: trigramas o ILIKE parcial (usa idx_publicaciones_trgm)."""
-    return or_(
-        func.similarity(Publicacion.titulo, q) > Q_TRGM_SIMILARITY,
-        Publicacion.titulo.ilike(f"%{q}%"),
-        Publicacion.descripcion.ilike(f"%{q}%"),
+def _token_match_or(Publicacion, token: str):
+    """OR de un token sobre titulo, descripcion, zona, tipo y servicios.
+
+    Invariante: no toca el filtro de POIs (campus_id se ANDea aparte).
+    Sanitiza ILIKE escapando % _ \\ y usa unaccent para "habitacion"→"habitación".
+    """
+    from app.models import ServicioCatalogo, ZonaBarrio
+
+    esc = escape_ilike(token)
+    pat = f"%{esc}%"
+    conds = [
+        func.unaccent(Publicacion.titulo).ilike(pat, escape="\\"),
+        func.unaccent(Publicacion.descripcion).ilike(pat, escape="\\"),
+        Publicacion.zona.has(func.unaccent(ZonaBarrio.nombre).ilike(pat, escape="\\")),
+        Publicacion.servicios.any(func.unaccent(ServicioCatalogo.nombre).ilike(pat, escape="\\")),
+    ]
+    canon = tipo_canonico_para_token(token)
+    if canon == "HABITACION":
+        conds.append(Publicacion.tipo_inmueble.like("HABITACION%"))
+    elif canon:
+        conds.append(Publicacion.tipo_inmueble == canon)
+    else:
+        conds.append(Publicacion.tipo_inmueble.ilike(pat, escape="\\"))
+    return or_(*conds)
+
+
+def tokens_or_condition(Publicacion, tokens: List[str]):
+    """Al menos 1 token coincide (OR) — incluye parciales a propósito."""
+    return or_(*[_token_match_or(Publicacion, t) for t in tokens])
+
+
+def tokens_relevance(Publicacion, tokens: List[str]):
+    """Score = nº de tokens que matchean (para ordenar mayoría primero)."""
+    return sum(
+        (case((_token_match_or(Publicacion, t), 1), else_=0) for t in tokens),
+        start=0,
     )
+
+
+def fuzzy_condition(Publicacion, q: str):
+    """Fallback tolerante: tokenizado OR + trigramas (usa idx_publicaciones_trgm).
+
+    - Tokeniza y filtra stop-words ES ("apartamento con baño" -> ["apartamento","baño"]).
+    - Si no quedan tokens significativos, retorna None (sin filtro de texto).
+    - Si hay 1 token corto, conserva trigramas/ILIKE clásico para typos.
+    """
+    tokens = tokenize_query(q)
+    if not tokens:
+        return None
+    per_token = [_token_match_or(Publicacion, t) for t in tokens]
+    # Trigrama solo con el primer token (typos cortos); el resto va por ILIKE tokenizado.
+    trigram = func.similarity(Publicacion.titulo, tokens[0]) > Q_TRGM_SIMILARITY
+    return or_(trigram, *per_token)
 
 
 def ts_rank_order(Publicacion, q: str):
@@ -42,9 +99,42 @@ def ts_rank_order(Publicacion, q: str):
     ).desc()
 
 
-def lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servicios, q: Optional[str] = None, q_mode: Optional[str] = None):
-    """Filtros HU-001/002 + Oleada 2 (q) compartidos por COUNT y página (SQLAlchemy portable PG/SQLite)."""
-    conds = [Publicacion.estado == "ACTIVO"]
+def dueno_activo_clause(Publicacion):
+    """v14.1 Ley 1581: excluye avisos de cuentas en soft-delete.
+
+    NOT EXISTS correlacionado (sin JOIN: no altera forma de COUNT/página).
+    Excepción documentada: cola de moderación admin (pendientes) SÍ los
+    muestra — el admin debe ver lo que existe para moderar/purgar.
+    """
+    from app.models import Usuario as _U
+    return ~select(_U.id).where(
+        (_U.id == Publicacion.usuario_id) & (_U.eliminado_en.is_not(None))
+    ).exists()
+
+
+async def leer_ajuste(db, clave: str, default: str) -> str:
+    """Lee system_settings (clave UNIQUE, 1 query). Sin tabla/fila -> default."""
+    try:
+        from app.models import SystemSetting as _SS
+        row = (await db.execute(
+            select(_SS).where(_SS.clave == clave))).scalars().first()
+        return row.valor if row else default
+    except Exception:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        return default
+
+
+async def vistas_publicas(db) -> bool:
+    """¿Ve todo visitante el contador? Default False (prudente: dueño/admin)."""
+    return (await leer_ajuste(db, "vistas_visibles_publico", "false")).lower() == "true"
+
+
+def lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servicios, q: Optional[str] = None, q_mode: Optional[str] = None, ciudad_id: Optional[int] = None):
+    """Filtros HU-001/002 + Oleada 2 (q tokenizada) + multiciudad compartidos por COUNT y página."""
+    conds = [Publicacion.estado == "ACTIVO", dueno_activo_clause(Publicacion)]
     if precio_min is not None:
         conds.append(Publicacion.canon_mensual >= precio_min)
     if precio_max is not None:
@@ -54,10 +144,19 @@ def lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servi
     if servicios:
         for sid in servicios:
             conds.append(Publicacion.servicios.any(id=sid))
+    if ciudad_id:
+        from app.models import ZonaBarrio as _ZB
+
+        conds.append(Publicacion.zona.has(_ZB.ciudad_id == ciudad_id))
     if q and q_mode == "fts":
-        conds.append(fts_condition(Publicacion, q))
+        tokens = tokenize_query(q)
+        if tokens:
+            conds.append(fts_condition(Publicacion, clean_query_for_fts(tokens)))
+        # Sin tokens significativos (solo stop-words) -> sin filtro de texto.
     elif q and q_mode == "fuzzy":
-        conds.append(fuzzy_condition(Publicacion, q))
+        fc = fuzzy_condition(Publicacion, q)
+        if fc is not None:
+            conds.append(fc)
     return conds
 
 
@@ -86,8 +185,9 @@ async def count_total(db: AsyncSession, conds, campus_id: Optional[int]) -> int:
 async def fetch_page(db: AsyncSession, conds, campus_id: Optional[int], limit: int, offset: int, q: Optional[str] = None, q_mode: Optional[str] = None):
     """Página en SQL con orden determinista (distancia NULLS LAST + id).
 
-    Oleada 2: con q en modo FTS ordena por relevancia (ts_rank) y luego
-    fecha_renovacion; en modo fuzzy/recientes, por fecha_renovacion + id.
+    Fase 2: con q tokenizada ordena por nº de tokens que matchean (mayoría
+    primero) y luego fecha_renovacion; en modo FTS usa ts_rank sobre la query
+    limpia + desempate por relevancia tokenizada.
     """
     from app.models import Publicacion, PublicacionCampus
 
@@ -96,33 +196,100 @@ async def fetch_page(db: AsyncSession, conds, campus_id: Optional[int], limit: i
         .options(selectinload(Publicacion.imagenes), selectinload(Publicacion.servicios))
         .where(*conds)
     )
+    # Publicidad v1: vigentes primero (prioridad desc, NULLS LAST = el resto
+    # conserva el orden actual cuando no hay destacados). El LEFT JOIN no
+    # filtra ni duplica filas (1 vigente por pub por unique parcial).
+    _dest = destacados_vigentes_subq()
+    stmt = stmt.outerjoin(_dest, _dest.c.publicacion_id == Publicacion.id)
+    _destacado_primero = _dest.c.prioridad.desc().nulls_last()
+    tokens = tokenize_query(q) if q else []
+    fts_q = clean_query_for_fts(tokens) if tokens else None
     if campus_id:
         stmt = (
             stmt.join(PublicacionCampus, PublicacionCampus.publicacion_id == Publicacion.id)
             .where(PublicacionCampus.campus_id == campus_id)
         )
-        if q_mode == "fts" and q:
+        if q_mode == "fts" and fts_q:
             stmt = stmt.order_by(
-                ts_rank_order(Publicacion, q),
+                _destacado_primero,
+                ts_rank_order(Publicacion, fts_q),
+                tokens_relevance(Publicacion, tokens).desc() if tokens else Publicacion.id.asc(),
                 Publicacion.fecha_renovacion.desc(),
                 Publicacion.id.asc(),
             )
-        elif q:
-            stmt = stmt.order_by(Publicacion.fecha_renovacion.desc(), Publicacion.id.asc())
+        elif tokens:
+            stmt = stmt.order_by(
+                _destacado_primero,
+                tokens_relevance(Publicacion, tokens).desc(),
+                Publicacion.fecha_renovacion.desc(),
+                Publicacion.id.asc(),
+            )
         else:
-            stmt = stmt.order_by(PublicacionCampus.distancia_geodesica_m.asc().nullslast(), Publicacion.id.asc())
-    elif q_mode == "fts" and q:
+            stmt = stmt.order_by(_destacado_primero, PublicacionCampus.distancia_geodesica_m.asc().nullslast(), Publicacion.id.asc())
+    elif q_mode == "fts" and fts_q:
         stmt = stmt.order_by(
-            ts_rank_order(Publicacion, q),
+            _destacado_primero,
+            ts_rank_order(Publicacion, fts_q),
+            tokens_relevance(Publicacion, tokens).desc() if tokens else Publicacion.id.asc(),
             Publicacion.fecha_renovacion.desc(),
             Publicacion.id.asc(),
         )
-    elif q:
-        stmt = stmt.order_by(Publicacion.fecha_renovacion.desc(), Publicacion.id.asc())
+    elif tokens:
+        stmt = stmt.order_by(
+            _destacado_primero,
+            tokens_relevance(Publicacion, tokens).desc(),
+            Publicacion.fecha_renovacion.desc(),
+            Publicacion.id.asc(),
+        )
     else:
-        stmt = stmt.order_by(Publicacion.id.asc())
+        stmt = stmt.order_by(_destacado_primero, Publicacion.id.asc())
     stmt = stmt.limit(limit).offset(offset)
     return (await db.execute(stmt)).scalars().unique().all()
+
+
+def destacados_vigentes_subq():
+    """Subquery de destacados vigentes (ACTIVO y vence futuro) + prioridad.
+
+    Uso: fetch_page (LEFT JOIN + orden) y fetch_destacados_map (flags).
+    Vigente = estado ACTIVO AND vence > now() (spec publicidad §4).
+    """
+    from app.models import PlanPublicidad, PublicacionDestacado
+
+    return (
+        select(
+            PublicacionDestacado.publicacion_id.label("publicacion_id"),
+            PlanPublicidad.prioridad.label("prioridad"),
+            PublicacionDestacado.vence.label("vence"),
+        )
+        .join(PlanPublicidad, PlanPublicidad.id == PublicacionDestacado.plan_id)
+        .where(
+            PublicacionDestacado.estado == "ACTIVO",
+            PublicacionDestacado.vence > func.now(),
+        )
+        .subquery()
+    )
+
+
+async def fetch_destacados_map(db: AsyncSession, ids) -> dict:
+    """{publicacion_id: {"vence", "prioridad"}} vigentes para los ids dados.
+
+    1 query fija (JOIN a planes por prioridad). Vacío si no hay vigentes.
+    Uso: routers/publicaciones.py lista/detalle para el flag destacado.
+    """
+    ids = list({i for i in (ids or []) if i is not None})
+    if not ids:
+        return {}
+    _dest = destacados_vigentes_subq()
+    rows = (await db.execute(
+        select(_dest.c.publicacion_id, _dest.c.vence, _dest.c.prioridad)
+        .where(_dest.c.publicacion_id.in_(ids))
+    )).all()
+    out = {}
+    for pub_id, vence, prioridad in rows:
+        prev = out.get(pub_id)
+        if prev is None or (prioridad or 0) > prev["prioridad"]:
+            out[pub_id] = {"vence": vence, "prioridad": int(prioridad or 0)}
+    return out
 
 
 async def fetch_page_aggregates(db: AsyncSession, pubs, campus_id: Optional[int]):
@@ -144,7 +311,11 @@ async def fetch_page_aggregates(db: AsyncSession, pubs, campus_id: Optional[int]
 
     user_ids = {p.usuario_id for p in pubs}
     users = (
-        (await db.execute(select(Usuario).where(Usuario.id.in_(user_ids)))).scalars().all()
+        (await db.execute(select(Usuario).where(
+            Usuario.id.in_(user_ids),
+            # v14.1: dueños eliminados no se hidratan (ni teléfono ni verificado).
+            Usuario.eliminado_en.is_(None),
+        ))).scalars().all()
         if user_ids
         else []
     )
@@ -164,26 +335,55 @@ async def fetch_page_aggregates(db: AsyncSession, pubs, campus_id: Optional[int]
     return reportes_map, users_map, dist_map
 
 
-async def query_lista(db, campus_id, precio_min, precio_max, tipo, servicios, page=1, size=9, q: Optional[str] = None):
+async def resolver_ciudad_id(db, ciudad_id: Optional[int] = None, ciudad_slug: Optional[str] = None) -> Optional[int]:
+    """Resuelve ciudad_slug -> ciudad_id (slug de nombre, sin tildes, '-' por espacios).
+
+    Retorna ciudad_id directo si viene; None si no hay filtro. Lanza ValueError
+    si el slug no matchea ninguna ciudad activa (el router lo vuelve 404).
+    """
+    if ciudad_id:
+        return ciudad_id
+    if not ciudad_slug or not str(ciudad_slug).strip():
+        return None
+    from app.models import Ciudad
+    from app.services.ciudades import slugify
+
+    wanted = slugify(str(ciudad_slug))
+    rows = (await db.execute(select(Ciudad).where(Ciudad.activo.is_(True)))).scalars().all()
+    for c in rows:
+        if slugify(c.nombre) == wanted:
+            return c.id
+    raise ValueError(f"ciudad '{ciudad_slug}' no existe")
+
+
+async def query_lista(db, campus_id, precio_min, precio_max, tipo, servicios, page=1, size=9, q: Optional[str] = None, ciudad_id: Optional[int] = None, ciudad_slug: Optional[str] = None):
     """COUNT + página + agregados para GET /api/publicaciones.
 
     Uso: routers/publicaciones.py::list_publicaciones. Ej: total, pubs, *_map, size = await query_lista(db, 1, None, None, None, None).
-    Oleada 2: q>=3 chars primero FTS; si 0 resultados -> fallback difuso (trigrama/ILIKE).
-    q de 1-2 chars -> directo a fallback difuso. q vacía -> sin filtro de texto.
+    Fase 2: q tokenizada (stop-words ES fuera); FTS con query limpia primero,
+    fallback tokenizado OR (parciales incluidos, mayoría primero).
+    q de 1-2 chars -> directo a fallback. q vacía o solo stop-words -> sin filtro.
+    Multiciudad: ciudad_id o ciudad_slug filtran por zona.ciudad_id (AND con POIs).
     """
     from app.models import Publicacion
 
     q = q.strip() if isinstance(q, str) else None
     if q == "":
         q = None
+    # Multiciudad: slug -> id (404 si slug desconocido, gestionado por el router).
+    ciudad_id = await resolver_ciudad_id(db, ciudad_id, ciudad_slug)
     mode = resolver_modo_q(q)
+    # Solo stop-words -> sin filtro de texto (evita [] confuso por "con de la").
+    if mode and not tokenize_query(q):
+        mode = None
+        q = None
     offset, size_norm = paginate_params(page, size)
 
     async def _consultar(q_mode):
-        conds = lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servicios, q, q_mode)
+        conds = lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servicios, q, q_mode, ciudad_id)
         total = await count_total(db, conds, campus_id)
         if total == 0:
-            return build_paginated([], 0, page, size_norm)
+            return 0, [], {}, {}, {}, size_norm
         pubs = await fetch_page(db, conds, campus_id, size_norm, offset, q, q_mode)
         reportes_map, users_map, dist_map = await fetch_page_aggregates(db, pubs, campus_id)
         return total, pubs, reportes_map, users_map, dist_map, size_norm
@@ -201,10 +401,10 @@ async def query_lista(db, campus_id, precio_min, precio_max, tipo, servicios, pa
     if mode == "fuzzy":
         return await _consultar("fuzzy")
 
-    conds = lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servicios)
+    conds = lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servicios, ciudad_id=ciudad_id)
     total = await count_total(db, conds, campus_id)
     if total == 0:
-        return build_paginated([], 0, page, size_norm)
+        return 0, [], {}, {}, {}, size_norm
     pubs = await fetch_page(db, conds, campus_id, size_norm, offset)
     reportes_map, users_map, dist_map = await fetch_page_aggregates(db, pubs, campus_id)
     return total, pubs, reportes_map, users_map, dist_map, size_norm
@@ -243,7 +443,7 @@ async def fetch_detail_campus_ref(db: AsyncSession, pub_id: int, campus_id: int)
     """Fila publicacion_campus + lugar para GET detalle ?campus_id= (004 POIs).
 
     Retorna (dist_m, campus) o (None, None) si el aviso no tiene coords
-    (edge case: la fila existe con dist NULL por B0-5/trigger). Lanza 404 si
+    (edge case: la fila existe con dist NULL por trigger sin coords). Lanza 404 si
     el lugar no existe o está inactivo. Uso: routers/publicaciones.py.
     """
     from fastapi import HTTPException
@@ -258,16 +458,17 @@ async def fetch_detail_campus_ref(db: AsyncSession, pub_id: int, campus_id: int)
     return dist, campus
 
 
-async def validate_fks(db: AsyncSession, zona_id: int, campus_ids: List[int], servicios_ids: List[int]):
+async def validate_fks(db: AsyncSession, zona_id: int | None, campus_ids: List[int], servicios_ids: List[int]):
     """FK estrictas + dedup (404 si zona/campus inactivo/servicio falta).
+    zona_id None = barrio libre (barrio_texto): se omite el chequeo.
     Uso: routers/publicaciones.py::crear_publicacion. Ej: cids, sids = await validate_fks(db, 1, [1, 1], [1])."""
     from fastapi import HTTPException
 
     from app.models import CampusUniversitario, ServicioCatalogo, ZonaBarrio
 
-    campus_ids = list(dict.fromkeys(campus_ids))
+    campus_ids = list(dict.fromkeys(campus_ids or []))
     servicios_ids = list(dict.fromkeys(servicios_ids))
-    if not await db.get(ZonaBarrio, zona_id):
+    if zona_id is not None and not await db.get(ZonaBarrio, zona_id):
         raise HTTPException(status_code=404, detail=f"zona_barrio_id {zona_id} no existe")
     for cid in campus_ids:
         campus = await db.get(CampusUniversitario, cid)
@@ -297,6 +498,7 @@ async def create_persisted(db, payload, user_id: int, trust: dict, campus_ids, s
     nueva = Publicacion(
         usuario_id=user_id,
         zona_barrio_id=payload.zona_barrio_id,
+        barrio_texto=(payload.barrio_texto or None),
         titulo=payload.titulo,
         descripcion=payload.descripcion,
         tipo_inmueble=payload.tipo_inmueble,

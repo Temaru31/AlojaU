@@ -4,9 +4,14 @@ import { MemoryRouter } from 'react-router-dom'
 import Buscar from './Buscar'
 import { api } from '../services/api'
 
-vi.mock('../services/api', () => ({ api: { get: vi.fn() } }))
+vi.mock('../services/api', () => ({ api: { get: vi.fn() }, isCancelError: (e) => e?.code === 'ERR_CANCELED' }))
 vi.mock('../components/Card', () => ({ default: ({ pub }) => <div>{pub.titulo}</div> }))
-vi.mock('../components/Filtros', () => ({ default: () => null }))
+vi.mock('../components/Filtros', async (importOriginal) => {
+  const actual = await importOriginal()
+  // Solo se anula el panel completo (no se usa en el sheet móvil);
+  // los helpers puros se conservan reales para los bloques del sheet.
+  return { ...actual, default: () => null, contarAvanzados: () => 0 }
+})
 vi.mock('../components/Paginacion', () => ({ default: () => null }))
 
 const CAMPUS = [{ id: 1, institucion: 'Universidad del Cauca', nombre_sede: 'Campus Tulcán' }]
@@ -14,8 +19,11 @@ const CAMPUS = [{ id: 1, institucion: 'Universidad del Cauca', nombre_sede: 'Cam
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.useRealTimers() })
 beforeEach(() => {
   vi.clearAllMocks()
+  // La persistencia (session/localStorage) no debe fugar entre tests.
+  try { sessionStorage.clear(); localStorage.clear() } catch { /* noop */ }
   api.get.mockImplementation((url) => {
     if (url === '/api/campus') return Promise.resolve({ data: CAMPUS })
+    if (url === '/api/ciudades') return Promise.resolve({ data: [{ id: 1, nombre: 'Popayán', departamento: 'Cauca', slug: 'popayan' }] })
     return Promise.resolve({ data: { items: [], total: 0, pages: 1 } })
   })
 })
@@ -31,7 +39,10 @@ function renderBuscar(qs = '/?campus_id=1') {
 describe('Buscar Oleada 2 (q)', () => {
   it('escribir en el buscador consulta al backend con q (debounce)', async () => {
     renderBuscar()
-    const input = await screen.findByRole('searchbox')
+    // Cápsula móvil + barra desktop montan 2 searchbox: se usa el primero.
+    const inputs = await screen.findAllByRole('searchbox')
+    expect(inputs.length).toBeGreaterThanOrEqual(2)
+    const input = inputs[0]
     vi.useFakeTimers()
     fireEvent.change(input, { target: { value: 'habitacion' } })
     await act(async () => { vi.advanceTimersByTime(350) })
@@ -43,11 +54,24 @@ describe('Buscar Oleada 2 (q)', () => {
     })
   })
 
-  it('vacío con q muestra sugerencias útiles + botón limpiar', async () => {
+  it('vacío 200 OK con [] muestra tarjeta neutra (sin banner rojo) + botón limpiar', async () => {
     renderBuscar('/?campus_id=1&q=habitacion')
-    await waitFor(() => expect(screen.getByText(/Sin resultados/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/No encontramos alojamientos/)).toBeInTheDocument())
     expect(screen.getByText(/cerca a la universidad/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Limpiar búsqueda y filtros/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Limpiar filtros/ })).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('error HTTP >=400 sí muestra banner rojo', async () => {
+    api.get.mockImplementation((url) => {
+      if (url === '/api/campus') return Promise.resolve({ data: CAMPUS })
+      if (url === '/api/ciudades') return Promise.resolve({ data: [] })
+      if (url === '/api/publicaciones') return Promise.reject({ response: { status: 500 } })
+      return Promise.resolve({ data: { items: [], total: 0, pages: 1 } })
+    })
+    renderBuscar('/?campus_id=1')
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+    expect(screen.getByText(/No se pudo cargar publicaciones/)).toBeInTheDocument()
   })
 })
 
@@ -60,5 +84,160 @@ describe('Buscar 004 campus_id inválido', () => {
       const params = llamadas[0][1]?.params || {}
       expect(params.campus_id).toBeUndefined()
     })
+  })
+})
+
+describe('Buscar Fase 4 Hero + multiciudad', () => {
+  it('hero usa copy nuevo y ciudad dinámica', async () => {
+    renderBuscar('/')
+    await waitFor(() => expect(screen.getByText(/Encuentra tu espacio ideal/)).toBeInTheDocument())
+    expect(screen.getByText(/donde lo necesitas/)).toBeInTheDocument()
+    expect(screen.getByText(/sin intermediarios/)).toBeInTheDocument()
+  })
+
+  it('píldora del Hero refleja la ciudad del selector (misma fuente)', async () => {
+    renderBuscar('/?ciudad_id=1')
+    await waitFor(() => {
+      // Píldora del Hero + botón del selector comparten "Popayán, Cauca".
+      expect(screen.getAllByText('Popayán, Cauca').length).toBeGreaterThanOrEqual(2)
+    })
+  })
+
+  it('abre bottom sheet móvil con atajos COP, tipo y CTA honesto en cero', async () => {
+    renderBuscar('/')
+    await waitFor(() => expect(screen.getByText(/Encuentra tu espacio ideal/)).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /Abrir filtros/ }))
+    expect(screen.getByRole('dialog', { name: /Filtros de búsqueda/ })).toBeInTheDocument()
+    // Desktop + sheet montan doble control: basta que el sheet aporte el suyo.
+    expect(screen.getAllByLabelText('Cercano a…').length).toBeGreaterThanOrEqual(1)
+    // Atajos de presupuesto (COP) y chips de tipo escriben `filtros`.
+    fireEvent.click(screen.getByRole('button', { name: '< $400 mil' }))
+    expect(screen.getByRole('button', { name: '< $400 mil' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByPlaceholderText('Mín COP')).toHaveValue(0)
+    // Toggle-off: pulsar el activo limpia el rango.
+    fireEvent.click(screen.getByRole('button', { name: '< $400 mil' }))
+    expect(screen.getByRole('button', { name: '< $400 mil' })).toHaveAttribute('aria-pressed', 'false')
+    // Tipo único dinámico (sin sección duplicada ni <select> nativo).
+    expect(screen.queryByText('Tipo de habitación')).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Compartido/ }))
+    expect(screen.getByRole('button', { name: /Compartido/ })).toHaveAttribute('aria-pressed', 'true')
+    // Mock con total 0: CTA honesto + salida Limpiar.
+    expect(screen.getByRole('button', { name: 'Cerrar y ajustar' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Limpiar todos los filtros' }))
+    expect(screen.getByRole('button', { name: '< $400 mil' })).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(screen.getByRole('button', { name: 'Cerrar y ajustar' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /Filtros de búsqueda/ })).not.toBeInTheDocument())
+  })
+
+  it('BloqueServicios colapsa solo con más de 6 ítems (escala futura)', async () => {
+    const { BloqueServicios } = await import('./Buscar')
+    const setFiltros = vi.fn()
+    const ocho = Array.from({ length: 8 }, (_, i) => ({ id: 10 + i, label: `Extra ${i}` }))
+    const { rerender, unmount } = render(<MemoryRouter><BloqueServicios items={ocho} filtros={{}} setFiltros={setFiltros} /></MemoryRouter>)
+    // Colapsado: checkboxes ocultos hasta expandir.
+    expect(screen.queryByLabelText('Extra 0')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Servicios y comodidades/ }))
+    expect(screen.getByLabelText('Extra 0')).toBeInTheDocument()
+    unmount()
+    cleanup()
+    // Con 5 va abierto y el check escribe servicios + badge.
+    render(<MemoryRouter><BloqueServicios filtros={{}} setFiltros={setFiltros} /></MemoryRouter>)
+    fireEvent.click(screen.getByLabelText('WiFi Fibra'))
+    expect(setFiltros).toHaveBeenCalledWith(expect.objectContaining({ servicios: '1' }))
+  })
+
+  it('CTA muestra conteo en vivo cuando hay resultados', async () => {
+    api.get.mockImplementation((url) => {
+      if (url === '/api/campus') return Promise.resolve({ data: CAMPUS })
+      if (url === '/api/ciudades') return Promise.resolve({ data: [{ id: 1, nombre: 'Popayán', departamento: 'Cauca', slug: 'popayan' }] })
+      return Promise.resolve({ data: { items: [], total: 5, pages: 1 } })
+    })
+    renderBuscar('/')
+    await waitFor(() => expect(screen.getByText(/Encuentra tu espacio ideal/)).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /Abrir filtros/ }))
+    expect(screen.getByRole('button', { name: 'Mostrar 5 alojamientos' })).toBeInTheDocument()
+  })
+
+  it('sin params restaura la última búsqueda de la sesión (volver sin perder)', async () => {
+    sessionStorage.setItem('alojau_buscar_filtros', JSON.stringify({
+      filtros: { min: '400000', max: '', tipo: '', servicios: '' },
+      campus_id: '1', ciudad_id: '', q: '',
+    }))
+    renderBuscar('/')
+    await waitFor(() => {
+      const calls = api.get.mock.calls.filter((c) => c[0] === '/api/publicaciones')
+      expect(calls.length).toBeGreaterThan(0)
+      const last = calls[calls.length - 1][1].params
+      expect(last.precio_min).toBe('400000')
+      expect(last.campus_id).toBe(1)
+    })
+  })
+
+  it('?page=abc se sanea a 1 (sin 422 al backend)', async () => {
+    renderBuscar('/?page=abc')
+    await waitFor(() => {
+      const calls = api.get.mock.calls.filter((c) => c[0] === '/api/publicaciones')
+      expect(calls.length).toBeGreaterThan(0)
+      expect(calls[calls.length - 1][1].params.page).toBe(1)
+    })
+  })
+
+  it('volver a "Todos los lugares" no resucita el campus limpiado', async () => {
+    sessionStorage.setItem('alojau_buscar_filtros', JSON.stringify({
+      filtros: { min: '', max: '', tipo: '', servicios: '' },
+      campus_id: '1', ciudad_id: '', q: '',
+    }))
+    renderBuscar('/')
+    // El restore reinyecta el snapshot: primer fetch con campus.
+    await waitFor(() => {
+      const calls = api.get.mock.calls.filter((c) => c[0] === '/api/publicaciones')
+      expect(calls.length).toBeGreaterThan(0)
+      expect(calls[calls.length - 1][1].params.campus_id).toBe(1)
+    })
+    // El usuario elige "Todos los lugares" (default): debe quedar limpio.
+    // (Se localiza por contenido: el nombre accesible del selector incluye
+    // icono + sede y varía según catálogo.)
+    let selector = null
+    await waitFor(() => {
+      const cands = screen.getAllByRole('button').filter((b) =>
+        /Universidad del Cauca/.test((b.getAttribute('aria-label') || b.textContent) || ''))
+      expect(cands.length).toBeGreaterThanOrEqual(1)
+    }, { timeout: 3000 })
+    // Re-consulta en fresco: el nodo capturado en el polling puede estar
+    // obsoleto tras un re-render (clic en nodo detached no abre nada).
+    selector = screen.getAllByRole('button').filter((b) =>
+      /Universidad del Cauca/.test((b.getAttribute('aria-label') || b.textContent) || ''))[0]
+    fireEvent.click(selector)
+    // (name exacto no: incluye el emoji según cómputo; regex = parcial.)
+    fireEvent.click(screen.getByRole('option', { name: /Todos los lugares/ }))
+    fireEvent.click(selector)
+    fireEvent.click(screen.getByRole('option', { name: 'Todos los lugares' }))
+    await waitFor(() => {
+      const calls = api.get.mock.calls.filter((c) => c[0] === '/api/publicaciones')
+      expect(calls[calls.length - 1][1].params.campus_id).toBeUndefined()
+    })
+    // Y el snapshot de sesión también quedó limpio (no resucita al volver).
+    expect(JSON.parse(sessionStorage.getItem('alojau_buscar_filtros')).campus_id).toBe('')
+  })
+
+  it('Limpiar en la barra desktop resetea sin abrir el drawer', async () => {
+    renderBuscar('/?precio_min=400000')
+    // Visible sin desplegar panel ni drawer.
+    const limpiar = await screen.findByRole('button', { name: 'Limpiar filtros' })
+    expect(limpiar).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    fireEvent.click(limpiar)
+    // Tras limpiar (debounce 400ms) la URL queda sin el filtro.
+    vi.useFakeTimers()
+    await act(async () => { vi.advanceTimersByTime(500) })
+    vi.useRealTimers()
+    await waitFor(() => {
+      const calls = api.get.mock.calls.filter((c) => c[0] === '/api/publicaciones')
+      const last = calls[calls.length - 1][1].params
+      expect(last.precio_min).toBeUndefined()
+    })
+    // El Limpiar de la barra (badge) desaparece; queda solo el de la tarjeta vacía.
+    expect(screen.getByText(/No encontramos alojamientos/)).toBeInTheDocument()
   })
 })

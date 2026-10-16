@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from ..db.session import get_session
 from ..core.config import settings
+from ..core.logseguro import exc_resumen
 from app.schemas.publicacion import CampusOut
 from app.fixtures.demo import MOCK_CAMPUS_LIST as MOCK_CAMPUS
 from typing import List
@@ -65,7 +66,7 @@ async def list_campus(response: Response, db: AsyncSession = Depends(get_session
         rows = res.scalars().all()
         payload = [_row_to_out(r) for r in rows]
     except Exception as e:
-        logger.error(f"[campus] DB falló: {e!r}", exc_info=True)
+        logger.error(f"[campus] DB falló: {exc_resumen(e)}", exc_info=True)
         mock_ok = bool(getattr(settings, "mock_enabled", False))
         if not mock_ok:
             raise HTTPException(status_code=503, detail="Base de datos no disponible")

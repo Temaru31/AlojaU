@@ -2,8 +2,10 @@
 // Muestra fecha actual + preview estimada de nueva fecha (cálculo local, sólo visual).
 // La fecha confirmada siempre viene del backend; si hay error NO se presenta fecha renovada.
 // Uso: <RenovarModal pub={pub} token={token} onClose={() => ...} onRenovada={(upd) => ...} />
-import { useState } from 'react'
+import { useRef, useState } from 'react'
+import { TriangleAlert } from 'lucide-react'
 import { api } from '../services/api'
+import useFocusTrap from '../hooks/useFocusTrap'
 
 /** Formatea un Date o string ISO a texto legible en español. */
 function formatFecha(fechaRaw) {
@@ -37,6 +39,9 @@ function diasRestantes(fechaRaw) {
 }
 
 export default function RenovarModal({ pub, token, onClose, onRenovada }) {
+  // Bloque 3: Tab cicla dentro + foco vuelve al disparador al cerrar.
+  const cajaRef = useRef(null)
+  useFocusTrap(cajaRef, true)
   const [estado, setEstado] = useState('idle') // 'idle' | 'loading' | 'success' | 'error'
   const [resultado, setResultado] = useState(null)
   const [errorMsg, setErrorMsg] = useState('')
@@ -79,6 +84,7 @@ export default function RenovarModal({ pub, token, onClose, onRenovada }) {
 
   return (
     <div
+      ref={cajaRef}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
       role="dialog"
       aria-modal="true"
@@ -148,7 +154,7 @@ export default function RenovarModal({ pub, token, onClose, onRenovada }) {
                   role="alert"
                   id="renovar-error-msg"
                 >
-                  <span className="text-red-500 mt-0.5 shrink-0" aria-hidden="true">⚠</span>
+                  <TriangleAlert aria-hidden="true" className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
                   <p className="text-xs text-red-700">{errorMsg}</p>
                 </div>
               )}
