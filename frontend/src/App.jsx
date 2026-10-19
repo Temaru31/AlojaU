@@ -14,6 +14,7 @@ const Alertas = lazy(() => import('./pages/Alertas'))
 const AdminReportes = lazy(() => import('./pages/AdminReportes'))
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'))
 const AdminTipos = lazy(() => import('./pages/AdminTipos'))
+const Roomies = lazy(() => import('./pages/Roomies'))
 // v13 Enterprise Auth: OAuth callback, recovery y legal (Ley 1581).
 const AuthCallback = lazy(() => import('./pages/AuthCallback'))
 const Recuperar = lazy(() => import('./pages/Recuperar'))
@@ -23,7 +24,7 @@ const Privacidad = lazy(() => import('./pages/Privacidad'))
 // Chatbot MVP solo lectura: chunk separado, no pesa el bundle inicial.
 const ChatWidget = lazy(() => import('./components/ChatWidget'))
 import ProtectedAdminRoute from './components/ProtectedAdminRoute'
-import { Bell, Heart, LogOut, Megaphone, Scale, Search, ShieldCheck, User } from 'lucide-react'
+import { Bell, Heart, LogOut, Megaphone, Scale, Search, ShieldCheck, User, Users } from 'lucide-react'
 import ColdStartBanner from './components/ColdStartBanner'
 import ErrorBoundary from './components/ErrorBoundary'
 import Toaster from './components/Toast'
@@ -145,6 +146,13 @@ function Nav() {
               >
                 Comparar {compCount > 0 && <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full ml-1">{compCount}/{compMax}</span>}
               </Link>
+              <Link
+                to="/roomies"
+                className={`px-3 py-2 text-sm font-medium rounded-md transition-colors ${isActive('/roomies') ? 'text-navy-800 bg-navy-50' : 'text-neutral-500 hover:text-navy-700 hover:bg-neutral-100'
+                  }`}
+              >
+                Roomies
+              </Link>
               {sesionActiva && muestraMisPubs && (
                 <Link
                   to="/mis-publicaciones"
@@ -219,6 +227,9 @@ function Nav() {
                       </Link>
                       <Link to="/perfil" onClick={closeUser} role="menuitem" className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-xl text-neutral-600 hover:bg-neutral-100 active:bg-neutral-100 transition">
                         <User aria-hidden="true" className="w-5 h-5" /> Mi Perfil
+                      </Link>
+                      <Link to="/roomies" onClick={closeUser} role="menuitem" className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-xl text-neutral-600 hover:bg-neutral-100 active:bg-neutral-100 transition">
+                        <Users aria-hidden="true" className="w-5 h-5" /> Match Roomies
                       </Link>
                       {muestraMisPubs && (
                         <Link to="/mis-publicaciones" onClick={closeUser} role="menuitem" className="flex items-center gap-2.5 px-3 py-2.5 min-h-[44px] text-sm font-medium rounded-xl text-neutral-600 hover:bg-neutral-100 active:bg-neutral-100 transition">
@@ -344,6 +355,14 @@ function Nav() {
               <span className="inline-flex items-center gap-2"><Scale aria-hidden="true" className="w-5 h-5" /> Comparar</span>
               <span className="bg-indigo-100 text-indigo-700 text-[11px] px-1.5 py-0.5 rounded-full" aria-label={`${compCount} de ${compMax} para comparar`}>{compCount}/{compMax}</span>
             </Link>
+            <Link
+              to="/roomies"
+              onClick={closeMenu}
+              aria-current={isActive('/roomies') ? 'page' : undefined}
+              className={mobileLinkCls(isActive('/roomies'))}
+            >
+              <span className="inline-flex items-center gap-2"><Users aria-hidden="true" className="w-5 h-5" /> Roomies</span>
+            </Link>
             {sesionActiva && muestraMisPubs && (
               <Link
                 to="/mis-publicaciones"
@@ -415,6 +434,7 @@ function Footer() {
               <li><Link to="/" className="text-sm text-neutral-500 hover:text-navy-700 transition-colors">Buscar vivienda</Link></li>
               <li><Link to="/favoritos" className="text-sm text-neutral-500 hover:text-navy-700 transition-colors">Favoritos</Link></li>
               <li><Link to="/comparar" className="text-sm text-neutral-500 hover:text-navy-700 transition-colors">Comparar</Link></li>
+              <li><Link to="/roomies" className="text-sm text-neutral-500 hover:text-navy-700 transition-colors">Buscar roomie</Link></li>
               <li><Link to="/publicar" className="text-sm text-neutral-500 hover:text-navy-700 transition-colors">Publicar</Link></li>
             </ul>
           </div>
@@ -469,6 +489,7 @@ function App() {
                     <Route path="/publicacion/:id" element={<Detalle />} />
                     <Route path="/favoritos" element={<Favoritos />} />
                     <Route path="/comparar" element={<Comparar />} />
+                    <Route path="/roomies" element={<Roomies />} />
                     <Route path="/publicar" element={<Publicar />} />
                     <Route path="/publicitar" element={<Publicitar />} />
                     <Route path="/perfil" element={<Perfil />} />

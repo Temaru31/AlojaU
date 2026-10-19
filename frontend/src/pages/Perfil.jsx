@@ -14,12 +14,15 @@ import NivelConfianza from '../components/NivelConfianza'
 import { notifyToast } from '../components/Toast'
 import PreferenceChip from '../components/PreferenceChip'
 import TelegramVincular from '../components/TelegramVincular'
+import PreferenciasRoomie from '../components/PreferenciasRoomie'
+import { calcularCompletitudRoomie } from '../utils/preferenciasRoomie'
 import { signInWithGoogle } from '../services/supabaseClient'
 import { ArrowRight, Check, Heart, House, Lock, Mail, Pencil, Smartphone, Sparkles, User } from 'lucide-react'
 
 // Iconos del set propio (aria-hidden): misma gramática que PreferenceChip.
 const TABS = [
   { id: 'datos', label: 'Datos y Verificación', icon: 'usuario' },
+  { id: 'roomie', label: 'Convivencia y Roomie', icon: 'facultad' },
   { id: 'seguridad', label: 'Seguridad y Sesiones', icon: 'candado' },
   { id: 'confianza', label: 'Confianza y Reputación', icon: 'estrella' },
   { id: 'avisos', label: 'Mis Publicaciones', icon: 'casa' },
@@ -635,6 +638,29 @@ export default function Perfil() {
                   )
                 })()}
               </section>
+
+              {/* Widget Roomie & Convivencia */}
+              <section aria-label="Afinidad Roomie" className="card rounded-2xl p-4 sm:p-5 space-y-2.5 shadow-sm bg-gradient-to-br from-navy-50/70 to-white border border-navy-100">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-navy-900 uppercase tracking-wide flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-gold-500" aria-hidden="true" />
+                    Match de Roomies
+                  </span>
+                  <span className="text-xs font-black text-navy-900 bg-gold-400/20 px-2 py-0.5 rounded-full">
+                    {calcularCompletitudRoomie(perfil?.preferencias).porcentaje}%
+                  </span>
+                </div>
+                <p className="text-xs text-neutral-500 leading-relaxed">
+                  Completa tus 5 hábitos de convivencia para desbloquear el emparejamiento con otros estudiantes.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => irTabGuard('roomie')}
+                  className="w-full text-center px-3 py-2 rounded-xl text-xs font-bold text-navy-900 bg-gold-400 hover:bg-gold-500 transition min-h-[38px]"
+                >
+                  Configurar Hábitos de Roomie
+                </button>
+              </section>
             </div>
           </aside>
           <div className="md:col-span-8 min-w-0">
@@ -820,6 +846,21 @@ export default function Perfil() {
                   />
                 ))}
               </div>
+
+              {/* Acceso directo a Preferencias de Convivencia Roomie */}
+              <div className="pt-2 border-t border-neutral-200/60 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <p className="text-xs text-neutral-600">
+                  ¿Buscas compañero de habitación? Configura tus hábitos de convivencia para hacer match con otros estudiantes.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => irTabGuard('roomie')}
+                  className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-navy-900 bg-gold-400 hover:bg-gold-500 transition shrink-0 min-h-[36px]"
+                >
+                  <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
+                  Perfil de Roomie
+                </button>
+              </div>
             </div>
 
             {/* Acciones alineadas abajo-derecha con acento y focus visible. */}
@@ -839,6 +880,21 @@ export default function Perfil() {
               </button>
             </div>
             </form>
+          </div>
+        )}
+
+        {tab === 'roomie' && (
+          <div id="panel-roomie" role="tabpanel" aria-labelledby="tab-roomie" aria-label="Preferencias de convivencia y roomie" tabIndex={0}>
+            <PreferenciasRoomie
+              token={token}
+              preferencias={perfil?.preferencias}
+              onGuardado={(nuevas) => {
+                setPerfil((prev) => ({
+                  ...prev,
+                  preferencias: { ...(prev?.preferencias || {}), ...nuevas },
+                }))
+              }}
+            />
           </div>
         )}
 
