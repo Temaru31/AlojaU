@@ -24,6 +24,17 @@ describe('Roomies page', () => {
       token: 'mock-token-estudiante',
     })
 
+    vi.spyOn(apiModule.api, 'get').mockResolvedValue({
+      data: {
+        preferencias: {
+          'roomie.aseo_momento_semana': 'entre_semana',
+          'roomie.aseo_horario': 'manana_6am_11am',
+          'roomie.rasgos_negativos': ['impaciente', 'malhumorado'],
+          'roomie.sueno_hora_dormir': '23:00',
+        },
+      },
+    })
+
     vi.spyOn(apiModule, 'getCandidatosRoomies').mockResolvedValue({
       data: [
         {
