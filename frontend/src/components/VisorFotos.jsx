@@ -1,11 +1,15 @@
 // VisorFotos - lightbox accesible, responsive, iterativo
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import SmartImage from './SmartImage'
+import useFocusTrap from '../hooks/useFocusTrap'
 
 export default function VisorFotos({ fotos, initialIndex = 0, onClose }) {
   const total = fotos.length
   const [index, setIndex] = useState(initialIndex)
+  // Bloque 3: Tab cicla dentro del visor (portal incluido) + restaura foco.
+  const cajaRef = useRef(null)
+  useFocusTrap(cajaRef, true)
 
   const goPrev = useCallback(()=> setIndex(i=> (i-1+total)%total), [total])
   const goNext = useCallback(()=> setIndex(i=> (i+1)%total), [total])
@@ -31,7 +35,7 @@ export default function VisorFotos({ fotos, initialIndex = 0, onClose }) {
   // BUG-01: portal a document.body + z-[2000] para quedar por encima de
   // los panes Leaflet (z 400-1000) y del nav sticky (z-50)
   return createPortal(
-    <div className="fixed inset-0 z-[2000] bg-black/90 flex flex-col" role="dialog" aria-modal="true" aria-label="Visor de fotos">
+    <div ref={cajaRef} className="fixed inset-0 z-[2000] bg-black/90 flex flex-col" role="dialog" aria-modal="true" aria-label="Visor de fotos">
       {/* Header */}
       <div className="relative z-10 flex items-center justify-between px-3 sm:px-4 py-3 text-white">
         <span className="text-sm font-medium">{index+1} / {total} • {total} fotos • Vigencia 30d</span>

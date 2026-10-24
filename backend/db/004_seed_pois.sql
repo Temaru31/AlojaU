@@ -1,6 +1,6 @@
 -- =============================================================================
 -- AlojaU - 004: seed de POIs para BASES EXISTENTES (prod/dev con datos).
--- ⚠️ NUNCA ejecutes seed.sql en producción (hace TRUNCATE). Usa ESTE archivo:
+-- NOTA: NUNCA ejecutes seed.sql en producción (hace TRUNCATE). Usa ESTE archivo:
 -- solo INSERTs idempotentes (ON CONFLICT DO NOTHING), sin ids fijos.
 -- Orden: 1) 004_pois_categoria.sql  2) ESTE archivo  3) verificar_pois_004_supabase.sql
 -- =============================================================================

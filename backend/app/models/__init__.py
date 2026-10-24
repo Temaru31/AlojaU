@@ -5,8 +5,11 @@ from sqlalchemy import (
     String, Text, Numeric, Table, UniqueConstraint, Index, func, text as sa_text
 )
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB, ARRAY
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import datetime, time, timezone
+import enum
 
 class Base(DeclarativeBase):
     pass
@@ -71,23 +74,395 @@ class CampusUniversitario(Base):
     ciudad: Mapped["Ciudad"] = relationship(back_populates="campuses")
 
 # ---------------------------------------------------------------------------
-# Usuarios
+# Preferencias de convivencia / roomie (Opciones de personalización.pdf).
+# Diseño: NO son tablas nuevas. Son `Enum` de Python + clase `Preferencias`
+# (dataclass embebida) que se persiste serializada en la columna existente
+# `usuarios.preferencias` (JSONB, claves `roomie.*`). Así no se requiere
+# migración ni se rompe el contrato actual del PATCH /api/auth/perfil
+# (validar_preferencias). `Usuario.preferencias_obj` expone la instancia.
+# Todos los enums incluyen SIN_DATO ("sin_dato") como valor por defecto.
+# ---------------------------------------------------------------------------
+class MomentoAseoSemana(str, enum.Enum):
+    """Punto 1: momento de la semana para el aseo."""
+    SIN_DATO = "sin_dato"
+    ENTRE_SEMANA = "entre_semana"
+    FIN_DE_SEMANA = "fin_de_semana"
+
+
+class HorarioAseo(str, enum.Enum):
+    """Punto 1: horario habitual del aseo."""
+    SIN_DATO = "sin_dato"
+    MANANA_6AM_11AM = "manana_6am_11am"
+    TARDE_12PM_6PM = "tarde_12pm_6pm"
+    NOCHE_7PM_9PM = "noche_7pm_9pm"
+
+
+class EstiloCocina(str, enum.Enum):
+    """Punto 1: cómo eres en la cocina (el @ solo vive en etiquetas UI)."""
+    SIN_DATO = "sin_dato"
+    ORGANIZADO = "organizado"
+    DESORGANIZADO = "desorganizado"
+
+
+class TiempoLavarLoza(str, enum.Enum):
+    """Punto 1: cuánto tardas en lavar la loza."""
+    SIN_DATO = "sin_dato"
+    INMEDIATAMENTE = "inmediatamente"
+    A_LO_LARGO_DEL_DIA = "a_lo_largo_del_dia"
+    OTRO_DIA_CUANDO_SE_NECESITE = "otro_dia_cuando_se_necesite"
+
+
+class FuenteIngresos(str, enum.Enum):
+    """Punto 2: fuente de ingresos."""
+    SIN_DATO = "sin_dato"
+    TRABAJO_FIJO = "trabajo_fijo"
+    TRABAJO_INDEPENDIENTE_EMPRENDIMIENTO = "trabajo_independiente_emprendimiento"
+    RESPALDO_FAMILIAR = "respaldo_familiar"
+
+
+class EstabilidadIngresos(str, enum.Enum):
+    """Punto 2: estabilidad de la fuente de ingresos."""
+    SIN_DATO = "sin_dato"
+    ESTABLE = "estable"
+    VARIABLE = "variable"
+    POCO_ESTABLE = "poco_estable"
+
+
+class RasgoPositivo(str, enum.Enum):
+    """Punto 3: características positivas (lista, mínimo dos defectos aparte)."""
+    SIN_DATO = "sin_dato"
+    RESPETUOSO = "respetuoso"
+    TRANQUILO = "tranquilo"
+    PACIENTE = "paciente"
+    BUENA_VIBRA = "buena_vibra"
+
+
+class RasgoNegativo(str, enum.Enum):
+    """Punto 3: características negativas (mínimo dos necesarias)."""
+    SIN_DATO = "sin_dato"
+    IMPACIENTE = "impaciente"
+    BAJO_MANEJO_FRUSTRACION = "bajo_manejo_frustracion"
+    MALHUMORADO = "malhumorado"
+    TERCO_ORGULLOSO = "terco_orgulloso"
+
+
+class TipoHorarioSueno(str, enum.Enum):
+    """Punto 4: cómo describirías tu horario de sueño."""
+    SIN_DATO = "sin_dato"
+    ESTABLE = "estable"
+    VARIABLE = "variable"
+
+
+# Valores legacy con "@" (v1 del PDF): se aceptan al LEER (compatibilidad
+# con datos ya guardados), pero ya no se emiten (ver from_dict/to_dict).
+_ALIAS_ENUM_LEGACY = {
+    "organizad@": "organizado",
+    "desorganizad@": "desorganizado",
+    "malhumorad@": "malhumorado",
+    "terc@_orgullos@": "terco_orgulloso",
+}
+
+
+def _coerce_enum(enum_cls, valor, por_defecto):
+    """Convierte str/Enum a miembro del enum; desconocido -> por_defecto."""
+    if isinstance(valor, enum_cls):
+        return valor
+    if valor is None:
+        return por_defecto
+    try:
+        texto = str(valor).strip().lower()
+        texto = _ALIAS_ENUM_LEGACY.get(texto, texto)
+        return enum_cls(texto)
+    except (ValueError, AttributeError):
+        return por_defecto
+
+
+def _coerce_lista_enum(enum_cls, valor) -> list:
+    """Convierte lista de str/Enum a lista de miembros (sin duplicados,
+    filtrando SIN_DATO; desconocidos se ignoran)."""
+    if not valor:
+        return []
+    if isinstance(valor, (str, bytes)):
+        valor = [valor]
+    salida, vistos = [], set()
+    for item in valor:
+        m = _coerce_enum(enum_cls, item, None)
+        if m is None or m == enum_cls.SIN_DATO or m in vistos:
+            continue
+        vistos.add(m)
+        salida.append(m)
+    return salida
+
+
+def _coerce_hora(valor) -> time | None:
+    """Acepta time | 'HH:MM' | 'HH:MM:SS' | None."""
+    if valor is None or valor == "":
+        return None
+    if isinstance(valor, time):
+        return valor
+    try:
+        partes = str(valor).strip().split(":")
+        h, m = int(partes[0]), int(partes[1]) if len(partes) > 1 else 0
+        s = int(partes[2]) if len(partes) > 2 else 0
+        return time(hour=h, minute=m, second=s)
+    except (ValueError, IndexError, TypeError):
+        return None
+
+
+def _hora_a_str(valor: time | None) -> str | None:
+    return valor.strftime("%H:%M") if isinstance(valor, time) else None
+
+
+def _coerce_bool3(valor) -> bool | None:
+    """Tri-estado Sí/No/sin responder: True/False estrictos, resto -> None.
+
+    Distingue "No" (False) de "no respondió" (None) para no distorsionar
+    el matching (un NULL nunca suma ni resta, la dimensión se renormaliza).
+    """
+    if valor is True:
+        return True
+    if valor is False:
+        return False
+    return None
+
+
+# Claves JSONB (namespace roomie.*) compatibles con validar_preferencias.
+CLAVES_PREFERENCIAS = {
+    "momento_aseo_semana": "roomie.aseo_momento_semana",
+    "horario_aseo": "roomie.aseo_horario",
+    "estilo_cocina": "roomie.cocina_estilo",
+    "tiempo_lavar_loza": "roomie.loza_tiempo",
+    "fuente_ingresos": "roomie.ingresos_fuente",
+    "estabilidad_ingresos": "roomie.ingresos_estabilidad",
+    "puntual_pagos": "roomie.pagos_puntual",
+    "rasgos_positivos": "roomie.rasgos_positivos",
+    "rasgos_negativos": "roomie.rasgos_negativos",
+    "hora_dormir": "roomie.sueno_hora_dormir",
+    "hora_despertar": "roomie.sueno_hora_despertar",
+    "tipo_horario_sueno": "roomie.sueno_tipo",
+    "tiene_pareja_invitar": "roomie.invitados_pareja",
+    "tiene_mascotas": "roomie.mascotas",
+    "planea_invitados": "roomie.invitados_plan",
+    "acepta_mascotas": "roomie.acepta_mascotas",
+    "acepta_invitados": "roomie.acepta_invitados",
+}
+
+
+@dataclass
+class Preferencias:
+    """Preferencias de convivencia del usuario (puntos 1-5 del PDF).
+
+    Constructor recibe los 17 atributos (todos con defecto: enums en
+    SIN_DATO, tri-estados en None = no respondió, listas vacías, horas None).
+    Se persiste vía `to_dict()`/`from_dict()` en `Usuario.preferencias`.
+    """
+
+    # Punto 1: higiene y orden.
+    momento_aseo_semana: MomentoAseoSemana = MomentoAseoSemana.SIN_DATO
+    horario_aseo: HorarioAseo = HorarioAseo.SIN_DATO
+    estilo_cocina: EstiloCocina = EstiloCocina.SIN_DATO
+    tiempo_lavar_loza: TiempoLavarLoza = TiempoLavarLoza.SIN_DATO
+    # Punto 2: solvencia (la puntualidad es tri-estado, no enum).
+    fuente_ingresos: FuenteIngresos = FuenteIngresos.SIN_DATO
+    estabilidad_ingresos: EstabilidadIngresos = EstabilidadIngresos.SIN_DATO
+    puntual_pagos: bool | None = None
+    # Punto 3: rasgos (listas).
+    rasgos_positivos: list = field(default_factory=list)
+    rasgos_negativos: list = field(default_factory=list)
+    # Punto 4: sueño.
+    hora_dormir: time | None = None
+    hora_despertar: time | None = None
+    tipo_horario_sueno: TipoHorarioSueno = TipoHorarioSueno.SIN_DATO
+    # Punto 5: invitados y mascotas (tri-estado) + aceptación (filtros duros).
+    tiene_pareja_invitar: bool | None = None
+    tiene_mascotas: bool | None = None
+    planea_invitados: bool | None = None
+    acepta_mascotas: bool | None = None
+    acepta_invitados: bool | None = None
+
+    def __post_init__(self):
+        self.momento_aseo_semana = _coerce_enum(
+            MomentoAseoSemana, self.momento_aseo_semana, MomentoAseoSemana.SIN_DATO)
+        self.horario_aseo = _coerce_enum(HorarioAseo, self.horario_aseo, HorarioAseo.SIN_DATO)
+        self.estilo_cocina = _coerce_enum(EstiloCocina, self.estilo_cocina, EstiloCocina.SIN_DATO)
+        self.tiempo_lavar_loza = _coerce_enum(
+            TiempoLavarLoza, self.tiempo_lavar_loza, TiempoLavarLoza.SIN_DATO)
+        self.fuente_ingresos = _coerce_enum(
+            FuenteIngresos, self.fuente_ingresos, FuenteIngresos.SIN_DATO)
+        self.estabilidad_ingresos = _coerce_enum(
+            EstabilidadIngresos, self.estabilidad_ingresos, EstabilidadIngresos.SIN_DATO)
+        self.tipo_horario_sueno = _coerce_enum(
+            TipoHorarioSueno, self.tipo_horario_sueno, TipoHorarioSueno.SIN_DATO)
+        self.rasgos_positivos = _coerce_lista_enum(RasgoPositivo, self.rasgos_positivos)
+        self.rasgos_negativos = _coerce_lista_enum(RasgoNegativo, self.rasgos_negativos)
+        self.hora_dormir = _coerce_hora(self.hora_dormir)
+        self.hora_despertar = _coerce_hora(self.hora_despertar)
+        self.puntual_pagos = _coerce_bool3(self.puntual_pagos)
+        self.tiene_pareja_invitar = _coerce_bool3(self.tiene_pareja_invitar)
+        self.tiene_mascotas = _coerce_bool3(self.tiene_mascotas)
+        self.planea_invitados = _coerce_bool3(self.planea_invitados)
+        self.acepta_mascotas = _coerce_bool3(self.acepta_mascotas)
+        self.acepta_invitados = _coerce_bool3(self.acepta_invitados)
+
+    def to_dict(self, solo_informados: bool = False) -> dict:
+        """Serializa a JSONB (claves roomie.*). None = no respondió y se
+        persiste como null. Con solo_informados=True omite SIN_DATO/None/
+        vacíos/False (útil para PATCH parcial)."""
+        d = {
+            CLAVES_PREFERENCIAS["momento_aseo_semana"]: self.momento_aseo_semana.value,
+            CLAVES_PREFERENCIAS["horario_aseo"]: self.horario_aseo.value,
+            CLAVES_PREFERENCIAS["estilo_cocina"]: self.estilo_cocina.value,
+            CLAVES_PREFERENCIAS["tiempo_lavar_loza"]: self.tiempo_lavar_loza.value,
+            CLAVES_PREFERENCIAS["fuente_ingresos"]: self.fuente_ingresos.value,
+            CLAVES_PREFERENCIAS["estabilidad_ingresos"]: self.estabilidad_ingresos.value,
+            CLAVES_PREFERENCIAS["puntual_pagos"]: self.puntual_pagos,
+            CLAVES_PREFERENCIAS["rasgos_positivos"]: [r.value for r in self.rasgos_positivos],
+            CLAVES_PREFERENCIAS["rasgos_negativos"]: [r.value for r in self.rasgos_negativos],
+            CLAVES_PREFERENCIAS["hora_dormir"]: _hora_a_str(self.hora_dormir),
+            CLAVES_PREFERENCIAS["hora_despertar"]: _hora_a_str(self.hora_despertar),
+            CLAVES_PREFERENCIAS["tipo_horario_sueno"]: self.tipo_horario_sueno.value,
+            CLAVES_PREFERENCIAS["tiene_pareja_invitar"]: self.tiene_pareja_invitar,
+            CLAVES_PREFERENCIAS["tiene_mascotas"]: self.tiene_mascotas,
+            CLAVES_PREFERENCIAS["planea_invitados"]: self.planea_invitados,
+            CLAVES_PREFERENCIAS["acepta_mascotas"]: self.acepta_mascotas,
+            CLAVES_PREFERENCIAS["acepta_invitados"]: self.acepta_invitados,
+        }
+        if not solo_informados:
+            return d
+        return {k: v for k, v in d.items()
+                if v not in (None, False, [], "sin_dato")}
+
+    def tiene_datos(self) -> bool:
+        """True si al menos un campo fue respondido (un False explícito
+        cuenta como dato; solo el defecto total da False)."""
+        if any(e != e.__class__.SIN_DATO for e in (
+                self.momento_aseo_semana, self.horario_aseo, self.estilo_cocina,
+                self.tiempo_lavar_loza, self.fuente_ingresos,
+                self.estabilidad_ingresos, self.tipo_horario_sueno)):
+            return True
+        if any(v is not None for v in (
+                self.puntual_pagos, self.tiene_pareja_invitar, self.tiene_mascotas,
+                self.planea_invitados, self.acepta_mascotas, self.acepta_invitados)):
+            return True
+        return bool(self.rasgos_positivos or self.rasgos_negativos
+                    or self.hora_dormir or self.hora_despertar)
+
+    @classmethod
+    def from_dict(cls, data: dict | None) -> "Preferencias":
+        """Construye desde el JSONB (tolera ausencias y claves extra)."""
+        data = data or {}
+        if not isinstance(data, dict):
+            return cls()
+        g = data.get
+        return cls(
+            momento_aseo_semana=_coerce_enum(
+                MomentoAseoSemana, g(CLAVES_PREFERENCIAS["momento_aseo_semana"]),
+                MomentoAseoSemana.SIN_DATO),
+            horario_aseo=_coerce_enum(
+                HorarioAseo, g(CLAVES_PREFERENCIAS["horario_aseo"]), HorarioAseo.SIN_DATO),
+            estilo_cocina=_coerce_enum(
+                EstiloCocina, g(CLAVES_PREFERENCIAS["estilo_cocina"]), EstiloCocina.SIN_DATO),
+            tiempo_lavar_loza=_coerce_enum(
+                TiempoLavarLoza, g(CLAVES_PREFERENCIAS["tiempo_lavar_loza"]),
+                TiempoLavarLoza.SIN_DATO),
+            fuente_ingresos=_coerce_enum(
+                FuenteIngresos, g(CLAVES_PREFERENCIAS["fuente_ingresos"]),
+                FuenteIngresos.SIN_DATO),
+            estabilidad_ingresos=_coerce_enum(
+                EstabilidadIngresos, g(CLAVES_PREFERENCIAS["estabilidad_ingresos"]),
+                EstabilidadIngresos.SIN_DATO),
+            puntual_pagos=_coerce_bool3(g(CLAVES_PREFERENCIAS["puntual_pagos"])),
+            rasgos_positivos=_coerce_lista_enum(
+                RasgoPositivo, g(CLAVES_PREFERENCIAS["rasgos_positivos"])),
+            rasgos_negativos=_coerce_lista_enum(
+                RasgoNegativo, g(CLAVES_PREFERENCIAS["rasgos_negativos"])),
+            hora_dormir=_coerce_hora(g(CLAVES_PREFERENCIAS["hora_dormir"])),
+            hora_despertar=_coerce_hora(g(CLAVES_PREFERENCIAS["hora_despertar"])),
+            tipo_horario_sueno=_coerce_enum(
+                TipoHorarioSueno, g(CLAVES_PREFERENCIAS["tipo_horario_sueno"]),
+                TipoHorarioSueno.SIN_DATO),
+            tiene_pareja_invitar=_coerce_bool3(g(CLAVES_PREFERENCIAS["tiene_pareja_invitar"])),
+            tiene_mascotas=_coerce_bool3(g(CLAVES_PREFERENCIAS["tiene_mascotas"])),
+            planea_invitados=_coerce_bool3(g(CLAVES_PREFERENCIAS["planea_invitados"])),
+            acepta_mascotas=_coerce_bool3(g(CLAVES_PREFERENCIAS["acepta_mascotas"])),
+            acepta_invitados=_coerce_bool3(g(CLAVES_PREFERENCIAS["acepta_invitados"])),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Usuarios (v13: ESTUDIANTE base + ARRENDADOR + ADMIN + futuros roles)
 # ---------------------------------------------------------------------------
 class Usuario(Base):
     __tablename__ = "usuarios"
     __table_args__ = (
-        CheckConstraint("rol IN ('ARRENDADOR','ADMIN')", name="chk_rol"),
+        CheckConstraint(
+            "rol IN ('ESTUDIANTE','ARRENDADOR','ADMIN','MODERADOR_CAMPUS','AUDITOR_LEGAL')",
+            name="chk_rol",
+        ),
         CheckConstraint("telefono_whatsapp ~ '^\\+?[0-9]{7,20}$'", name="chk_telefono_formato"),
         Index("idx_usuarios_rol", "rol"),
+        Index("idx_usuarios_eliminado", "eliminado_en"),
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     nombre_completo: Mapped[str] = mapped_column(String(150), nullable=False)
     email: Mapped[str] = mapped_column(String(180), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    telefono_whatsapp: Mapped[str] = mapped_column(String(20), nullable=False)
-    rol: Mapped[str] = mapped_column(String(20), nullable=False)  # ARRENDADOR / ADMIN
+    # v13.2 marketplace: teléfono opcional (NULL = sin vincular; el CHECK solo
+    # valida no-nulos). Se exige al publicar, no al registrarse.
+    telefono_whatsapp: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    rol: Mapped[str] = mapped_column(String(20), nullable=False, default="ESTUDIANTE")  # v13 base
     telefono_verificado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # v13 Enterprise Auth / Ley 1581:
+    auth_provider: Mapped[str] = mapped_column(String(30), default="password", nullable=False)
+    supabase_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    email_verificado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    acepto_tratamiento_datos: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    fecha_consentimiento: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ip_consentimiento: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    version_politica: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # v13.1 soft-delete: NULL = activa; fecha = en período de gracia (30 días)
+    # antes del borrado físico (purga). Permite recuperar la cuenta.
+    eliminado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # v13.2 marketplace flexible: bio, foto y preferencias extensibles.
+    bio: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    foto_perfil_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    preferencias: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict,
+                                               server_default="{}")
+    # M5 Telegram $0: chat_id para DM de OTP (NULL = sin vincular).
+    # Nunca se postea a canales/grupos; solo DM si existe.
+    telegram_chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    @property
+    def preferencias_obj(self) -> "Preferencias":
+        """Instancia de Preferencias construida desde el JSONB."""
+        raw = self.preferencias or {}
+        if not isinstance(raw, dict):
+            return Preferencias()
+        return Preferencias.from_dict(raw)
+
+    @preferencias_obj.setter
+    def preferencias_obj(self, valor: "Preferencias | dict | None") -> None:
+        if valor is None:
+            self.preferencias = {}
+        elif isinstance(valor, Preferencias):
+            self.preferencias = valor.to_dict()
+        elif isinstance(valor, dict):
+            self.preferencias = Preferencias.from_dict(valor).to_dict()
+        else:
+            raise TypeError("preferencias_obj debe ser Preferencias, dict o None")
+
+# ---------------------------------------------------------------------------
+# Tipos de vivienda dinámicos (mig 013, M2). Catálogo en BD, no CHECK.
+# ---------------------------------------------------------------------------
+class HousingType(Base):
+    __tablename__ = "housing_types"
+    slug: Mapped[str] = mapped_column(String(40), primary_key=True)
+    nombre_visible: Mapped[str] = mapped_column(String(80), nullable=False)
+    descripcion_tooltip: Mapped[str | None] = mapped_column(Text, nullable=True)
+    icono: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    esta_activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
 
 # ---------------------------------------------------------------------------
 # Publicaciones (FIX: + latitud, longitud, indice_confianza + relationships)
@@ -95,8 +470,10 @@ class Usuario(Base):
 class Publicacion(Base):
     __tablename__ = "publicaciones"
     __table_args__ = (
-        CheckConstraint("tipo_inmueble IN ('HABITACION_FAMILIAR','HABITACION_INDEPENDIENTE','APARTAESTUDIO','COMPARTIDO')", name="chk_tipo"),
-        CheckConstraint("estado IN ('PENDIENTE','ACTIVO','PAUSADO','ARRENDADO','EXPIRADO','RECHAZADO','DESACTIVADO')", name="chk_estado"),
+        # M2: chk_tipo reemplazada por FK RESTRICT a housing_types (mig 013).
+        # Se evita borrar slugs en uso (ON DELETE RESTRICT).
+        # Fase 5 (aditivo): + PAUSADO_POR_REPORTE + REVISION_REQUERIDA. Los 7 previos siguen válidos.
+        CheckConstraint("estado IN ('PENDIENTE','ACTIVO','PAUSADO','ARRENDADO','EXPIRADO','RECHAZADO','DESACTIVADO','PAUSADO_POR_REPORTE','REVISION_REQUERIDA')", name="chk_estado"),
         CheckConstraint("canon_mensual > 0", name="chk_canon"),
         CheckConstraint("deposito_requerido >= 0", name="chk_deposito"),
         CheckConstraint("indice_confianza BETWEEN 0 AND 100", name="chk_confianza"),
@@ -112,10 +489,15 @@ class Publicacion(Base):
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
-    zona_barrio_id: Mapped[int] = mapped_column(ForeignKey("zonas_barrios.id", ondelete="RESTRICT"), nullable=False)
+    # Zona opcional: el barrio personalizado vive en barrio_texto.
+    zona_barrio_id: Mapped[int | None] = mapped_column(ForeignKey("zonas_barrios.id", ondelete="RESTRICT"), nullable=True)
+    barrio_texto: Mapped[str | None] = mapped_column(String(120), nullable=True)
     titulo: Mapped[str] = mapped_column(String(150), nullable=False)
     descripcion: Mapped[str] = mapped_column(Text, nullable=False)
-    tipo_inmueble: Mapped[str] = mapped_column(String(30), nullable=False)
+    # M2 FK RESTRICT a housing_types.slug (mig 013). El CHECK estático se eliminó.
+    tipo_inmueble: Mapped[str] = mapped_column(
+        String(40), ForeignKey("housing_types.slug", ondelete="RESTRICT", onupdate="CASCADE"),
+        nullable=False)
     canon_mensual: Mapped[float] = mapped_column(Numeric(10,2), nullable=False)
     deposito_requerido: Mapped[float] = mapped_column(Numeric(10,2), default=0, nullable=False)
     incluye_servicios_base: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -126,15 +508,21 @@ class Publicacion(Base):
     latitud: Mapped[float | None] = mapped_column(Numeric(10,7), nullable=True)
     longitud: Mapped[float | None] = mapped_column(Numeric(10,7), nullable=True)
     indice_confianza: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+    # v15.2 métrica de vistas (incremental, dedup diaria por IP en endpoint).
+    vistas: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     fecha_publicacion: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     fecha_renovacion: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     fecha_expiracion: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sa_text("NOW() + INTERVAL '30 days'"))
 
     # Relationships para evitar N+1 y permitir selectinload (router espera .servicios y .imagenes)
-    zona: Mapped["ZonaBarrio"] = relationship(lazy="joined")
+    zona: Mapped["ZonaBarrio | None"] = relationship(lazy="joined")
     usuario: Mapped["Usuario"] = relationship(lazy="joined")
     servicios: Mapped[list["ServicioCatalogo"]] = relationship(secondary="publicacion_servicios", lazy="selectin")
-    imagenes: Mapped[list["ImagenPublicacion"]] = relationship(back_populates="publicacion", cascade="all, delete-orphan", lazy="selectin")
+    # BUG#1 portada: orden determinista en TODOS los eager-loads (fetch_page,
+    # detail, mias, pendientes, cambiar-estado, similares, editar). Sin esto
+    # fotos[0] era orden de heap, no la portada (orden=1). Fuente única de
+    # verdad a nivel ORM; la capa vista además ordena defensivamente por orden.
+    imagenes: Mapped[list["ImagenPublicacion"]] = relationship(back_populates="publicacion", cascade="all, delete-orphan", lazy="selectin", order_by="ImagenPublicacion.orden")
     campus_links: Mapped[list["PublicacionCampus"]] = relationship(back_populates="publicacion", cascade="all, delete-orphan", lazy="selectin")
 
 # ---------------------------------------------------------------------------
@@ -169,7 +557,7 @@ class PublicacionCampus(Base):
     )
     publicacion_id: Mapped[int] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), primary_key=True)
     campus_id: Mapped[int] = mapped_column(ForeignKey("campus_universitarios.id", ondelete="CASCADE"), primary_key=True)
-    # B0-5: NULL cuando pub sin coords (no 0). Requiere migración DB si columna era NOT NULL.
+    # NULL cuando la pub no tiene coords (no 0).
     distancia_geodesica_m: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     publicacion: Mapped["Publicacion"] = relationship(back_populates="campus_links")
@@ -215,13 +603,278 @@ class ReportePublicacion(Base):
 class PublicacionesAudit(Base):
     __tablename__ = "publicaciones_audit"
     __table_args__ = (
-        CheckConstraint("evento IN ('CREATED','APPROVED','REJECTED','PAUSED','RESUMED','RENTED','EXPIRED','RENEWED','BLOCKED')", name="chk_evento"),
+        # M4 historial: + SETTINGS (ajustes) y CUENTA_DELETE (soft-delete).
+        CheckConstraint("evento IN ('CREATED','APPROVED','REJECTED','PAUSED','RESUMED','RENTED','EXPIRED','RENEWED','BLOCKED','SETTINGS','CUENTA_DELETE')", name="chk_evento"),
         Index("idx_audit_pub", "publicacion_id"),
         Index("idx_audit_evento", "evento"),
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    publicacion_id: Mapped[int] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), nullable=False)
+    # M4: NULL cuando el acto no refiere a un aviso (SETTINGS, CUENTA_DELETE).
+    publicacion_id: Mapped[int | None] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), nullable=True)
     usuario_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
     evento: Mapped[str] = mapped_column(String(20), nullable=False)
     detalle: Mapped[str | None] = mapped_column(Text, nullable=True)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------------------------------------------------------------------------
+# Fase 5: ajustes automatizados por UI (tabla system_settings, borrador).
+# La máquina de estados extendida (PAUSADO_POR_REPORTE, REVISION_REQUERIDA)
+# llega vía migración 005; el CHECK del modelo se amplía sin romper los
+# 7 estados previos (aditivo). Ver docs/ADMIN_AUTOMATION_SPECS.md.
+# ---------------------------------------------------------------------------
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+    __table_args__ = (
+        UniqueConstraint("clave", name="uq_system_settings_clave"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    clave: Mapped[str] = mapped_column(String(80), nullable=False)
+    valor: Mapped[str] = mapped_column(Text, nullable=False)
+    tipo: Mapped[str] = mapped_column(String(20), nullable=False, default="int")
+    descripcion: Mapped[str | None] = mapped_column(Text, nullable=True)
+    actualizado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------------------------------------------------------------------------
+# v13 Enterprise Auth: rate-limit persistente, OTP, recovery y sesiones.
+# Tablas pequeñas, TTL por expiración, índices por (clave, creado).
+# ---------------------------------------------------------------------------
+class RateLimitAttempt(Base):
+    """Intentos de login/recovery persistentes (sobreviven reinicios Render)."""
+    __tablename__ = "rate_limit_attempts"
+    __table_args__ = (
+        Index("idx_ratelimit_clave_creado", "clave", "creado_en"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    clave: Mapped[str] = mapped_column(String(180), nullable=False)  # "login:ip:x" | "login:user:x"
+    exito: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class OtpCode(Base):
+    """Códigos de 6 dígitos con expiración 10min (Email o Telegram)."""
+    __tablename__ = "otp_codes"
+    __table_args__ = (
+        Index("idx_otp_email_creado", "email", "creado_en"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(180), nullable=False)
+    codigo_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    proposito: Mapped[str] = mapped_column(String(30), nullable=False, default="email_verify")
+    consumido: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    expira_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PasswordReset(Base):
+    """Enlaces firmados de un solo uso, expiración corta (15min)."""
+    __tablename__ = "password_resets"
+    __table_args__ = (
+        Index("idx_pwreset_email_creado", "email", "creado_en"),
+        UniqueConstraint("token_hash", name="uq_pwreset_token"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(180), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    consumido: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    expira_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Sesion(Base):
+    """Sesiones activas (jti de refresh/access) para revocación global."""
+    __tablename__ = "sesiones"
+    __table_args__ = (
+        Index("idx_sesiones_usuario", "usuario_id"),
+        UniqueConstraint("jti", name="uq_sesiones_jti"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
+    jti: Mapped[str] = mapped_column(String(64), nullable=False)
+    ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    revocado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    revocado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class VistaDedup(Base):
+    """v15.2 dedup diaria de vistas: 1 conteo por (aviso, IP, día).
+
+    Se guarda el hash SHA256 (nunca la IP en claro). Sin FK (las filas
+    sobreviven a la purga del aviso; limpieza por antigüedad).
+    """
+    __tablename__ = "vistas_dedup"
+    __table_args__ = (
+        UniqueConstraint("publicacion_id", "marca", name="uq_vista_pub_marca"),
+        Index("idx_vistas_dedup_dia", "dia"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    publicacion_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    marca: Mapped[str] = mapped_column(String(64), nullable=False)
+    dia: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TelegramVinculo(Base):
+    """Bloque 2: nonces HMAC de vinculación persistentes (mig 015).
+
+    La memoria (_TELEGRAM_VINCULOS) queda como L1/dev; PG es la fuente de
+    verdad que sobrevive redeploys e instancias múltiples.
+
+    Opción A (mig 018): `chat_id_pendiente` guarda QUÉ chat pidió el enlace
+    con /start. La vinculación solo se completa al recibir el contacto
+    compartido (request_contact) cuyo número coincida con el teléfono
+    verificado del usuario. NULL = aún sin /start.
+    """
+    __tablename__ = "telegram_vinculos"
+    __table_args__ = (
+        Index("idx_telegram_vinculos_expira", "expira_en"),
+        Index("idx_telegram_vinculos_chat", "chat_id_pendiente"),
+    )
+    nonce: Mapped[str] = mapped_column(String(32), primary_key=True)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
+    expira_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    usado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    chat_id_pendiente: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class IdempotencyKey(Base):
+    """Bloque 2: respuestas guardadas para reintentos seguros (mig 016).
+
+    PK compuesta (clave, usuario_id, ruta): cierra la carrera entre lookup
+    e insert (UNIQUE -> replay) y evita fugas entre usuarios.
+    """
+    __tablename__ = "idempotency_keys"
+    __table_args__ = (
+        Index("idx_idempotency_expira", "expira_en"),
+    )
+    clave: Mapped[str] = mapped_column(String(64), primary_key=True)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), primary_key=True)
+    ruta: Mapped[str] = mapped_column(String(120), primary_key=True)
+    codigo: Mapped[int] = mapped_column(Integer, default=201, nullable=False)
+    cuerpo: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    expira_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ---------------------------------------------------------------------------
+# Notificaciones in-app + búsquedas guardadas (mig 019, Fase 1).
+# Campanita: bandeja por usuario_id; matcher futuro filtra por precio,
+# campus/tipo/zona y servicios (@>); dedupe por evento_id (reintentos
+# seguros sin prohibir repeticiones futuras del mismo tipo).
+# ---------------------------------------------------------------------------
+class BusquedaGuardada(Base):
+    __tablename__ = "busquedas_guardadas"
+    __table_args__ = (
+        CheckConstraint(
+            "precio_min IS NULL OR precio_max IS NULL OR precio_min <= precio_max",
+            name="chk_bg_rango",
+        ),
+        Index("idx_bg_matching", "activa", "campus_id", "tipo",
+              postgresql_where=sa_text("activa")),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
+    nombre: Mapped[str | None] = mapped_column(Text, nullable=True)
+    precio_min: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    precio_max: Mapped[float | None] = mapped_column(Numeric, nullable=True)
+    campus_id: Mapped[int | None] = mapped_column(
+        ForeignKey("campus_universitarios.id", ondelete="SET NULL"), nullable=True)
+    zona_barrio_id: Mapped[int | None] = mapped_column(
+        ForeignKey("zonas_barrios.id", ondelete="SET NULL"), nullable=True)
+    tipo: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    servicios_ids: Mapped[list[int]] = mapped_column(
+        ARRAY(Integer), nullable=False, default=list, server_default="{}")
+    activa: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Notificacion(Base):
+    __tablename__ = "notificaciones"
+    __table_args__ = (
+        UniqueConstraint("usuario_id", "evento_id", name="uq_notif_usuario_evento"),
+        CheckConstraint(
+            "tipo IN ('nuevo_arriendo','moderacion','vencimiento','telegram')",
+            name="chk_notif_tipo",
+        ),
+        # idx_notif_bandeja se declara bajo la clase (necesita created_at.desc()).
+        Index("idx_notif_noleidas", "usuario_id",
+              postgresql_where=sa_text("leida IS FALSE")),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
+    publicacion_id: Mapped[int | None] = mapped_column(
+        ForeignKey("publicaciones.id", ondelete="CASCADE"), nullable=True)
+    busqueda_id: Mapped[int | None] = mapped_column(
+        ForeignKey("busquedas_guardadas.id", ondelete="SET NULL"), nullable=True)
+    evento_id: Mapped[str] = mapped_column(Text, nullable=False)
+    tipo: Mapped[str] = mapped_column(String(20), nullable=False)
+    titulo: Mapped[str] = mapped_column(Text, nullable=False)
+    cuerpo: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    canal: Mapped[str] = mapped_column(String(20), nullable=False, default="app")
+    leida: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    leida_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# DESC explícito para la paginación de la bandeja (ORDER BY created_at DESC).
+Index(
+    "idx_notif_bandeja",
+    Notificacion.usuario_id, Notificacion.created_at.desc(),
+)
+
+
+# ---------------------------------------------------------------------------
+# Publicidad: planes + destacados de publicaciones (mig 022, Fase 1).
+# Un destacado = una compra de visibilidad por días con pago manual v1
+# (pago_ref + aprobación admin). El historial nunca se borra: PENDIENTE
+# vencido -> VENCIDO vía job vencer_destacados(); el unique parcial
+# garantiza UN solo ACTIVO por publicación.
+# ---------------------------------------------------------------------------
+class PlanPublicidad(Base):
+    __tablename__ = "planes_publicidad"
+    __table_args__ = (
+        CheckConstraint("dias > 0", name="chk_plan_dias"),
+        CheckConstraint("precio_cop >= 0", name="chk_plan_precio"),
+        CheckConstraint("prioridad > 0", name="chk_plan_prioridad"),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    nombre: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    dias: Mapped[int] = mapped_column(Integer, nullable=False)
+    precio_cop: Mapped[int] = mapped_column(Integer, nullable=False)
+    prioridad: Mapped[int] = mapped_column(Integer, nullable=False)
+    activo: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class PublicacionDestacado(Base):
+    __tablename__ = "publicacion_destacados"
+    __table_args__ = (
+        CheckConstraint(
+            "estado IN ('PENDIENTE','ACTIVO','VENCIDO','RECHAZADO')",
+            name="chk_destacado_estado",
+        ),
+        CheckConstraint("vence > inicia", name="chk_destacado_vigencia"),
+        Index("idx_destacados_pub_estado", "publicacion_id", "estado"),
+        Index("idx_destacados_estado_vence", "estado", "vence"),
+        # Un solo ACTIVO por publicación (parcial; el historial múltiple
+        # PENDIENTE/VENCIDO/RECHAZADO sí está permitido).
+        Index("uq_destacado_pub_activo", "publicacion_id",
+              unique=True, postgresql_where=sa_text("estado = 'ACTIVO'")),
+    )
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    publicacion_id: Mapped[int] = mapped_column(
+        ForeignKey("publicaciones.id", ondelete="CASCADE"), nullable=False)
+    plan_id: Mapped[int] = mapped_column(
+        ForeignKey("planes_publicidad.id", ondelete="RESTRICT"), nullable=False)
+    inicia: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())
+    vence: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    estado: Mapped[str] = mapped_column(Text, default="PENDIENTE", nullable=False)
+    pago_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(
+        ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now())

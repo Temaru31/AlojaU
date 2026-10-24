@@ -7,7 +7,7 @@ Uso:
 
 Lee DATABASE_URL del entorno o de backend/.env. Con Supabase (host
 supabase.co) activa SSL automáticamente. Genera los hashes con la MISMA
-librería del backend (passlib CryptContext bcrypt, ver app/core/security.py),
+librería del backend (bcrypt directo, ver app/core/security.py),
 nunca hashes copiados a mano. UPSERT por email (ON CONFLICT DO UPDATE):
 idempotente, seguro de re-ejecutar. Imprime `[OK] Usuarios demo listos e
 integrados en BD` al final. No toca publicaciones ni reportes.
@@ -25,9 +25,7 @@ try:
 except ImportError:  # pragma: no cover - python-dotenv es dependencia, fallback a env
     pass
 
-from passlib.context import CryptContext
-
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+from app.core.security import hash_password as _hash_pw
 
 # Demo único: misma clave para los 2 roles (documentado en Perfil/Publicar).
 DEMOS = [
@@ -80,8 +78,8 @@ async def main() -> None:
     conn = await asyncpg.connect(dsn, ssl=ssl if ssl else None)
     try:
         for demo in DEMOS:
-            # Misma librería que app/core/security.hash_password (passlib bcrypt).
-            digest = pwd_ctx.hash(demo["password"])
+            # Misma librería que app/core/security.hash_password (bcrypt directo).
+            digest = _hash_pw(demo["password"])
             await conn.execute(
                 UPSERT,
                 demo["nombre"],
