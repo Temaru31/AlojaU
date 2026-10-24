@@ -152,4 +152,42 @@ describe('Roomies page', () => {
     const linksWhatsApp = screen.getAllByRole('link', { name: /Contactar WhatsApp/i })
     expect(linksWhatsApp[0]).toHaveAttribute('href', expect.stringContaining('https://wa.me/573128904561'))
   })
+
+  it('soporta candidatos con el formato minimal del backend (id, score, sin detalle ni preferencias)', async () => {
+    vi.spyOn(apiModule, 'getCandidatosRoomies').mockResolvedValueOnce({
+      data: [
+        {
+          id: 501,
+          nombre_completo: 'Laura Restrepo',
+          email: 'lrestrepo@unicauca.edu.co',
+          telefono_whatsapp: '3159998877',
+          score: 91,
+        },
+      ],
+    })
+
+    render(
+      <BrowserRouter>
+        <Roomies />
+      </BrowserRouter>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Laura Restrepo')).toBeInTheDocument()
+    })
+
+    // Debe mostrar score y email
+    expect(screen.getByText('91%')).toBeInTheDocument()
+    expect(screen.getByText(/lrestrepo@unicauca.edu.co/)).toBeInTheDocument()
+
+    // No debe mostrar botón de hábitos ni desglose dimensional porque no vinieron
+    expect(screen.queryByRole('button', { name: /Ver hábitos completos/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Afinidad por dimensiones:/i)).not.toBeInTheDocument()
+
+    // Debe tener el botón de WhatsApp
+    const linkWhatsApp = screen.getByRole('link', { name: /Contactar WhatsApp/i })
+    expect(linkWhatsApp).toBeInTheDocument()
+    expect(linkWhatsApp).toHaveAttribute('href', expect.stringContaining('3159998877'))
+  })
 })
+
