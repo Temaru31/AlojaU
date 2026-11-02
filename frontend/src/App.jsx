@@ -3,7 +3,7 @@ import { useState, useEffect, lazy, Suspense } from 'react'
 import Buscar from './pages/Buscar'
 import Perfil from './pages/Perfil'
 import MisPublicaciones from './pages/MisPublicaciones'
-// OLA4: rutas pesadas diferidas (code-splitting). Buscar/Perfil/MisPublicaciones
+// Rutas pesadas diferidas (code-splitting). Buscar/Perfil/MisPublicaciones
 // quedan eager (landing + auth críticas y livianas).
 const Detalle = lazy(() => import('./pages/Detalle'))
 const Publicar = lazy(() => import('./pages/Publicar'))
@@ -15,7 +15,7 @@ const AdminReportes = lazy(() => import('./pages/AdminReportes'))
 const AdminDashboard = lazy(() => import('./pages/AdminDashboard'))
 const AdminTipos = lazy(() => import('./pages/AdminTipos'))
 const Roomies = lazy(() => import('./pages/Roomies'))
-// v13 Enterprise Auth: OAuth callback, recovery y legal (Ley 1581).
+// Enterprise Auth: OAuth callback, recovery y legal (Ley 1581).
 const AuthCallback = lazy(() => import('./pages/AuthCallback'))
 const Recuperar = lazy(() => import('./pages/Recuperar'))
 const Restablecer = lazy(() => import('./pages/Restablecer'))
@@ -35,6 +35,7 @@ import { FavoritosProvider, useFavoritos } from './contexts/FavoritosContext'
 import { CompararProvider, useComparar } from './contexts/CompararContext'
 import { AuthProvider, useAuth, inicialesDe, AUTH_EVENT, MIAS_EVENT } from './contexts/AuthContext'
 import { api } from './services/api'
+import { bearer } from './services/authHeaders'
 
 // UX: cada cambio de ruta abre arriba del todo (antes: abrir Perfil/Publicar
 // desde el fondo del home las dejaba scrolleadas abajo). Solo pathname:
@@ -62,7 +63,7 @@ function Nav() {
 
   const closeMenu = () => setMobileOpen(false)
   const closeUser = () => setUserOpen(false)
-  // M1 efecto fantasma: la sesión se decide por usuario verificado, no por
+  // Efecto fantasma: la sesión se decide por usuario verificado, no por
   // token crudo (un token muerto/401 no debe mostrar avatar ni "Mis pubs").
   const sesionActiva = !!token && !!user && !authLoading
   const verificando = !!token && (!user || authLoading)
@@ -86,7 +87,7 @@ function Nav() {
       try {
         const r = await api.get('/api/publicaciones/mias', {
           params: { size: 1 },
-          headers: { Authorization: `Bearer ${token}` },
+          headers: bearer(token),
         })
         // Solo un total numérico oculta el enlace; cualquier otra forma
         // (error, mock, contrato futuro) mantiene visible (fail-open).
@@ -460,7 +461,7 @@ function Footer() {
 }
 
 function App() {
-  // Bloque 3: heartbeat ligero anti cold-start (solo pestaña visible).
+  // Heartbeat ligero anti cold-start (solo pestaña visible).
   // Nota: el hook vive aquí (raíz del Router) para cubrir toda la app.
   useKeepAlive()
   return (

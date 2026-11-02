@@ -13,16 +13,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_optional_user, require_admin
 from app.core.logseguro import exc_resumen
-from app.core.config import settings
 from app.db.session import get_session
 
 import logging
+from app.core.db_utils import rollback_seguro
+from app.core.net import ip_de_conexion
+from app.core.rate_limit import registrar_intento
+from app.core.flags import mock_enabled
+from app.core.dominio import EstadoPublicacion, EstadoReporte
 logger = logging.getLogger("alojau.reportes")
 
 router = APIRouter(prefix="/api/reportes", tags=["reportes"])
 
 MotivoReporte = Literal["POSIBLE_ESTAFA", "DATOS_FALSOS", "INMUEBLE_ARRENDADO", "FOTOS_ENGANOSAS", "OTRO"]
-ESTADOS_REVISADOS = ("CONFIRMADO", "DESCARTADO")
+ESTADOS_REVISADOS = (EstadoReporte.CONFIRMADO, EstadoReporte.DESCARTADO)
 
 
 def _rechazar_html(v: Optional[str]) -> Optional[str]:
@@ -59,10 +63,6 @@ class ReporteAccionIn(BaseModel):
     accion: Literal["confirmar", "descartar"]
 
 
-def _mock_enabled() -> bool:
-    return bool(getattr(settings, "mock_enabled", False))
-
-
 # Anti-spam en memoria: 5 reportes/min por IP -> 429 (igual patrón que auth login).
 _REPORT_ATTEMPTS: dict[str, list[float]] = {}
 REPORT_LIMIT = 5
@@ -80,14 +80,9 @@ def clear_report_rate_limit_for_tests() -> None:
     _REPORT_ATTEMPTS.clear()
 
 
-def _check_report_rate_limit(request: Request):
-    ip = request.client.host if request.client and request.client.host else "unknown"
-    now = time.monotonic()
-    hist = [t for t in _REPORT_ATTEMPTS.get(ip, []) if now - t < REPORT_WINDOW_S]
-    if len(hist) >= REPORT_LIMIT:
-        raise HTTPException(status_code=429, detail="Demasiados reportes, espera 1 minuto (anti-spam)")
-    hist.append(now)
-    _REPORT_ATTEMPTS[ip] = hist
+def _check_report_rate_limit(request: Request) -> None:
+    registrar_intento(_REPORT_ATTEMPTS, ip_de_conexion(request), REPORT_LIMIT, REPORT_WINDOW_S,
+                      "Demasiados reportes, espera 1 minuto (anti-spam)")
 
 
 def _to_out(r) -> dict:
@@ -120,7 +115,7 @@ async def crear_reporte(
         from app.models import Publicacion, ReportePublicacion
 
         pub = await db.get(Publicacion, payload.publicacion_id)
-        if not pub or pub.estado != "ACTIVO":
+        if not pub or pub.estado != EstadoPublicacion.ACTIVO:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
         # Dueño en soft-delete: mismo 404 (el aviso es invisible).
         from app.models import Usuario
@@ -133,7 +128,7 @@ async def crear_reporte(
             usuario_id=user.get("id") if user and isinstance(user.get("id"), int) else None,
             motivo=payload.motivo,
             detalle=payload.detalle,
-            estado="PENDIENTE",
+            estado=EstadoReporte.PENDIENTE,
         )
         db.add(nuevo)
         await db.commit()
@@ -142,12 +137,9 @@ async def crear_reporte(
     except HTTPException:
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "crear_reporte")
         logger.error(f"[reportes crear] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
 
@@ -182,10 +174,7 @@ async def listar_reportes(
     except HTTPException:
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "listar_reportes")
         logger.error(f"[reportes listar] DB falló: {exc_resumen(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
@@ -204,25 +193,19 @@ async def revisar_reporte(
         rep = await db.get(ReportePublicacion, reporte_id)
         if not rep:
             raise HTTPException(status_code=404, detail="Reporte no encontrado")
-        if rep.estado != "PENDIENTE":
+        if rep.estado != EstadoReporte.PENDIENTE:
             raise HTTPException(
                 status_code=409,
                 detail=f"Reporte ya revisado (estado {rep.estado})",
             )
-        rep.estado = "CONFIRMADO" if payload.accion == "confirmar" else "DESCARTADO"
+        rep.estado = EstadoReporte.CONFIRMADO if payload.accion == "confirmar" else EstadoReporte.DESCARTADO
         await db.commit()
         await db.refresh(rep)
         return _to_out(rep)
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "revisar_reporte")
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "revisar_reporte")
         logger.error(f"[reportes revisar] DB falló: {exc_resumen(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="Base de datos no disponible")

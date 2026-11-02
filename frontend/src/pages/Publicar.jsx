@@ -17,6 +17,8 @@ import useTiposVivienda from '../hooks/useTiposVivienda'
 import { getEtiquetaTipo } from '../utils/tiposVivienda'
 import TipoIcono from '../components/TipoIcono'
 import { ArrowRight, CookingPot, FileText, House, MapPin, ShowerHead, Sofa, Sparkles, Star, WashingMachine, Wifi } from 'lucide-react'
+import { authHead } from '../services/authHeaders'
+import { leerToken } from '../services/tokenStorage'
 
 // ---------------------------------------------------------------------------
 // Helpers exportados (testeables). Bloque 2 + Bloque 5.
@@ -129,7 +131,7 @@ export function validarPublicar(form, lim = LIMITES) {
   return e
 }
 
-// M2: selector dinámico (/config-publica con fallback local). Mantiene el
+// Selector dinámico (/config-publica con fallback local). Mantiene el
 // contrato (value slug) y muestra tooltip por opción vía `title`.
 export function SelectorTipoPublicar({ value, onChange, id = 'tipo-vivienda' }) {
   const { tipos } = useTiposVivienda()
@@ -203,8 +205,8 @@ export function esFotoEjemplo(url) {
 export default function Publicar() {
   const { refresh } = useAuth()
   const { tipos: tiposCatalogo } = useTiposVivienda()
-  const [token, setToken] = useState(() => localStorage.getItem('alojau_token') || '')
-  // M5: sin sesión se muestra auth unificado (Google + Mi Perfil), no form legacy.
+  const [token, setToken] = useState(() => leerToken())
+  // Sin sesión se muestra auth unificado (Google + Mi Perfil), no form legacy.
   const [googleLoading, setGoogleLoading] = useState(false)
   const [googleError, setGoogleError] = useState('')
 
@@ -224,11 +226,11 @@ export default function Publicar() {
   const vivoRef = useRef(true)
   useEffect(() => () => { vivoRef.current = false }, [])
 
-  // UX-AUDIT P0: igual que Perfil — el navbar puede cerrar sesión; re-sincroniza
+  // Igual que Perfil — el navbar puede cerrar sesión; re-sincroniza
   // el token local para no mostrar el formulario con un token muerto (401).
   useEffect(() => {
     const syncToken = () => {
-      try { setToken(localStorage.getItem('alojau_token') || '') } catch { setToken('') }
+      setToken(leerToken())
     }
     window.addEventListener('alojau:auth-change', syncToken)
     window.addEventListener('storage', syncToken)
@@ -238,7 +240,7 @@ export default function Publicar() {
     }
   }, [])
 
-  // Bloque 2: persistencia de borrador local (localStorage). Guarda mientras
+  // Persistencia de borrador local (localStorage). Guarda mientras
   // escribe; sobrevive recargas y cold starts de Render sin perder progreso.
   useEffect(() => {
     if (!token) return
@@ -253,7 +255,7 @@ export default function Publicar() {
     setErrors({})
   }
 
-  // M5: Google con retorno a /publicar tras el callback.
+  // Google con retorno a /publicar tras el callback.
   const handleGoogle = async () => {
     setGoogleError('')
     setGoogleLoading(true)
@@ -270,7 +272,7 @@ export default function Publicar() {
   // de usuario del navbar; en Publicar era ruido irrelevante.)
 
   const validate = () => {
-    // Detalle #2: fuente única LIMITES (antes hardcodeaba 10/150/20/2000/10M
+    // Fuente única LIMITES (antes hardcodeaba 10/150/20/2000/10M
     // duplicando constants.js). El JSX ya usa LIMITES para maxLength.
     const e = validarPublicar(form)
     setErrors(e)
@@ -315,13 +317,13 @@ export default function Publicar() {
       campus_ids: [],
       fotos: fotosValid,
     }
-    // Bloque 3: UNA sola capa de reintento (el interceptor de api.js ya
+    // UNA sola capa de reintento (el interceptor de api.js ya
     // reintenta este POST idempotente 2 veces con 2s/4s ante cold start).
     // El borrador persiste hasta el éxito: si la red falla, nada se pierde.
-    const idem = conIdempotencia({ headers: { Authorization: `Bearer ${token}` } })
+    const idem = conIdempotencia(authHead(token))
     let exito = false
     try {
-      // Bloque 2: clave única por clic; si el POST cae en timeout y axios
+      // Clave única por clic; si el POST cae en timeout y axios
       // reintenta, el backend devuelve el replay (sin duplicar el aviso).
       const r = await api.post('/api/publicaciones', payload, idem)
       if (!vivoRef.current) return
@@ -335,7 +337,7 @@ export default function Publicar() {
       setFotosPendientes(0)
       // El navbar muestra "Mis publicaciones" tras el primer aviso.
       emitMiasChange()
-      // v13.2 reactividad de rol: si hubo promoción, re-sincroniza el perfil.
+      // Reactividad de rol: si hubo promoción, re-sincroniza el perfil.
       if (r.data?.rol_actualizado) {
         try { await refresh?.() } catch { /* noop */ }
         emitAuthChange()
@@ -354,7 +356,7 @@ export default function Publicar() {
         setSubmitError('No autorizado. Verifica tu token ARRENDADOR.')
       } else if (err.response?.status === 403) {
         const d = typeof detail === 'string' ? detail : ''
-        // v13: email sin confirmar o scope insuficiente.
+        // Email sin confirmar o scope insuficiente.
         setSubmitError(d || 'Solo ARRENDADOR puede publicar (403). Si tu cuenta es de estudiante, se promueve sola al publicar; confirma tu correo en Mi Perfil si se solicita.')
       } else {
         setSubmitError(err.message || 'Error al publicar')

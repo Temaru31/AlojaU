@@ -16,10 +16,13 @@ Buenas prácticas:
 - Nombres uuid fuera (el router los genera); aquí solo persiste.
 - Sin secretos en código: todo vía `settings` (.env).
 """
+import logging
 import os
 from abc import ABC, abstractmethod
 
 from app.core.config import settings
+
+logger = logging.getLogger("alojau.storage")
 
 
 class StorageBackend(ABC):
@@ -53,8 +56,7 @@ class LocalStorageBackend(StorageBackend):
         except Exception:
             # Contenedor serverless con FS read-only: no se tumba el import;
             # `save` fallará graceful con 503 y el avatar no se persiste.
-            import logging as _lg
-            _lg.getLogger("alojau.storage").warning(
+            logger.warning(
                 "[storage] upload_dir no escribible (FS efímero/solo-lectura): %s",
                 self.upload_dir,
             )
@@ -178,15 +180,11 @@ def get_storage_backend(base_url: str = "", upload_dir: str = "") -> StorageBack
     """
     if settings.cloudinary_configured:
         return CloudinaryStorageBackend()
-    try:
-        import logging as _lg
-        if getattr(settings, "ENV", "dev") == "prod":
-            _lg.getLogger("alojau.storage").warning(
-                "[storage] prod sin CLOUDINARY_*: se usa disco EFÍMERO "
-                "(Render lo borra al redeploy). Configura CLOUDINARY_*."
-            )
-    except Exception:
-        pass
+    if getattr(settings, "ENV", "dev") == "prod":
+        logger.warning(
+            "[storage] prod sin CLOUDINARY_*: se usa disco EFÍMERO "
+            "(Render lo borra al redeploy). Configura CLOUDINARY_*."
+        )
     default_dir = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "../../uploads")
     )

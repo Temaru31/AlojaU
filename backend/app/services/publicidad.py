@@ -14,6 +14,8 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logseguro import exc_resumen
+from app.core.db_utils import rollback_seguro
+from app.core.dominio import EstadoDestacado
 
 logger = logging.getLogger("alojau.publicidad")
 
@@ -31,18 +33,15 @@ async def vencer_destacados(db: AsyncSession) -> int:
         res = await db.execute(
             update(PublicacionDestacado)
             .where(
-                PublicacionDestacado.estado.in_(["PENDIENTE", "ACTIVO"]),
+                PublicacionDestacado.estado.in_([EstadoDestacado.PENDIENTE, EstadoDestacado.ACTIVO]),
                 PublicacionDestacado.vence <= ahora,
             )
-            .values(estado="VENCIDO")
+            .values(estado=EstadoDestacado.VENCIDO)
         )
         await db.commit()
         n = int(res.rowcount or 0)
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "vencer_destacados")
         logger.error(f"[publicidad] vencer_destacados falló: {exc_resumen(e)}")
         raise
     if n:

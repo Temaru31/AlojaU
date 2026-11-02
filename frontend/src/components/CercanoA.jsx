@@ -30,7 +30,7 @@ export default function CercanoA({ lugares = [], value, onChange, inputId = 'cer
   const [filtro, setFiltro] = useState('')
   const raizRef = useRef(null)
   const inputRef = useRef(null)
-  // Bloque 3: el foco diferido se cancela al desmontar (ref nula = noop,
+  // El foco diferido se cancela al desmontar (ref nula = noop,
   // pero el timer huérfano igual se limpia por higiene).
   const focoTimer = useRef(null)
   useEffect(() => () => window.clearTimeout(focoTimer.current), [])

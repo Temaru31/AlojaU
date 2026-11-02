@@ -24,7 +24,7 @@ export default function GaleriaFotos({ fotos = [], titulo = '' }) {
   const mobileExtra = total - mobileVisible
   const desktopExtra = total - desktopVisible
 
-  // UX-AUDIT P2: celdas clicables también por teclado (antes solo ratón).
+  // Celdas clicables también por teclado (antes solo ratón).
   const keyOpen = (onOpen) => (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()

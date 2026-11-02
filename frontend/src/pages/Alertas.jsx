@@ -17,6 +17,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import { SERVICIOS_OPCIONES } from '../components/Filtros'
 import useTiposVivienda from '../hooks/useTiposVivienda'
 import { MAX_ALERTAS, MENSAJE_SIN_FILTROS, alertaTieneFiltros, filtrosABusqueda } from '../utils/alertas'
+import { bearer } from '../services/authHeaders'
 
 export function GuardarAlerta({ filtros, campusId }) {
   const { token } = useAuth()
@@ -37,7 +38,7 @@ export function GuardarAlerta({ filtros, campusId }) {
     setGuardando(true)
     try {
       await api.post('/api/busquedas-guardadas', body, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: bearer(token),
       })
       notifyToast('Alerta guardada: te avisaremos de nuevos arriendos.')
     } catch (e) {
@@ -77,7 +78,7 @@ export default function Alertas() {
   const vivoRef = useRef(true)
   useEffect(() => () => { vivoRef.current = false }, [])
 
-  const head = token ? { Authorization: `Bearer ${token}` } : {}
+  const head = bearer(token)
   const activas = alertas.filter((a) => a.activa).length
   const topeAlcanzado = activas >= MAX_ALERTAS
 

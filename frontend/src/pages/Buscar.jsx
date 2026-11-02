@@ -4,7 +4,7 @@ import { Settings, SlidersHorizontal, X } from 'lucide-react'
 import { api, isCancelError } from '../services/api'
 import Card from '../components/Card'
 import useMediaQuery from '../hooks/useMediaQuery'
-// Bloque 1: three.js (~736 kB) solo se descarga en desktop. El import
+// Three.js (~736 kB) solo se descarga en desktop. El import
 // estático anterior metía el 3D en el bundle inicial y el efecto de Casa3D
 // lo ejecutaba incluso oculto con `hidden` (también en móvil).
 const Casa3D = lazy(() => import('../components/Casa3D'))
@@ -34,14 +34,14 @@ function snapshotInicialBuscar(sp) {
   try { return leerFiltrosBuscar() } catch { return null }
 }
 
-// Bloque 2 del sheet: chips de tipo desde el catálogo dinámico (misma
+// Del sheet: chips de tipo desde el catálogo dinámico (misma
 // fuente que desktop: `filtros.tipo`). Delega en el componente compartido
 // (paridad exacta con el drawer desktop).
 export function BloqueTipos({ filtros, setFiltros }) {
   return <SelectorTipoChips filtros={filtros} setFiltros={setFiltros} />
 }
 
-// Bloque 4 del sheet: grid de servicios colapsable. Con el catálogo actual
+// Del sheet: grid de servicios colapsable. Con el catálogo actual
 // (5) va abierto; si supera 6 ítems arranca colapsado para no saturar.
 export const UMBRAL_COLAPSO_SERVICIOS = 6
 
@@ -168,7 +168,7 @@ export default function Buscar() {
       q: q || '',
     })
   }, [filtros, campusId, ciudadId, q])
-  // OLA4: string primitivo estable (el objeto searchParams cambia de identidad
+  // String primitivo estable (el objeto searchParams cambia de identidad
   // y provocaba doble-fetch). El efecto de resultados depende de este string.
   const queryString = searchParams.toString()
 
@@ -202,7 +202,7 @@ export default function Buscar() {
   const [avanzadosAbiertos, setAvanzadosAbiertos] = useState(false)
   // Bottom sheet de filtros solo en móvil (<768px).
   const [sheetAbierto, setSheetAbierto] = useState(false)
-  // Bloque 3: Tab cicla dentro del sheet + foco vuelve al botón Filtros.
+  // Tab cicla dentro del sheet + foco vuelve al botón Filtros.
   const sheetRef = useRef(null)
   useFocusTrap(sheetRef, sheetAbierto)
   const numAvanzados = contarAvanzados(filtros)
@@ -313,7 +313,7 @@ export default function Buscar() {
   const ciudadSel = ciudades.find((c) => String(c.id) === String(ciudadId)) || ciudades[0] || null
   const ciudadNombre = etiquetaCiudad(ciudadSel)
 
-  // Fase 3: AbortController + error SOLO ante HTTP >= 400 o fallo real de red.
+  // AbortController + error SOLO ante HTTP >= 400 o fallo real de red.
   // Un 200 OK con [] NUNCA pinta banner rojo: va a la tarjeta neutra de vacío.
   // Deps: solo queryString (campusId/ciudadId/page ya viven dentro de él;
   // listarlos además provocaba doble fetch).

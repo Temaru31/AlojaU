@@ -17,6 +17,8 @@ import HistorialAvisos from '../components/HistorialAvisos'
 import { portadaUrl, zonaTextoDe } from '../utils/portada'
 import { getEtiquetaTipo } from '../utils/tiposVivienda'
 import useTiposVivienda from '../hooks/useTiposVivienda'
+import { bearer } from '../services/authHeaders'
+import { ESTADO, ESTADO_LABEL } from '../utils/estados'
 
 /**
  * Reglas de cálculo de días de vigencia:
@@ -87,21 +89,7 @@ export function formatFechaExpiracion(fechaRaw) {
   })
 }
 
-// Labels amigables (nunca enum crudo). M6: la pausa del dueño se distingue
-// de la pausa por moderación (el arrendador debe saber por qué no se ve).
-const ESTADO_LABEL = {
-  ACTIVO: 'Publicada',
-  PENDIENTE: 'En revisión',
-  EXPIRADO: 'Vencida',
-  PAUSADO: 'Pausada por el Arrendador',
-  PAUSADO_POR_REPORTE: 'Pausada por Moderación',
-  REVISION_REQUERIDA: 'En revisión de Moderación',
-  RECHAZADO: 'Rechazada',
-  ARRENDADO: 'Arrendada',
-  DESACTIVADO: 'Desactivada',
-}
-
-// M6: orden del panel (server-side vía ?orden=: ordenar en cliente mentiría
+// Orden del panel (server-side vía ?orden=: ordenar en cliente mentiría
 // con paginación multipágina).
 export const ORDENES_MIS_PUBS = [
   { value: 'recientes', label: 'Más recientes' },
@@ -121,17 +109,17 @@ const ESTADO_STYLE = {
 
 const FILTROS = [
   { value: '', label: 'Todas' },
-  { value: 'ACTIVO', label: 'Publicadas' },
-  { value: 'PENDIENTE', label: 'En revisión' },
-  { value: 'PAUSADO', label: 'Pausadas' },
-  { value: 'EXPIRADO', label: 'Vencidas' },
+  { value: ESTADO.ACTIVO, label: 'Publicadas' },
+  { value: ESTADO.PENDIENTE, label: 'En revisión' },
+  { value: ESTADO.PAUSADO, label: 'Pausadas' },
+  { value: ESTADO.EXPIRADO, label: 'Vencidas' },
 ]
 
 const PAGE_SIZE = 12
 
 export default function MisPublicaciones() {
   const { token, refresh, user } = useAuth()
-  // M2: catálogo dinámico con fallback estático.
+  // Catálogo dinámico con fallback estático.
   const { tipos: tiposCatalogo } = useTiposVivienda()
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
@@ -146,24 +134,24 @@ export default function MisPublicaciones() {
   // Borrado con modal independiente (nunca cambia el texto del botón).
   const [aEliminar, setAEliminar] = useState(null)
   const [eliminando, setEliminando] = useState(false)
-  // v15.2: switch ACTIVA/PAUSADA del dueño.
+  // Switch ACTIVA/PAUSADA del dueño.
   const [cambiandoEstado, setCambiandoEstado] = useState(null)
-  // M2: pausar oculta la vitrina -> confirmación en 2 pasos (reanudar no).
+  // Pausar oculta la vitrina -> confirmación en 2 pasos (reanudar no).
   const [aPausar, setAPausar] = useState(null)
-  // M6: orden server-side (se envía al backend y resetea la página).
+  // Orden server-side (se envía al backend y resetea la página).
   const [orden, setOrden] = useState('recientes')
 
   const handleEstado = async (p) => {
-    if (p.estado === 'ACTIVO' && aPausar !== p.id) {
+    if (p.estado === ESTADO.ACTIVO && aPausar !== p.id) {
       setAPausar(p.id)
       return
     }
-    const nuevo = p.estado === 'ACTIVO' ? 'PAUSADO' : 'ACTIVO'
+    const nuevo = p.estado === ESTADO.ACTIVO ? ESTADO.PAUSADO : ESTADO.ACTIVO
     setCambiandoEstado(p.id)
     setError('')
     try {
       const r = await api.patch(`/api/publicaciones/${p.id}/estado`, { estado: nuevo }, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: bearer(token),
       })
       setItems(prev => prev.map(x => x.id === p.id ? { ...x, estado: r.data?.estado || nuevo } : x))
       setAPausar(null)
@@ -183,14 +171,14 @@ export default function MisPublicaciones() {
     setError('')
     try {
       const r = await api.delete(`/api/publicaciones/${p.id}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: bearer(token),
       })
       setItems(prev => prev.filter(x => x.id !== p.id))
       setTotal(t => Math.max(0, t - 1))
       setAEliminar(null)
       // El navbar oculta "Mis publicaciones" al llegar a 0 avisos.
       emitMiasChange()
-      // v13.2 reactividad de rol: si hubo democión, re-sincroniza el perfil.
+      // Reactividad de rol: si hubo democión, re-sincroniza el perfil.
       if (r.data?.rol_actualizado) {
         try { await refresh?.() } catch { /* noop */ }
       }
@@ -202,7 +190,7 @@ export default function MisPublicaciones() {
     }
   }
 
-  // OLA4: AbortController — cambiar de filtro/página aborta la petición anterior
+  // AbortController — cambiar de filtro/página aborta la petición anterior
   // para que una respuesta tardía no pise los resultados actuales.
   useEffect(() => {
     if (!token) {
@@ -215,7 +203,7 @@ export default function MisPublicaciones() {
     setError('')
     api.get('/api/publicaciones/mias', {
       params: { page, size: PAGE_SIZE, ...(filtro ? { estado: filtro } : {}), orden },
-      headers: { Authorization: `Bearer ${token}` },
+      headers: bearer(token),
       signal: controller.signal,
     })
       .then(r => {
@@ -275,12 +263,12 @@ export default function MisPublicaciones() {
       {/* Guía de estado: qué significa cada estado y cómo te avisamos.
           El dueño recién promovido (publicó pero sigue en revisión) ve aquí
           con claridad que su panel ya está activo y qué sigue. */}
-      {!loading && !error && (items.some((p) => p.estado === 'PENDIENTE') || items.some((p) => p.estado === 'RECHAZADO')) && (
+      {!loading && !error && (items.some((p) => p.estado === ESTADO.PENDIENTE) || items.some((p) => p.estado === ESTADO.RECHAZADO)) && (
         <div className="space-y-2 mb-4">
-          {items.some((p) => p.estado === 'PENDIENTE') && (
+          {items.some((p) => p.estado === ESTADO.PENDIENTE) && (
             <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5" role="status">
               <p className="text-xs text-amber-800">
-                <b className="inline-flex items-center gap-1"><Hourglass aria-hidden="true" className="w-4 h-4" /> {items.filter((p) => p.estado === 'PENDIENTE').length} aviso(s) en revisión.</b>{' '}
+                <b className="inline-flex items-center gap-1"><Hourglass aria-hidden="true" className="w-4 h-4" /> {items.filter((p) => p.estado === ESTADO.PENDIENTE).length} aviso(s) en revisión.</b>{' '}
                 El equipo de AlojaU los está verificando. Te avisaremos aquí mismo cuando sean visibles.
                 {!user?.telegram_vinculado && (
                   <> Vincula tu Telegram en <Link to="/perfil" className="font-semibold underline hover:text-amber-900">Mi Perfil</Link> para enterarte al instante, estés o no en la app.</>
@@ -288,10 +276,10 @@ export default function MisPublicaciones() {
               </p>
             </div>
           )}
-          {items.some((p) => p.estado === 'RECHAZADO') && (
+          {items.some((p) => p.estado === ESTADO.RECHAZADO) && (
             <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2.5" role="status">
               <p className="text-xs text-rose-800">
-                <b>{items.filter((p) => p.estado === 'RECHAZADO').length} aviso(s) no aprobado(s).</b>{' '}
+                <b>{items.filter((p) => p.estado === ESTADO.RECHAZADO).length} aviso(s) no aprobado(s).</b>{' '}
                 Revisa las reglas de publicación, corrige tu aviso y vuelve a publicarlo.
               </p>
             </div>
@@ -397,7 +385,7 @@ export default function MisPublicaciones() {
               // BUG#1: portada = orden=1 vía helper central.
               const cover = portadaUrl(p)
               const zonaTexto = zonaTextoDe(p) || 'Zona no informada'
-              // Bloque 3: fuente única (dinámico + fallback central).
+              // Fuente única (dinámico + fallback central).
               const tipoTexto = getEtiquetaTipo(p.tipo_inmueble, tiposCatalogo, 'Vivienda')
               const canonValor = p.canon_mensual ?? p.canon
               const distM = p.distancia_geodesica_m ?? p.dist_m
@@ -492,23 +480,23 @@ export default function MisPublicaciones() {
                     {/* Acciones de la tarjeta */}
                     <div className="flex flex-wrap items-center justify-end gap-2 pt-3 mt-3 border-t border-neutral-100">
                       {/* v15.2 switch ACTIVA/PAUSADA del dueño (pausar: 2 pasos) */}
-                      {(p.estado === 'ACTIVO' || p.estado === 'PAUSADO') && (
+                      {(p.estado === ESTADO.ACTIVO || p.estado === ESTADO.PAUSADO) && (
                         <button
                           onClick={() => handleEstado(p)}
                           onBlur={() => setAPausar(null)}
                           disabled={cambiandoEstado === p.id}
-                          aria-label={p.estado === 'ACTIVO'
+                          aria-label={p.estado === ESTADO.ACTIVO
                             ? (aPausar === p.id ? `Confirmar pausa de ${p.titulo}` : `Pausar ${p.titulo}`)
                             : `Reanudar ${p.titulo}`}
-                          aria-pressed={p.estado === 'ACTIVO'}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition disabled:opacity-50 ${p.estado === 'ACTIVO'
+                          aria-pressed={p.estado === ESTADO.ACTIVO}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition disabled:opacity-50 ${p.estado === ESTADO.ACTIVO
                             ? (aPausar === p.id
                               ? 'bg-amber-500 border-amber-500 text-white hover:bg-amber-600'
                               : 'border-amber-300 text-amber-700 hover:bg-amber-50')
                             : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'
                             }`}
                         >
-                          {cambiandoEstado === p.id ? '…' : p.estado === 'ACTIVO'
+                          {cambiandoEstado === p.id ? '…' : p.estado === ESTADO.ACTIVO
                             ? (aPausar === p.id ? '¿Pausar?' : (<span className="inline-flex items-center gap-1"><Pause aria-hidden="true" className="w-4 h-4" /> Pausar</span>))
                             : (<span className="inline-flex items-center gap-1"><Play aria-hidden="true" className="w-4 h-4" /> Reanudar</span>)}
                         </button>
@@ -522,7 +510,7 @@ export default function MisPublicaciones() {
                       </button>
 
                       {/* Publicidad v1: destacar aviso activo (pago manual + aprobación). */}
-                      {p.estado === 'ACTIVO' && (
+                      {p.estado === ESTADO.ACTIVO && (
                         <Link
                           to={`/publicitar?publicacion_id=${p.id}`}
                           aria-label={`Destacar ${p.titulo}`}

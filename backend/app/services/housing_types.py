@@ -10,6 +10,7 @@ Uso: schemas (Pydantic), routers (Query), trust/search (allowlist/sinónimos).
 import time
 
 from sqlalchemy import select
+from app.core.db_utils import rollback_seguro
 
 # Fallback estático (seed canónico). Nunca se elimina ni renombra un slug.
 FALLBACK_TIPOS = [
@@ -75,10 +76,7 @@ async def get_activos(db) -> list[dict]:
             _cache_set(payload)
             return payload
     except Exception:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "get_activos")
     # Fallback mock/dev (o tabla vacía): MOCK_TIPOS activos.
     payload = [dict(t) for t in MOCK_TIPOS if t.get("esta_activo")]
     _cache_set(payload)

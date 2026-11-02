@@ -2,16 +2,17 @@
 // Retry con backoff para cold start 30-50s + eventos lentitud para banner discreto.
 // Uso: import { api } from './services/api'. Ej: api.get('/api/campus') reintenta 503/timeout solo.
 import axios from 'axios'
+import { authHead } from './authHeaders'
 
 export const API_TIMEOUT_MS = 55000
 export const API_MAX_RETRIES = 2
-// M7: el toast "Despertando el servidor" espera 3.5s; si la API responde
+// El toast "Despertando el servidor" espera 3.5s; si la API responde
 // antes, el temporizador se destruye sin mostrar nada (ver trackEnd).
 export const API_SLOW_THRESHOLD_MS = 3500
 const RETRYABLE_STATUS = new Set([502, 503, 504])
 const LOCAL_API_FALLBACK = 'http://localhost:8000'
 
-// OLA2-M3: fail-fast en producción. Un build de prod sin VITE_API_URL apuntaría
+// Fail-fast en producción. Un build de prod sin VITE_API_URL apuntaría
 // en silencio a localhost (app rota sin error visible). En dev/test se mantiene
 // el fallback local. `env` inyectable para unit tests (por defecto import.meta.env).
 export function getApiBase(env = import.meta.env) {
@@ -22,7 +23,7 @@ export function getApiBase(env = import.meta.env) {
   return url || LOCAL_API_FALLBACK
 }
 
-// Bloque 2: reintentos seguros. Solo lecturas (GET/HEAD/OPTIONS) se
+// Reintentos seguros. Solo lecturas (GET/HEAD/OPTIONS) se
 // reintentan siempre; las escrituras (POST/PATCH/PUT/DELETE) NUNCA, salvo
 // que lleven `Idempotency-Key` (el backend devuelve el replay guardado).
 // Sin `config` (errores sintéticos de tests) se conserva la semántica
@@ -82,7 +83,7 @@ export function mensajeAmigable(err) {
   return 'No se pudo completar la acción. Intenta de nuevo.'
 }
 
-// OLA4: peticiones abortadas vía AbortController (axios las rechaza con ERR_CANCELED).
+// Peticiones abortadas vía AbortController (axios las rechaza con ERR_CANCELED).
 export function isCancelError(err) {
   return err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError'
 }
@@ -147,8 +148,7 @@ export function __resetApiTrackerForTests() {
 // Uso: import { getPlanesPublicidad, destacarPublicacion } from '../services/api'.
 // El POST de destacar usa Idempotency-Key (conIdempotencia) para reintentos seguros.
 
-/** Cabecera Authorization Bearer (mismo formato que el resto de la app). */
-export const authHead = (token) => ({ headers: { Authorization: `Bearer ${token}` } })
+export { authHead }
 
 /** Catálogo público de planes (7/15/30 días). Sin auth. */
 export function getPlanesPublicidad() {

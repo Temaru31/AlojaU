@@ -6,6 +6,7 @@ import { useRef, useState } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import { api } from '../services/api'
 import useFocusTrap from '../hooks/useFocusTrap'
+import { authHead } from '../services/authHeaders'
 
 /** Formatea un Date o string ISO a texto legible en español. */
 function formatFecha(fechaRaw) {
@@ -39,7 +40,7 @@ function diasRestantes(fechaRaw) {
 }
 
 export default function RenovarModal({ pub, token, onClose, onRenovada }) {
-  // Bloque 3: Tab cicla dentro + foco vuelve al disparador al cerrar.
+  // Tab cicla dentro + foco vuelve al disparador al cerrar.
   const cajaRef = useRef(null)
   useFocusTrap(cajaRef, true)
   const [estado, setEstado] = useState('idle') // 'idle' | 'loading' | 'success' | 'error'
@@ -58,7 +59,7 @@ export default function RenovarModal({ pub, token, onClose, onRenovada }) {
       const res = await api.patch(
         `/api/publicaciones/${pub.id}/renovar`,
         {},
-        { headers: { Authorization: `Bearer ${token}` } },
+        authHead(token),
       )
       setResultado(res.data)
       setEstado('success')

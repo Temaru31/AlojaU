@@ -19,15 +19,16 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 from app.core.logseguro import exc_resumen, una_linea
+from app.core.dominio import EstadoPublicacion
 
 logger = logging.getLogger("alojau.notificaciones")
 
 # Lenguaje humano por estado (fuente única backend; el frontend tiene su
 # espejo en HistorialAvisos/infoEvento y MisPublicaciones/ESTADO_LABEL).
 MENSAJE_ESTADO_DUENO: dict[str, str] = {
-    "ACTIVO": "¡Buenas noticias! Tu anuncio «{titulo}» fue aprobado y ya es visible en AlojaU.",
-    "RECHAZADO": "Tu anuncio «{titulo}» no fue aprobado en esta revisión. Entra a Mis publicaciones para ver el detalle y volver a intentarlo.",
-    "PAUSADO": "Tu anuncio «{titulo}» fue pausado por el equipo de AlojaU. Escríbenos si tienes dudas.",
+    EstadoPublicacion.ACTIVO: "¡Buenas noticias! Tu anuncio «{titulo}» fue aprobado y ya es visible en AlojaU.",
+    EstadoPublicacion.RECHAZADO: "Tu anuncio «{titulo}» no fue aprobado en esta revisión. Entra a Mis publicaciones para ver el detalle y volver a intentarlo.",
+    EstadoPublicacion.PAUSADO: "Tu anuncio «{titulo}» fue pausado por el equipo de AlojaU. Escríbenos si tienes dudas.",
 }
 
 

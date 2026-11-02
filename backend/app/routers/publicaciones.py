@@ -11,6 +11,7 @@ Endpoints:
 Sprint1: mock lista en memoria si no hay PG (frontend no se bloquea). Si hay PG, query real con Haversine + TrustScoreEngine.
 NFR P95<500ms: query indexada (estado, zona, canon), sin N+1, Haversine en memoria/Python.
 """
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, Path, HTTPException, status, Header, Request
@@ -38,7 +39,20 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 import logging
 import re
-import time as _time
+from app.core.db_utils import rollback_seguro
+from app.core.net import client_ip
+from app.core.rate_limit import (
+    registrar_intento, registrar_intento_persistente, verificar_intentos_fallidos,
+)
+from app.core.flags import mock_enabled
+from app.core.dominio import EstadoPublicacion, Rol
+from app.fixtures.publicaciones_demo import MOCK_PUBS
+from app.core.permissions import has_scope
+from app.core.security import es_dueno_o_admin
+from app.fixtures.usuarios_demo import MOCK_USERS
+from app.core.normalizacion import normalizar_email
+from app.services.publicidad_demo import mock_destacados_map
+from app.services.config_sistema import DEFAULTS
 logger = logging.getLogger("alojau.publicaciones")
 
 # Anti-flood de creación: 10 publicaciones/hora por usuario (memoria por
@@ -56,16 +70,11 @@ def clear_pub_rate_limit_for_tests() -> None:
 
 
 def _check_pub_rate_limit(uid: int) -> None:
-    ahora = _time.monotonic()
-    clave = f"pub:{uid}"
-    hist = [t for t in _PUB_ATTEMPTS.get(clave, []) if ahora - t < PUB_WINDOW_S]
-    if len(hist) >= PUB_LIMIT:
-        raise HTTPException(status_code=429, detail="Demasiadas publicaciones, espera 1 hora")
-    hist.append(ahora)
-    _PUB_ATTEMPTS[clave] = hist
+    registrar_intento(_PUB_ATTEMPTS, f"pub:{uid}", PUB_LIMIT, PUB_WINDOW_S,
+                      "Demasiadas publicaciones, espera 1 hora")
 
 
-# Bloque 2: idempotencia de POST /api/publicaciones (solo este endpoint;
+# Idempotencia de POST /api/publicaciones (solo este endpoint;
 # el resto de escrituras sigue sin reintento por defecto en el cliente).
 IDEM_RUTA_CREAR = "POST /api/publicaciones"
 IDEM_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
@@ -105,11 +114,8 @@ async def _idem_replay(db: AsyncSession, clave: str, uid: int) -> dict | None:
     except HTTPException:
         raise
     except Exception:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "_idem_replay")
+        if not mock_enabled():
             return None
     hit = _IDEMPOTENCY_MOCK.get((clave, uid, IDEM_RUTA_CREAR))
     if not hit:
@@ -136,8 +142,8 @@ async def _idem_guardar(db: AsyncSession, clave: str, uid: int, cuerpo: dict) ->
                 IdempotencyKey.__table__.delete().where(
                     IdempotencyKey.expira_en < datetime.now(timezone.utc))
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("[idempotencia] limpieza de claves vencidas falló: %s", exc_resumen(e))
         db.add(IdempotencyKey(
             clave=clave, usuario_id=uid, ruta=IDEM_RUTA_CREAR,
             codigo=201, cuerpo=limpio, expira_en=expira,
@@ -146,18 +152,12 @@ async def _idem_guardar(db: AsyncSession, clave: str, uid: int, cuerpo: dict) ->
         return None
     except IntegrityError:
         # Carrera perdida: otro worker guardó primero -> replay ganador.
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "_idem_guardar")
         return await _idem_replay(db, clave, uid)
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "_idem_guardar")
         logger.warning(f"[idempotencia] no se pudo guardar (se responde igual): {exc_resumen(e)}")
-        if not _mock_enabled():
+        if not mock_enabled():
             return None
     _IDEMPOTENCY_MOCK[(clave, uid, IDEM_RUTA_CREAR)] = {
         "codigo": 201, "cuerpo": limpio, "expira_en": expira,
@@ -166,59 +166,8 @@ async def _idem_guardar(db: AsyncSession, clave: str, uid: int, cuerpo: dict) ->
 
 router = APIRouter(prefix="/api/publicaciones", tags=["publicaciones"])
 
-def _mock_enabled() -> bool:
-    # B0-2 fail-closed: mock solo en dev/test con flag True.
-    return bool(getattr(settings, "mock_enabled", False))
-
-# Revalidación ADMIN anti-stale (caché 10s; el negativo no se cachea).
-_ADMIN_REVALID_MEM: dict[int, tuple[float, bool]] = {}
-_ADMIN_REVALID_TTL_S = 10.0
 
 
-def clear_admin_revalid_for_tests() -> None:
-    _ADMIN_REVALID_MEM.clear()
-
-
-async def _is_owner_or_admin(user: dict | None, owner_id: int | None) -> bool:
-    """Dueño por id, o ADMIN revalidado contra BD (anti-stale, caché 10s).
-
-    El claim ADMIN del JWT (2h) no basta: un admin democionado no debe
-    seguir viendo/editando avisos ajenos. La caché de 10s evita 1 query
-    por request en ráfagas; el negativo no se cachea (fail-closed ante
-    democión). Sin PG en dev con mocks, manda el claim (tests).
-    """
-    if not user:
-        return False
-    try:
-        if owner_id is not None and int(user.get("id")) == int(owner_id):
-            return True
-    except Exception:
-        pass
-    if user.get("rol") != "ADMIN":
-        return False
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        return False
-    ahora = _time.monotonic()
-    hit = _ADMIN_REVALID_MEM.get(uid)
-    if hit and hit[1] and (ahora - hit[0]) < _ADMIN_REVALID_TTL_S:
-        return True
-    try:
-        from app.models import Usuario as _U
-        from app.db.session import AsyncSession as _Factory
-        async with _Factory() as _s:
-            res = await _s.execute(select(_U.rol).where(_U.id == uid))
-            es_admin = (res.scalars().first() or "") == "ADMIN"
-        if es_admin:
-            _ADMIN_REVALID_MEM[uid] = (ahora, True)
-            return True
-        return False
-    except Exception:
-        if _mock_enabled():
-            return True
-        return False
-
-# v15.2 throttle de vistas: 120/min por IP (memoria en mock, PG en real).
 _VISTAS_MEM: dict[str, list[float]] = {}
 _VISTAS_MEM_LIMIT = 120
 _VISTAS_MEM_WINDOW_S = 60.0
@@ -227,69 +176,19 @@ _VISTAS_MOCK_SET: set[tuple[int, str]] = set()
 
 async def _db_rate_check_vista(db: AsyncSession, ip: str) -> None:
     """Throttle anti-inflado de vistas. PG en real, memoria en mock/dev."""
-    import time as _t
-    if _mock_enabled():
-        ahora = _t.monotonic()
-        hist = [x for x in _VISTAS_MEM.get(ip, []) if ahora - x < _VISTAS_MEM_WINDOW_S]
-        if len(hist) >= _VISTAS_MEM_LIMIT:
-            raise HTTPException(status_code=429, detail="Demasiadas vistas, espera un minuto")
-        hist.append(ahora)
-        _VISTAS_MEM[ip] = hist
+    if mock_enabled():
+        registrar_intento(_VISTAS_MEM, ip, _VISTAS_MEM_LIMIT, _VISTAS_MEM_WINDOW_S,
+                          "Demasiadas vistas, espera un minuto")
         return
     try:
-        from app.routers.auth import _db_rate_check as _check, _db_rate_record as _rec
-        await _check(db, f"vista:{ip}", limite=_VISTAS_MEM_LIMIT,
-                     ventana_s=int(_VISTAS_MEM_WINDOW_S))
-        await _rec(db, f"vista:{ip}", False)
+        await verificar_intentos_fallidos(db, f"vista:{ip}", limite=_VISTAS_MEM_LIMIT,
+                                          ventana_s=int(_VISTAS_MEM_WINDOW_S))
+        await registrar_intento_persistente(db, f"vista:{ip}", False)
     except HTTPException:
         raise
     except Exception:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "_db_rate_check_vista")
 
-# --- MOCK Sprint1 (si no hay PG, solo dev) ---
-# MOCK_CAMPUS canónico en app/fixtures/demo.py. MOCK_PUBS simula filas.
-# Cada mock simula fila Publicacion + relaciones
-MOCK_PUBS = [
-    {
-        "id": 1, "titulo": "Habitación cerca Tulcán", "descripcion": "Amoblada, baño privado, WiFi 200MB",
-        "tipo_inmueble": "HABITACION_INDEPENDIENTE", "canon_mensual": 450000, "deposito_requerido": 200000,
-        "zona_barrio_id": 1, "zona_nombre": "Pandiguando", "direccion_referencial": "Cerca Tulcán, 2 cuadras",
-        "reglas_convivencia": "No mascotas, visitas hasta 9pm", "estado": "ACTIVO",
-        "fecha_renovacion": datetime.now(timezone.utc) - timedelta(days=5),
-        "fecha_expiracion": datetime.now(timezone.utc) + timedelta(days=25),
-        "servicios": ["WiFi","Baño privado"], "servicios_ids": [1,2],
-        "fotos": ["https://res.cloudinary.com/demo/image1.jpg","https://res.cloudinary.com/demo/image2.jpg","https://res.cloudinary.com/demo/image3.jpg","https://res.cloudinary.com/demo/image4.jpg"],
-        "latitud": 2.444, "longitud": -76.605, "campus_ids": [1],
-        "usuario_id": 1, "telefono_whatsapp": "573001234567", "telefono_verificado": True, "reportes_activos": 0,
-    },
-    {
-        "id": 2, "titulo": "Apartaestudio amoblado Centro", "descripcion": "1 ambiente, cocina integral, lavadora",
-        "tipo_inmueble": "APARTAESTUDIO", "canon_mensual": 700000, "deposito_requerido": 0,
-        "zona_barrio_id": 2, "zona_nombre": "Centro", "direccion_referencial": "Centro histórico, cerca Claustro",
-        "reglas_convivencia": "No fiestas, contrato mínimo 6 meses", "estado": "ACTIVO",
-        "fecha_renovacion": datetime.now(timezone.utc) - timedelta(days=20),
-        "fecha_expiracion": datetime.now(timezone.utc) + timedelta(days=10),
-        "servicios": ["WiFi","Amoblado","Lavadora"], "servicios_ids": [1,3,4],
-        "fotos": ["https://res.cloudinary.com/demo/a1.jpg","https://res.cloudinary.com/demo/a2.jpg","https://res.cloudinary.com/demo/a3.jpg"],
-        "latitud": 2.442, "longitud": -76.600, "campus_ids": [1,2],
-        "usuario_id": 2, "telefono_whatsapp": "573009998877", "telefono_verificado": False, "reportes_activos": 0,
-    },
-    {
-        "id": 3, "titulo": "Habitación familiar Tulcán", "descripcion": "Familiar, comparte cocina, ideal estudiante",
-        "tipo_inmueble": "HABITACION_FAMILIAR", "canon_mensual": 380000, "deposito_requerido": 150000,
-        "zona_barrio_id": 1, "zona_nombre": "Pandiguando", "direccion_referencial": "Pandiguando, Tulcán",
-        "reglas_convivencia": "Convivencia familiar, aseo compartido", "estado": "PENDIENTE",  # no visible en búsqueda
-        "fecha_renovacion": datetime.now(timezone.utc),
-        "fecha_expiracion": datetime.now(timezone.utc) + timedelta(days=30),
-        "servicios": ["WiFi"], "servicios_ids": [1],
-        "fotos": ["https://res.cloudinary.com/demo/f1.jpg","https://res.cloudinary.com/demo/f2.jpg","https://res.cloudinary.com/demo/f3.jpg"],
-        "latitud": 2.4435, "longitud": -76.6065, "campus_ids": [1],
-        "usuario_id": 1, "telefono_whatsapp": "573001234567", "telefono_verificado": True, "reportes_activos": 1, # 1 reporte PENDIENTE -> pierde 10
-    },
-]
 
 # --- Endpoints Sprint1 ---
 @router.get("", response_model=PaginatedPublicaciones, summary="HU-001 Buscar por sede + HU-002 Filtros + búsqueda tokenizada + multiciudad")
@@ -297,7 +196,7 @@ async def list_publicaciones(
     campus_id: Optional[int] = Query(None, ge=1, le=1000, description="FK campus_universitarios.id - filtra por lugar cercano (POIs por categoría)"),
     precio_min: Optional[int] = Query(None, ge=0, le=10_000_000, description="COP mínimo"),
     precio_max: Optional[int] = Query(None, ge=0, le=10_000_000, description="COP máximo"),
-    # M2: sin pattern estático (el catálogo vive en housing_types). Se valida
+    # Sin pattern estático (el catálogo vive en housing_types). Se valida
     # contra la tabla (esta_activo=true) con caché 5min; 422 si no existe.
     tipo: Optional[str] = Query(None, min_length=3, max_length=40, description="Slug de housing_types (ej. APARTAESTUDIO)"),
     servicios: Optional[str] = Query(None, max_length=50, description="IDs coma separados, ej: 1,3"),
@@ -322,7 +221,7 @@ async def list_publicaciones(
     if precio_min is not None and precio_max is not None and precio_min > precio_max:
         raise HTTPException(status_code=400, detail="precio_min no puede superar precio_max")
 
-    # M2 validación dinámica contra housing_types (esta_activo=true, caché 5min).
+    # Validación dinámica contra housing_types (esta_activo=true, caché 5min).
     # Sin pattern estático: 422 si el slug no existe o está inactivo.
     if tipo is not None:
         try:
@@ -333,10 +232,7 @@ async def list_publicaciones(
         except HTTPException:
             raise
         except Exception:
-            try:
-                await db.rollback()
-            except Exception:
-                pass
+            await rollback_seguro(db, "list_publicaciones")
             # Sin PG: fallback estático (mock dev) para no tumbar la búsqueda.
             try:
                 from app.services.housing_types import slugs_fallback as _fb
@@ -366,11 +262,8 @@ async def list_publicaciones(
     except Exception as e:
         # Log real para diagnóstico en Render (no ocultar excepción)
         logger.error(f"[DB fallback] query_lista falló: {exc_resumen(e)}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "list_publicaciones")
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         logger.warning(f"[Sprint1 mock fallback] DB no disponible: {exc_resumen(e)}")
         filtradas = view.filter_mock_pubs(
@@ -379,8 +272,7 @@ async def list_publicaciones(
         )
         # Publicidad v1 (mock): vigentes primero por prioridad desc; el sort
         # estable conserva el orden actual dentro de cada grupo.
-        from app.routers import publicidad as _pub
-        _dest_map = _pub.mock_destacados_map([p["id"] for p in filtradas])
+        _dest_map = mock_destacados_map([p["id"] for p in filtradas])
         filtradas.sort(key=lambda p: (
             0, -_dest_map[p["id"]]["prioridad"]
         ) if p["id"] in _dest_map else (1, 0))
@@ -410,7 +302,7 @@ async def mis_publicaciones(
     Sin token -> 401. Cada dueño solo ve las suyas (filtro usuario_id).
     NOTA: declarada ANTES de /{pub_id} para que "mias" no caiga en el path param."""
     uid = user.get("id")
-    # F1: token sin id entero válido -> 401 (nunca filtrar por dueño ajeno).
+    # Token sin id entero válido -> 401 (nunca filtrar por dueño ajeno).
     if not isinstance(uid, int):
         raise HTTPException(status_code=401, detail="Token sin propietario válido")
     try:
@@ -429,9 +321,9 @@ async def mis_publicaciones(
             # Mismo orden lógico que el panel (ACTIVO primero, terminales al final).
             order_cols = [_case(
                 {e: i for i, e in enumerate([
-                    "ACTIVO", "PENDIENTE", "PAUSADO", "PAUSADO_POR_REPORTE",
-                    "REVISION_REQUERIDA", "RECHAZADO", "ARRENDADO",
-                    "EXPIRADO", "DESACTIVADO"])},
+                    EstadoPublicacion.ACTIVO, EstadoPublicacion.PENDIENTE, EstadoPublicacion.PAUSADO, EstadoPublicacion.PAUSADO_POR_REPORTE,
+                    EstadoPublicacion.REVISION_REQUERIDA, EstadoPublicacion.RECHAZADO, EstadoPublicacion.ARRENDADO,
+                    EstadoPublicacion.EXPIRADO, EstadoPublicacion.DESACTIVADO])},
                 value=Publicacion.estado, else_=99,
             ).asc(), Publicacion.id.desc()]
         else:
@@ -459,11 +351,8 @@ async def mis_publicaciones(
         _uid_seguro = str(uid).replace('\n', '').replace('\r', '')
         _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
         logger.error(f"[DB fallback] mis_publicaciones {_uid_seguro} falló: {_err_seguro}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "mis_publicaciones")
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     # Mock fallback solo dev: filtra por dueño (incluye PENDIENTE, es su bandeja) + pagina en memoria.
     # Mismo contrato de orden que la rama DB (M6).
@@ -473,9 +362,9 @@ async def mis_publicaciones(
     if orden == "vistas":
         filtradas.sort(key=lambda p: (-(p.get("vistas", 0) or 0), -p["id"]))
     elif orden == "estado":
-        _rango = {"ACTIVO": 0, "PENDIENTE": 1, "PAUSADO": 2, "PAUSADO_POR_REPORTE": 3,
-                  "REVISION_REQUERIDA": 4, "RECHAZADO": 5, "ARRENDADO": 6,
-                  "EXPIRADO": 7, "DESACTIVADO": 8}
+        _rango = {EstadoPublicacion.ACTIVO: 0, EstadoPublicacion.PENDIENTE: 1, EstadoPublicacion.PAUSADO: 2, EstadoPublicacion.PAUSADO_POR_REPORTE: 3,
+                  EstadoPublicacion.REVISION_REQUERIDA: 4, EstadoPublicacion.RECHAZADO: 5, EstadoPublicacion.ARRENDADO: 6,
+                  EstadoPublicacion.EXPIRADO: 7, EstadoPublicacion.DESACTIVADO: 8}
         filtradas.sort(key=lambda p: (_rango.get(p.get("estado"), 99), -p["id"]))
     else:
         filtradas.sort(key=lambda p: p["id"], reverse=True)
@@ -530,11 +419,8 @@ async def mi_historial(
         _uid_seguro = str(uid).replace('\n', '').replace('\r', '')
         _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
         logger.error(f"[DB fallback] mias/historial {_uid_seguro} falló: {_err_seguro}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "mi_historial")
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     return {"items": [], "total": 0, "page": page, "size": size_norm, "mock": True}
 
@@ -550,11 +436,10 @@ async def config_publica(db: AsyncSession = Depends(get_session)):
     si falla, usa LIMITES locales (divergencia aceptada y documentada).
     NOTA: declarada ANTES de /{pub_id} para no caer en el path param.
     """
-    from app.routers.admin_automation import DEFAULTS as _DEF
     _KEYS = ["dias_desactualizada", "titulo_min", "titulo_max",
              "descripcion_min", "descripcion_max", "fotos_min_publicar",
              "vistas_visibles_publico"]
-    vals = {k: _DEF[k][0] for k in _KEYS if k in _DEF}
+    vals = {k: DEFAULTS[k][0] for k in _KEYS if k in DEFAULTS}
     try:
         from app.models import SystemSetting
         rows = (await db.execute(select(SystemSetting).where(
@@ -562,17 +447,14 @@ async def config_publica(db: AsyncSession = Depends(get_session)):
         for r in rows:
             vals[r.clave] = r.valor
     except Exception:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "config_publica")
         # Sin PG (dev mock): DEFAULTS. Nunca 503 en lectura pública.
     def _iv(k, d):
         try:
             return int(vals.get(k, d))
         except Exception:
             return d
-    # M2 aditivo: catálogo de tipos dinámicos (caché 5min, fallback local).
+    # Aditivo: catálogo de tipos dinámicos (caché 5min, fallback local).
     try:
         from app.services import housing_types as _ht
         tipos = await _ht.get_activos(db)
@@ -616,13 +498,13 @@ async def get_publicacion(
     try:
         p, reportes_activos, u, dist_detalle = await repo.fetch_detail_bundle(db, pub_id)
         if p:
-            # v14.1 Ley 1581: dueño eliminado -> invisible salvo ADMIN
+            # Ley 1581: dueño eliminado -> invisible salvo ADMIN
             # (la búsqueda ya los excluye; esto cubre acceso directo por URL).
             if (u is not None and getattr(u, "eliminado_en", None) is not None
-                    and not (current_user and current_user.get("rol") == "ADMIN")):
+                    and not (current_user and current_user.get("rol") == Rol.ADMIN)):
                 raise HTTPException(status_code=404, detail="Publicación no encontrada")
             # Detalle no-ACTIVO privado (404 para no filtrar existencia).
-            if p.estado != "ACTIVO" and not await _is_owner_or_admin(current_user, p.usuario_id):
+            if p.estado != EstadoPublicacion.ACTIVO and not await es_dueno_o_admin(current_user, p.usuario_id):
                 raise HTTPException(status_code=404, detail="Publicación no encontrada")
             # 004 POIs: referencia al lugar buscado (el mapa del Detalle se
             # sincroniza a ESTE punto; sin campus_id se usa la distancia mínima).
@@ -645,7 +527,7 @@ async def get_publicacion(
             _info = _dest_map.get(p.id)
             return view.build_detail(
                 p, reportes_activos, u, dist, campus_ref,
-                await repo.vistas_publicas(db) or await _is_owner_or_admin(current_user, p.usuario_id),
+                await repo.vistas_publicas(db) or await es_dueno_o_admin(current_user, p.usuario_id),
                 _info is not None,
                 _info["vence"] if _info else None,
             )
@@ -655,21 +537,18 @@ async def get_publicacion(
         # CWE-117: pub_id viene del path; sanear CR/LF antes de loguear.
         safe_pub_id = str(pub_id).replace("\r", "").replace("\n", "")
         logger.error(f"[DB fallback] get_publicacion {safe_pub_id} falló: {exc_resumen(e)}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "get_publicacion")
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         logger.warning(f"[DB fallback] get_publicacion {safe_pub_id}: {exc_resumen(e)}")
 
     # Mock fallback solo dev. No-ACTIVO privado también en mock.
-    if not _mock_enabled():
+    if not mock_enabled():
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
     pub = next((p for p in MOCK_PUBS if p["id"] == pub_id), None)
     if not pub:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if pub.get("estado") != "ACTIVO" and not await _is_owner_or_admin(current_user, pub.get("usuario_id")):
+    if pub.get("estado") != EstadoPublicacion.ACTIVO and not await es_dueno_o_admin(current_user, pub.get("usuario_id")):
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
     # 004 POIs mock: misma forma que la rama DB (distancia a ESTE lugar + ref).
     if campus_id is not None:
@@ -681,10 +560,9 @@ async def get_publicacion(
         dist_ref = None
         if pub.get("latitud") is not None and pub.get("longitud") is not None:
             dist_ref = haversine_m(pub["latitud"], pub["longitud"], lugar["lat"], lugar["lng"])
-        from app.routers import publicidad as _pub
-        _info = _pub.mock_destacados_map([pub_id]).get(pub_id)
+        _info = mock_destacados_map([pub_id]).get(pub_id)
         out = view.mock_to_out(pub, campus_id,
-                               await _is_owner_or_admin(current_user, pub.get("usuario_id")),
+                               await es_dueno_o_admin(current_user, pub.get("usuario_id")),
                                _info is not None,
                                _info["vence"] if _info else None)
         out["campus_ref"] = {
@@ -697,10 +575,9 @@ async def get_publicacion(
             "tiempo_pie_min": tiempo_pie_min(dist_ref),
         }
         return out
-    from app.routers import publicidad as _pub_mock
-    _info_plain = _pub_mock.mock_destacados_map([pub_id]).get(pub_id)
+    _info_plain = mock_destacados_map([pub_id]).get(pub_id)
     return view.mock_to_out(pub, None,
-                            await _is_owner_or_admin(current_user, pub.get("usuario_id")),
+                            await es_dueno_o_admin(current_user, pub.get("usuario_id")),
                             _info_plain is not None,
                             _info_plain["vence"] if _info_plain else None)
 
@@ -722,10 +599,10 @@ async def editar_publicacion(
     servicios_nuevos = cambios.pop("servicios_ids", None)
     if servicios_nuevos is not None:
         servicios_nuevos = list(dict.fromkeys(servicios_nuevos))
-    # M4 commit único: el set de fotos viaja en el mismo PATCH (ya validado
+    # Commit único: el set de fotos viaja en el mismo PATCH (ya validado
     # por el schema). Un solo commit para escalares + etiquetas + fotos.
     fotos_nuevas = cambios.pop("fotos", None)
-    # M2: si cambia el tipo, validar contra housing_types (esta_activo=true).
+    # Si cambia el tipo, validar contra housing_types (esta_activo=true).
     if "tipo_inmueble" in cambios:
         try:
             from app.services import housing_types as _ht
@@ -734,15 +611,15 @@ async def editar_publicacion(
                 raise HTTPException(status_code=422, detail=f"tipo_inmueble '{cambios['tipo_inmueble']}' no válido o inactivo")
         except HTTPException:
             raise
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("[publicaciones editar] no se pudo validar tipo_inmueble (se acepta): %s", exc_resumen(e))
     try:
         from app.models import Publicacion, PublicacionServicio, ServicioCatalogo
 
         p = await db.get(Publicacion, pub_id)
         if not p:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await _is_owner_or_admin(user, p.usuario_id):
+        if not await es_dueno_o_admin(user, p.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede editar")
         if servicios_nuevos is not None:
             for sid in servicios_nuevos:
@@ -780,28 +657,22 @@ async def editar_publicacion(
         rep_map, users_map, _ = await repo.fetch_page_aggregates(db, [p], None)
         return view.cards_for_page([p], rep_map, users_map, {}, None, True)[0]
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "editar_publicacion")
         raise
     except Exception as e:
         _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
         _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
         logger.error(f"[DB fallback] editar {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "editar_publicacion")
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     # Mock fallback solo dev.
-    if not _mock_enabled():
+    if not mock_enabled():
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
     pub = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
     if not pub:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if not await _is_owner_or_admin(user, pub.get("usuario_id")):
+    if not await es_dueno_o_admin(user, pub.get("usuario_id")):
         raise HTTPException(status_code=403, detail="Solo el dueño puede editar")
     if fotos_nuevas is not None:
         # Mock dev: el set ya viene validado por el schema; reemplazo directo.
@@ -898,7 +769,7 @@ async def reemplazar_fotos(
         pub = await db.get(Publicacion, pub_id)
         if not pub:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await _is_owner_or_admin(user, pub.usuario_id):
+        if not await es_dueno_o_admin(user, pub.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede editar fotos")
         await _reconciliar_fotos_urls(db, pub_id, urls)
         await db.commit()
@@ -911,27 +782,21 @@ async def reemplazar_fotos(
                 "imagenes": [{"id": r.id, "url": r.url, "orden": r.orden} for r in filas],
                 "total": len(filas)}
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "reemplazar_fotos")
         raise
     except Exception as e:
         _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
         _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
         logger.error(f"[DB fallback] fotos {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "reemplazar_fotos")
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    if not _mock_enabled():
+    if not mock_enabled():
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
     pub = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
     if not pub:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if not await _is_owner_or_admin(user, pub.get("usuario_id")):
+    if not await es_dueno_o_admin(user, pub.get("usuario_id")):
         raise HTTPException(status_code=403, detail="Solo el dueño puede editar fotos")
     pub["fotos"] = list(urls)
     return {"id": pub_id, "fotos": list(urls),
@@ -963,20 +828,14 @@ async def renovar_publicacion(
         datos = await repo.renovar_publicacion(db, pub_id, uid)
         return datos
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "renovar_publicacion")
         raise
     except Exception as e:
         _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
         _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
         logger.error(f"[DB] renovar_publicacion {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "renovar_publicacion")
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
     # Mock fallback solo dev (sin PG)
@@ -1000,12 +859,12 @@ async def renovar_publicacion(
 
     pub["fecha_expiracion"] = fecha_nueva
     pub["fecha_renovacion"] = now
-    if pub.get("estado") == "EXPIRADO":
-        pub["estado"] = "ACTIVO"
+    if pub.get("estado") == EstadoPublicacion.EXPIRADO:
+        pub["estado"] = EstadoPublicacion.ACTIVO
 
     return {
         "id": pub["id"],
-        "estado": pub.get("estado", "ACTIVO"),
+        "estado": pub.get("estado", EstadoPublicacion.ACTIVO),
         "fecha_expiracion_anterior": fecha_anterior,
         "fecha_expiracion_nueva": fecha_nueva,
         "dias_agregados": 30,
@@ -1036,7 +895,7 @@ async def eliminar_publicacion(
         p = await db.get(Publicacion, pub_id)
         if not p:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await _is_owner_or_admin(user, p.usuario_id):
+        if not await es_dueno_o_admin(user, p.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede eliminar")
         dueno_id = p.usuario_id
         await db.delete(p)
@@ -1048,46 +907,36 @@ async def eliminar_publicacion(
                 "mensaje": "Publicación eliminada." + (
                     " Tu rol volvió a Usuario Base." if democionado else "")}
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "eliminar_publicacion")
         raise
     except Exception as e:
         _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
         _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
         logger.error(f"[DB fallback] eliminar {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "eliminar_publicacion")
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    if not _mock_enabled():
+    if not mock_enabled():
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
     pub = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
     if not pub:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if not await _is_owner_or_admin(user, pub.get("usuario_id")):
+    if not await es_dueno_o_admin(user, pub.get("usuario_id")):
         raise HTTPException(status_code=403, detail="Solo el dueño puede eliminar")
     dueno_id = pub.get("usuario_id")
     MOCK_PUBS.remove(pub)
     # Espejo mock de la democión (mismo criterio de vigentes).
     democionado = False
     rol_final = user.get("rol")
-    try:
-        from app.routers.auth import MOCK_USERS as _MU
-        restantes = sum(1 for x in MOCK_PUBS
-                        if x.get("usuario_id") == dueno_id
-                        and x.get("estado") in _rl.ESTADOS_VIGENTES)
-        for _em, _m in _MU.items():
-            if _m.get("id") == dueno_id and _m.get("rol") == "ARRENDADOR" and restantes == 0:
-                _m["rol"] = "ESTUDIANTE"
-                democionado = True
-                rol_final = "ESTUDIANTE"
-                break
-    except Exception:
-        pass
+    restantes = sum(1 for x in MOCK_PUBS
+                    if x.get("usuario_id") == dueno_id
+                    and x.get("estado") in _rl.ESTADOS_VIGENTES)
+    for _em, _m in MOCK_USERS.items():
+        if _m.get("id") == dueno_id and _m.get("rol") == Rol.ARRENDADOR and restantes == 0:
+            _m["rol"] = Rol.ESTUDIANTE
+            democionado = True
+            rol_final = Rol.ESTUDIANTE
+            break
     return {"id": pub_id, "eliminada": True, "rol": rol_final,
             "rol_actualizado": democionado,
             "mensaje": "Publicación eliminada (mock)." + (
@@ -1110,7 +959,7 @@ async def cambiar_estado_dueno(
     from app.services import role_lifecycle as _rl
 
     nuevo = (payload or {}).get("estado") if isinstance(payload, dict) else None
-    if nuevo not in ("ACTIVO", "PAUSADO"):
+    if nuevo not in (EstadoPublicacion.ACTIVO, EstadoPublicacion.PAUSADO):
         raise HTTPException(status_code=422, detail="estado debe ser ACTIVO o PAUSADO")
     uid = user.get("id")
     if not isinstance(uid, int):
@@ -1121,9 +970,9 @@ async def cambiar_estado_dueno(
         p = await db.get(Publicacion, pub_id)
         if not p:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await _is_owner_or_admin(user, p.usuario_id):
+        if not await es_dueno_o_admin(user, p.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede cambiar el estado")
-        if p.estado not in ("ACTIVO", "PAUSADO"):
+        if p.estado not in (EstadoPublicacion.ACTIVO, EstadoPublicacion.PAUSADO):
             raise HTTPException(
                 status_code=409,
                 detail=f"No se puede cambiar estado desde {p.estado} (solo ACTIVO<->PAUSADO)",
@@ -1135,7 +984,7 @@ async def cambiar_estado_dueno(
         db.add(PublicacionesAudit(
             publicacion_id=pub_id,
             usuario_id=uid,
-            evento="PAUSED" if nuevo == "PAUSADO" else "RESUMED",
+            evento="PAUSED" if nuevo == EstadoPublicacion.PAUSADO else "RESUMED",
             detalle=f"Cambio a {nuevo} por el dueño",
         ))
         await db.flush()
@@ -1145,29 +994,23 @@ async def cambiar_estado_dueno(
                 "rol_actualizado": democionado,
                 "mensaje": f"Aviso {nuevo.lower()}."}
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "cambiar_estado_dueno")
         raise
     except Exception as e:
         _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
         _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
         logger.error(f"[DB fallback] estado {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "cambiar_estado_dueno")
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    if not _mock_enabled():
+    if not mock_enabled():
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
     pub = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
     if not pub:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if not await _is_owner_or_admin(user, pub.get("usuario_id")):
+    if not await es_dueno_o_admin(user, pub.get("usuario_id")):
         raise HTTPException(status_code=403, detail="Solo el dueño puede cambiar el estado")
-    if pub.get("estado") not in ("ACTIVO", "PAUSADO"):
+    if pub.get("estado") not in (EstadoPublicacion.ACTIVO, EstadoPublicacion.PAUSADO):
         raise HTTPException(status_code=409, detail="Solo ACTIVO<->PAUSADO")
     pub["estado"] = nuevo
     return {"id": pub_id, "estado": nuevo, "rol": user.get("rol"),
@@ -1193,7 +1036,7 @@ async def historial_aviso(
         pub = await db.get(Publicacion, pub_id)
         if not pub:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await _is_owner_or_admin(user, pub.usuario_id):
+        if not await es_dueno_o_admin(user, pub.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede ver el historial")
         rows = (await db.execute(
             select(PublicacionesAudit).where(PublicacionesAudit.publicacion_id == pub_id)
@@ -1209,11 +1052,8 @@ async def historial_aviso(
         _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
         _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
         logger.error(f"[DB fallback] historial {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "historial_aviso")
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     return {"id": pub_id, "items": [], "mock": True}
 
@@ -1241,7 +1081,7 @@ async def similares(
         from app.services import publicacion_view as _view
         conds = [
             Publicacion.id != pub_id,
-            Publicacion.estado == "ACTIVO",
+            Publicacion.estado == EstadoPublicacion.ACTIVO,
             dueno_activo_clause(Publicacion),
             Publicacion.usuario_id != base.usuario_id,
         ]
@@ -1275,20 +1115,17 @@ async def similares(
         _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
         _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
         logger.error(f"[DB fallback] similares {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "similares")
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    if not _mock_enabled():
+    if not mock_enabled():
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
     base = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
     if not base:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    # Detalle #9: también en mock se excluye al propio dueño.
+    # También en mock se excluye al propio dueño.
     cands = [x for x in MOCK_PUBS
-             if x["id"] != pub_id and x.get("estado") == "ACTIVO"
+             if x["id"] != pub_id and x.get("estado") == EstadoPublicacion.ACTIVO
              and x.get("usuario_id") != base.get("usuario_id")
              and ((base.get("zona_barrio_id") is not None
                    and x.get("zona_barrio_id") == base.get("zona_barrio_id"))
@@ -1311,13 +1148,7 @@ async def registrar_vista(
     """
     import hashlib as _hl
     from datetime import date as _date
-    ip = "unknown"
-    try:
-        fwd = request.headers.get("x-forwarded-for") if request else None
-        ip = (str(fwd).split(",")[0].strip() if fwd
-              else (request.client.host if request and request.client else "unknown"))
-    except Exception:
-        pass
+    ip = client_ip(request)
     await _db_rate_check_vista(db, ip)
     dia = _date.today().isoformat()
     marca = _hl.sha256(f"{ip}|{dia}".encode()).hexdigest()
@@ -1340,14 +1171,11 @@ async def registrar_vista(
     except HTTPException:
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "registrar_vista")
         _pub_id_seguro = str(pub_id).replace('\n', '').replace('\r', '')
         _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
         logger.error(f"[DB vista] {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
-        if not _mock_enabled():
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     # Mock dev: memoria local del proceso.
     key = (pub_id, marca)
@@ -1361,110 +1189,110 @@ async def registrar_vista(
     raise HTTPException(status_code=404, detail="Publicación no encontrada")
 
 
+@dataclass(frozen=True)
+class _Escritor:
+    """Datos reales de quien publica (BD o, sin PG en dev, MOCK_USERS)."""
+    rol: str | None
+    email_verificado: bool | None = None
+    telefono: str | None = None
+    eliminado: bool = False
+    de_fuente_real: bool = False  # False: solo se conocen los claims del JWT
+
+
 async def _gate_escritura(db: AsyncSession, user: dict) -> tuple[dict, bool]:
-    """Gate de escritura v13/v13.2/v14.1 (extraído de crear_publicacion).
+    """Guard de escritura con el rol REAL (el claim del JWT puede estar rancio).
 
-    Verifica en orden (guard clauses): rol real de BD (anti-staleness del
-    claim JWT) -> cuenta no eliminada -> email confirmado -> teléfono
-    vinculado -> scope `publications:write` (con auto-promoción ESTUDIANTE).
-
-    Args:
-        db: Sesión async (misma transacción del endpoint).
-        user: Claims JWT (requiere `id` int válido).
-
-    Returns:
-        Tupla (user_actualizado, rol_actualizado). `user` trae el rol real y
-        sin claim `scopes` rancio; `rol_actualizado` indica promoción.
-
-    Raises:
-        HTTPException: 403 (soft-delete, email, scope), 400 (sin teléfono).
+    Orden: cuenta no eliminada -> email confirmado -> teléfono vinculado ->
+    scope `publications:write` (auto-promueve ESTUDIANTE a ARRENDADOR).
+    Retorna (user con el rol real y sin `scopes` rancios, hubo_promocion).
+    403 por cuenta en borrado, email o scope; 400 sin teléfono.
     """
-    from app.core.permissions import has_scope as _has_scope
-    from app.services import role_lifecycle as _rl
-
-    rol_actualizado = False
-    rol_bd, email_ok_bd, tel_bd = user.get("rol"), None, None
-    _uu = None
-    rol_verificado = False
-    try:
-        from app.models import Usuario as _U
-        _ures = await db.execute(select(_U).where(_U.id == user["id"]))
-        _uu = _ures.scalars().first()
-        if _uu is not None:
-            rol_bd = _uu.rol
-            email_ok_bd = bool(getattr(_uu, "email_verificado", True))
-            tel_bd = getattr(_uu, "telefono_whatsapp", None)
-            rol_verificado = True
-    except Exception:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-    if not rol_verificado and _mock_enabled():
-        # Fuente de verdad en mock: MOCK_USERS (los claims del mock-token
-        # legacy pueden venir sin teléfono).
-        try:
-            from app.routers.auth import MOCK_USERS as _MU
-            _m = None
-            for _em, _mm in _MU.items():
-                if _mm.get("id") == user.get("id"):
-                    _m = _mm
-                    break
-            if _m is None:
-                from app.routers.auth import _norm_email as _ne
-                _m = _MU.get(_ne(user.get("sub") or ""))
-            if _m is not None:
-                rol_bd = _m.get("rol") or rol_bd
-                email_ok_bd = bool(_m.get("email_verificado", True))
-                tel_bd = _m.get("telefono_whatsapp")
-                rol_verificado = True
-        except Exception:
-            pass
-    user = {**user, "rol": rol_bd or user.get("rol")}
-    if _uu is not None and getattr(_uu, "eliminado_en", None) is not None:
+    escritor = await _escritor_real(db, user)
+    user = {**user, "rol": escritor.rol or user.get("rol")}
+    if escritor.eliminado:
         raise HTTPException(
             status_code=403,
             detail="Tu cuenta está en proceso de eliminación. Restáurala antes de publicar.",
         )
-    if rol_verificado:
-        # Anti-staleness: sin claim, los scopes derivan del rol real.
-        user.pop("scopes", None)
-    if not user.get("email_verificado") and email_ok_bd is False:
+    if escritor.de_fuente_real:
+        user.pop("scopes", None)  # sin claim, los scopes derivan del rol real
+    if not user.get("email_verificado") and escritor.email_verificado is False:
         raise HTTPException(
             status_code=403,
             detail="Confirma tu correo antes de publicar (revisa tu email o solicita un código en /api/auth/otp/solicitar)",
         )
-    tel_efectivo = tel_bd or user.get("telefono_whatsapp")
-    if not tel_efectivo:
+    if not (escritor.telefono or user.get("telefono_whatsapp")):
         raise HTTPException(
             status_code=400,
             detail="Vincula un número de contacto antes de publicar (Mi Perfil → Datos y contacto)",
         )
-    if not _has_scope(user, "publications:write"):
+    if has_scope(user, "publications:write"):
+        return user, False
+    user, promovido = await _autopromover_estudiante(db, user)
+    if not has_scope(user, "publications:write"):
+        raise HTTPException(status_code=403, detail="Solo ARRENDADOR puede publicar (se requiere 'publications:write')")
+    return user, promovido
+
+
+async def _escritor_real(db: AsyncSession, user: dict) -> _Escritor:
+    from app.models import Usuario
+    try:
+        res = await db.execute(select(Usuario).where(Usuario.id == user["id"]))
+        usuario = res.scalars().first()
+    except Exception as e:
+        logger.warning("[publicar] lectura del usuario falló: %s", exc_resumen(e))
+        await rollback_seguro(db, "_escritor_real")
+        usuario = None
+    if usuario is not None:
+        return _Escritor(
+            rol=usuario.rol,
+            email_verificado=bool(getattr(usuario, "email_verificado", True)),
+            telefono=getattr(usuario, "telefono_whatsapp", None),
+            eliminado=getattr(usuario, "eliminado_en", None) is not None,
+            de_fuente_real=True,
+        )
+    mock = _usuario_mock(user) if mock_enabled() else None
+    if mock is not None:
+        # Los claims del mock-token legacy pueden venir sin teléfono.
+        return _Escritor(
+            rol=mock.get("rol") or user.get("rol"),
+            email_verificado=bool(mock.get("email_verificado", True)),
+            telefono=mock.get("telefono_whatsapp"),
+            de_fuente_real=True,
+        )
+    return _Escritor(rol=user.get("rol"))
+
+
+def _usuario_mock(user: dict) -> dict | None:
+    por_id = next((m for m in MOCK_USERS.values() if m.get("id") == user.get("id")), None)
+    return por_id or MOCK_USERS.get(normalizar_email(user.get("sub") or ""))
+
+
+async def _autopromover_estudiante(db: AsyncSession, user: dict) -> tuple[dict, bool]:
+    """ESTUDIANTE -> ARRENDADOR al publicar por primera vez (BD; mock sin PG)."""
+    if user.get("rol") != Rol.ESTUDIANTE:
+        return user, False
+    from app.services import role_lifecycle
+    try:
+        promovido = await role_lifecycle.promover_si_estudiante(db, user["id"]) == Rol.ARRENDADOR
+    except Exception as e:
+        logger.warning("[publicar] auto-promoción a ARRENDADOR falló: %s", exc_resumen(e))
         promovido = False
-        if user.get("rol") == "ESTUDIANTE":
-            try:
-                rol_final = await _rl.promover_si_estudiante(db, user["id"])
-                if rol_final == "ARRENDADOR":
-                    user = {**user, "rol": "ARRENDADOR"}
-                    user.pop("scopes", None)
-                    promovido = True
-                    rol_actualizado = True
-            except Exception:
-                pass
-            if not promovido and _mock_enabled():
-                from app.routers.auth import MOCK_USERS as _MU
-                for _em, _m in _MU.items():
-                    if _m.get("id") == user.get("id") and _m.get("rol") == "ESTUDIANTE":
-                        _m["rol"] = "ARRENDADOR"
-                        user = {**user, "rol": "ARRENDADOR"}
-                        user.pop("scopes", None)
-                        promovido = True
-                        rol_actualizado = True
-                        break
-        if not _has_scope(user, "publications:write"):
-            raise HTTPException(status_code=403, detail="Solo ARRENDADOR puede publicar (se requiere 'publications:write')")
-    return user, rol_actualizado
+    if not promovido and mock_enabled():
+        promovido = _promover_mock(user.get("id"))
+    if not promovido:
+        return user, False
+    promovido_user = {**user, "rol": Rol.ARRENDADOR}
+    promovido_user.pop("scopes", None)
+    return promovido_user, True
+
+
+def _promover_mock(uid) -> bool:
+    for m in MOCK_USERS.values():
+        if m.get("id") == uid and m.get("rol") == Rol.ESTUDIANTE:
+            m["rol"] = Rol.ARRENDADOR
+            return True
+    return False
 
 
 @router.post("", response_model=PublicacionCreatedOut, status_code=status.HTTP_201_CREATED, summary="HU-005 Publicar oferta estructurada -> PENDIENTE (auto-promueve ESTUDIANTE)")
@@ -1472,7 +1300,7 @@ async def crear_publicacion(
     payload: PublicacionCreate,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
-    # Bloque 2: reintento seguro. Sin header no hay replay (el cliente ya
+    # Reintento seguro. Sin header no hay replay (el cliente ya
     # no reintenta escrituras salvo con clave).
     idempotency_key: Optional[str] = Header(None),
 ):
@@ -1513,7 +1341,7 @@ async def crear_publicacion(
         raise HTTPException(status_code=401, detail="Token sin propietario válido")
     # Gate v13/v13.2/v14.1 (rol real + email + teléfono + promoción).
     user, rol_actualizado = await _gate_escritura(db, user)
-    # Bloque 2: replay idempotente (tras el gate: ya hay uid real).
+    # Replay idempotente (tras el gate: ya hay uid real).
     clave_idem = _idem_validar(idempotency_key)
     if clave_idem:
         previo = await _idem_replay(db, clave_idem, user["id"])
@@ -1521,7 +1349,7 @@ async def crear_publicacion(
             return previo["cuerpo"]
     # Anti-flood (tras replay: los reintentos del cliente no queman cuota).
     _check_pub_rate_limit(user["id"])
-    # M2: valida tipo contra housing_types (esta_activo=true, caché 5min).
+    # Valida tipo contra housing_types (esta_activo=true, caché 5min).
     try:
         from app.services import housing_types as _ht
         activos = await _ht.slugs_activos(db)
@@ -1529,21 +1357,21 @@ async def crear_publicacion(
             raise HTTPException(status_code=422, detail=f"tipo_inmueble '{payload.tipo_inmueble}' no válido o inactivo")
     except HTTPException:
         raise
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[publicar] no se pudo validar tipo_inmueble (se acepta): %s", exc_resumen(e))
     # Calcular índice inicial (default telefono_verificado False si ausente).
     trust = view.initial_trust(payload, bool(user.get("telefono_verificado", False)))
 
     # Intentar persistir en DB
     try:
-        # F1: token sin id entero válido -> 401 (nunca suplantar dueño id=1).
+        # Token sin id entero válido -> 401 (nunca suplantar dueño id=1).
         if not isinstance(user.get("id"), int):
             raise HTTPException(status_code=401, detail="Token sin propietario válido")
         campus_ids, servicios_ids = await repo.validate_fks(
             db, payload.zona_barrio_id, payload.campus_ids, payload.servicios_ids
         )
         nueva = await repo.create_persisted(db, payload, user["id"], trust, campus_ids, servicios_ids)
-        # v15.2 auto-moderación (flag OFF por defecto: no-op, sigue PENDIENTE).
+        # Auto-moderación (flag OFF por defecto: no-op, sigue PENDIENTE).
         mod_info = None
         try:
             from app.services import auto_moderation as _am
@@ -1554,9 +1382,9 @@ async def crear_publicacion(
                 mod_info = _res.to_dict()
         except Exception as _e:
             logger.warning(f"[automod] no aplicada, sigue flujo manual: {exc_resumen(_e)}")
-        # Fase 2: la auto-aprobación también alerta. Va tras el commit del
+        # La auto-aprobación también alerta. Va tras el commit del
         # automod (ya persistido): savepoint propio, fail-safe total.
-        if nueva.estado == "ACTIVO":
+        if nueva.estado == EstadoPublicacion.ACTIVO:
             try:
                 from app.services import notifications_matcher as _nm
                 await _nm.evaluar_y_crear_notificaciones(
@@ -1567,12 +1395,12 @@ async def crear_publicacion(
                 )
                 await _nm.notificar_moderacion(
                     db, usuario_id=user["id"], publicacion_id=nueva.id,
-                    titulo_pub=nueva.titulo, estado="ACTIVO",
+                    titulo_pub=nueva.titulo, estado=EstadoPublicacion.ACTIVO,
                 )
-            except Exception:
-                pass
-        resp = {"id": nueva.id, "estado": nueva.estado, "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "mensaje": "Publicación en PENDIENTE, pendiente de moderación" if nueva.estado == "PENDIENTE" else "Publicación aprobada automáticamente", "rol": user.get("rol"), "rol_actualizado": rol_actualizado, "moderacion": mod_info}
-        # Bloque 2: guarda la respuesta para replays (carrera -> replay ganador).
+            except Exception as e:
+                logger.warning("[publicar] notificaciones de auto-aprobación fallaron: %s", exc_resumen(e))
+        resp = {"id": nueva.id, "estado": nueva.estado, "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "mensaje": "Publicación en PENDIENTE, pendiente de moderación" if nueva.estado == EstadoPublicacion.PENDIENTE else "Publicación aprobada automáticamente", "rol": user.get("rol"), "rol_actualizado": rol_actualizado, "moderacion": mod_info}
+        # Guarda la respuesta para replays (carrera -> replay ganador).
         if clave_idem:
             ganador = await _idem_guardar(db, clave_idem, user["id"], resp)
             if ganador is not None:
@@ -1580,18 +1408,12 @@ async def crear_publicacion(
         return resp
 
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "crear_publicacion")
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "crear_publicacion")
         logger.error(f"[DB crear] falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         # Mock fallback Sprint1 solo dev: no hay PG, simular creación (usa id 10000+ para no colisionar con ids del seed)
         mock_id = max(max(p["id"] for p in MOCK_PUBS), 10000) + 1
@@ -1601,7 +1423,7 @@ async def crear_publicacion(
             "deposito_requerido": float(payload.deposito_requerido), "zona_barrio_id": payload.zona_barrio_id,
             "barrio_texto": payload.barrio_texto,
             "direccion_referencial": payload.direccion_referencial, "reglas_convivencia": payload.reglas_convivencia,
-            "estado": "PENDIENTE", "fecha_renovacion": datetime.now(timezone.utc),
+            "estado": EstadoPublicacion.PENDIENTE, "fecha_renovacion": datetime.now(timezone.utc),
             "fecha_expiracion": datetime.now(timezone.utc) + timedelta(days=30),
             "servicios_ids": list(dict.fromkeys(payload.servicios_ids)), "servicios": [],
             "fotos": [str(u) for u in payload.fotos], "latitud": payload.latitud, "longitud": payload.longitud,
@@ -1609,7 +1431,7 @@ async def crear_publicacion(
             "telefono_verificado": bool(user.get("telefono_verificado", False)), "reportes_activos": 0,
         })
         resp_mock = {"id": mock_id, "estado": "PENDIENTE (MOCK - sin PG)", "indice_confianza": trust["indice"], "desglose": trust["desglose"], "advertencia": trust["advertencia"], "detalle_mock": "Base de datos no disponible (dev sin PG)", "rol": user.get("rol"), "rol_actualizado": rol_actualizado}
-        # Bloque 2: espejo mock del replay (el lookup superior ya lo cubre).
+        # Espejo mock del replay (el lookup superior ya lo cubre).
         if clave_idem:
             _IDEMPOTENCY_MOCK[(clave_idem, user["id"], IDEM_RUTA_CREAR)] = {
                 "codigo": 201, "cuerpo": dict(resp_mock),

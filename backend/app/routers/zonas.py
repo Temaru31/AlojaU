@@ -11,11 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.logseguro import exc_resumen
 from app.db.session import get_session
 
 import logging
+from app.core.db_utils import rollback_seguro
+from app.core.flags import mock_enabled
 
 logger = logging.getLogger("alojau.zonas")
 
@@ -29,10 +30,6 @@ def clear_zonas_cache() -> None:
     """Invalida el caché (tests + ingesta manual)."""
     _cache["ts"] = 0.0
     _cache["payload"] = None
-
-
-def _mock_enabled() -> bool:
-    return bool(getattr(settings, "mock_enabled", False))
 
 
 MOCK_ZONAS = [
@@ -65,11 +62,8 @@ async def list_zonas(response: Response, db: AsyncSession = Depends(get_session)
         ]
     except Exception as e:
         logger.error(f"[zonas] DB falló: {exc_resumen(e)}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "list_zonas")
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         payload = [dict(z) for z in MOCK_ZONAS]
     _cache["ts"] = ahora

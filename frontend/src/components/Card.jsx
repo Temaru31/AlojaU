@@ -115,7 +115,7 @@ export default function Card({ pub, lugarNombre = null }) {
                 type="button"
                 aria-label={`Ver foto ${i + 1}`}
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); setFotoIdx(i) }}
-                // M3 táctil: área extendida invisible (el punto visible sigue w-2).
+                // Táctil: área extendida invisible (el punto visible sigue w-2).
                 className={`relative w-2 h-2 rounded-full transition before:absolute before:-inset-2.5 before:content-[''] ${i === Math.min(fotoIdx, 4) ? 'bg-white scale-110' : 'bg-white/50 hover:bg-white/80'}`}
               />
             ))}

@@ -29,6 +29,7 @@ Pre-mortem (Fase 0, documentado aquí para auditoría):
 from __future__ import annotations
 
 from fastapi import Depends, HTTPException
+from app.core.dominio import Rol
 
 # ---------------------------------------------------------------------------
 # Catálogo de scopes (estable; añadir nuevos es aditivo y no rompe nada)
@@ -72,11 +73,11 @@ _ADMIN_SCOPES = frozenset(set(_ARRENDADOR_SCOPES) | {
 
 # Roles futuros ya contemplados (extensibles sin tocar endpoints):
 _FUTURE_ROLE_SCOPES: dict[str, frozenset] = {
-    "MODERADOR_CAMPUS": frozenset(set(_ESTUDIANTE_SCOPES) | {
+    Rol.MODERADOR_CAMPUS: frozenset(set(_ESTUDIANTE_SCOPES) | {
         "admin:reports:moderate",
         "campus:moderate",
     }),
-    "AUDITOR_LEGAL": frozenset({
+    Rol.AUDITOR_LEGAL: frozenset({
         "publications:read",
         "legal:audit:view",
         "admin:dashboard:view",
@@ -84,15 +85,15 @@ _FUTURE_ROLE_SCOPES: dict[str, frozenset] = {
 }
 
 ROLE_SCOPES: dict[str, frozenset] = {
-    "ESTUDIANTE": _ESTUDIANTE_SCOPES,
-    "ARRENDADOR": _ARRENDADOR_SCOPES,
-    "ADMIN": _ADMIN_SCOPES,
+    Rol.ESTUDIANTE: _ESTUDIANTE_SCOPES,
+    Rol.ARRENDADOR: _ARRENDADOR_SCOPES,
+    Rol.ADMIN: _ADMIN_SCOPES,
     **_FUTURE_ROLE_SCOPES,
 }
 
 # Roles que la BD acepta (CHECK aditivo; el modelo lo refleja).
 VALID_ROLES: tuple[str, ...] = (
-    "ESTUDIANTE", "ARRENDADOR", "ADMIN", "MODERADOR_CAMPUS", "AUDITOR_LEGAL",
+    Rol.ESTUDIANTE, Rol.ARRENDADOR, Rol.ADMIN, Rol.MODERADOR_CAMPUS, Rol.AUDITOR_LEGAL,
 )
 
 

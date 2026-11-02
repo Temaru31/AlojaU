@@ -4,7 +4,7 @@ GET /api/matching/candidatos (autenticado): evalúa hasta 15 candidatos
 (ESTUDIANTE activos con preferencias registradas) y retorna solo el top 5
 con datos básicos de contacto. La lógica vive en `app.services.matching`.
 
-Mock dev (_mock_enabled): opera sobre MOCK_USERS en memoria.
+Mock dev (mock_enabled): opera sobre MOCK_USERS en memoria.
 """
 import logging
 
@@ -12,12 +12,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.logseguro import exc_resumen
 from app.core.security import get_current_user
 from app.db.session import get_session
 from app.models import Usuario
 from app.services.matching import candidatos
+from app.core.db_utils import rollback_seguro
+from app.core.flags import mock_enabled
+from app.core.dominio import Rol
+from app.fixtures.usuarios_demo import MOCK_USERS
 
 logger = logging.getLogger("alojau.matching")
 
@@ -25,10 +28,6 @@ router = APIRouter(prefix="/api/matching", tags=["matching"])
 
 LIMITE_BUSQUEDA = 15  # candidatos evaluados por petición
 TOP_FRONTEND = 5      # solo se exponen los 5 mejores
-
-
-def _mock_enabled() -> bool:
-    return bool(getattr(settings, "mock_enabled", False))
 
 
 class RoomieMatchOut(BaseModel):
@@ -64,17 +63,16 @@ class _MockSession:
 
 async def _ranking_mock(usuario_id: int) -> list[dict]:
     """Fallback dev: ranking sobre MOCK_USERS (misma semántica del servicio)."""
-    from .auth import MOCK_USERS
 
     rows, yo = [], None
     for email, m in MOCK_USERS.items():
-        if not isinstance(m, dict) or m.get("rol") != "ESTUDIANTE":
+        if not isinstance(m, dict) or m.get("rol") != Rol.ESTUDIANTE:
             continue
         u = Usuario(
             nombre_completo=m.get("nombre_completo") or "Estudiante",
             email=email,
             password_hash="",
-            rol="ESTUDIANTE",
+            rol=Rol.ESTUDIANTE,
             telefono_whatsapp=m.get("telefono_whatsapp"),
         )
         u.id = m.get("id")
@@ -111,16 +109,13 @@ async def listar_candidatos(
         if yo is not None:
             ranking = await candidatos(db, yo, limite=LIMITE_BUSQUEDA)
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "listar_candidatos")
         logger.error(f"[matching candidatos] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
     if ranking is None:
-        if not _mock_enabled():
+        if not mock_enabled():
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
         ranking = await _ranking_mock(uid)
 

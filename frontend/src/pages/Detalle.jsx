@@ -20,8 +20,9 @@ import { fotosOrdenadas } from '../utils/portada'
 import { getEtiquetaTipo } from '../utils/tiposVivienda'
 import { formatearSesionFecha } from '../utils/sesion'
 import { etiquetaEvento } from '../utils/historial'
-import { api as _apiDetalle } from '../services/api'
 import useTiposVivienda from '../hooks/useTiposVivienda'
+import { authHead, bearer } from '../services/authHeaders'
+import { ESTADO } from '../utils/estados'
 
 export function humanizarTipo(tipo, tipos = null) {
   // Compat: antes mapa local; ahora delega a la fuente única (Bloque 3).
@@ -66,14 +67,14 @@ export default function Detalle() {
   const [yaContactado, setYaContactado] = useState(false)
   const [copiado, setCopiado] = useState('')
   const favHook = useFavoritos()
-  // v14.1: con sesión, el dueño/Admin ve su aviso aunque no esté ACTIVO.
+  // Con sesión, el dueño/Admin ve su aviso aunque no esté ACTIVO.
   const { token: authToken, user: authUser } = useAuth()
   const [editando, setEditando] = useState(false)
   const [similares, setSimilares] = useState([])
-  // Detalle #3: umbral de frescura desde config pública (fallback 30 local).
+  // Umbral de frescura desde config pública (fallback 30 local).
   // ANTES de los early-returns (hooks siempre en el mismo orden).
   const [diasDesact, setDiasDesact] = useState(() => diasDesactualizadaEfectiva())
-  // M2: nombre dinámico del tipo con fallback estático.
+  // Nombre dinámico del tipo con fallback estático.
   const { tipos: tiposCatalogo } = useTiposVivienda()
   const vistaEnviada = useRef(null)
   const compHook = useComparar()
@@ -87,7 +88,7 @@ export default function Detalle() {
     mostrarToast._t = window.setTimeout(() => setToast(''), 3500)
   }
 
-  // Bloque 3: el toast local no debe aparecer en otra pantalla si se navega
+  // El toast local no debe aparecer en otra pantalla si se navega
   // antes de los 3.5s (el global de Toaster sí sobrevive, es su trabajo).
   useEffect(() => () => window.clearTimeout(mostrarToast._t), [])
 
@@ -105,7 +106,7 @@ export default function Detalle() {
     setReportOpen(false)
     setEditando(false)
     const qs = campusIdParam ? `?campus_id=${encodeURIComponent(campusIdParam)}` : ''
-    const cfg = authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : {}
+    const cfg = authToken ? authHead(authToken) : {}
     api.get(`/api/publicaciones/${id}${qs}`, cfg)
       .then(r => { if (!cancelled) setPub(r.data) })
       .catch((err) => {
@@ -120,7 +121,7 @@ export default function Detalle() {
     return () => { cancelled = true }
   }, [id, campusIdParam, authToken])
 
-  // v15.2 métrica de vistas: 1 POST por aviso (el backend deduplica por IP/día).
+  // Métrica de vistas: 1 POST por aviso (el backend deduplica por IP/día).
   useEffect(() => {
     if (!pub || vistaEnviada.current === pub.id) return
     vistaEnviada.current = pub.id
@@ -130,7 +131,7 @@ export default function Detalle() {
     } catch { /* métrica best-effort */ }
   }, [pub, id])
 
-  // v15.2 bloque "similares en la zona" (también alimenta el fallback).
+  // Bloque "similares en la zona" (también alimenta el fallback).
   useEffect(() => {
     if (!pub) { setSimilares([]); return }
     let vivo = true
@@ -140,14 +141,14 @@ export default function Detalle() {
     return () => { vivo = false }
   }, [pub, id])
 
-  // M4 historial del inmueble: solo se pide si es el dueño (el backend
+  // Historial del inmueble: solo se pide si es el dueño (el backend
   // responde 403 al resto; ni siquiera se intenta sin sesión).
   const [historial, setHistorial] = useState(null)
   useEffect(() => {
     if (!pub || !authToken) { setHistorial(null); return }
     let vivo = true
     api.get(`/api/publicaciones/${pub.id}/historial`, {
-      headers: { Authorization: `Bearer ${authToken}` },
+      headers: bearer(authToken),
     })
       .then(r => { if (vivo) setHistorial(Array.isArray(r.data?.items) ? r.data.items : []) })
       .catch(() => { if (vivo) setHistorial(null) })
@@ -187,10 +188,10 @@ export default function Detalle() {
     }
   }, [id])
 
-  // Detalle #3: lee la config pública una vez (cache 5 min en constants.js).
+  // Lee la config pública una vez (cache 5 min en constants.js).
   useEffect(() => {
     let vivo = true
-    fetchConfigPublica(() => _apiDetalle.get('/api/publicaciones/config-publica').then((r) => r.data))
+    fetchConfigPublica(() => api.get('/api/publicaciones/config-publica').then((r) => r.data))
       .then((cfg) => { if (vivo && cfg?.dias_desactualizada) setDiasDesact(Number(cfg.dias_desactualizada)) })
       .catch(() => {})
     return () => { vivo = false }
@@ -276,8 +277,8 @@ export default function Detalle() {
     ? `Distancia a ${refApi.nombre_sede}`
     : (lugarLista ? `Distancia a ${nombreLugarLista}` : 'Distancia al campus')
 
-  const isActivo = pub.estado === 'ACTIVO'
-  // v15.2 autoría reactiva (usuario_id lo expone DetailOut).
+  const isActivo = pub.estado === ESTADO.ACTIVO
+  // Autoría reactiva (usuario_id lo expone DetailOut).
   const esDueno = !!(authUser?.id != null && pub.usuario_id != null
     && Number(authUser.id) === Number(pub.usuario_id))
   const actualizadoHace = haceRelativo(pub.updated_at || pub.fecha_renovacion)
@@ -295,7 +296,7 @@ export default function Detalle() {
   const zona = pub.zona_nombre || pub.zona || 'No informado'
   const servicios = pub.servicios || []
   const descripcion = (pub.descripcion || '').trim()
-  // M2: catálogo dinámico primero, estático como fallback (mismo texto).
+  // Catálogo dinámico primero, estático como fallback (mismo texto).
   const tipoHumano = humanizarTipo(pub.tipo_inmueble, tiposCatalogo)
   const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? 0)
   const isFav = favHook.isFav(pub.id)
@@ -372,7 +373,7 @@ export default function Detalle() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
         <div className="lg:col-span-2 space-y-6">
-          {!isActivo && pub.estado === 'PAUSADO_POR_REPORTE' && (
+          {!isActivo && pub.estado === ESTADO.PAUSADO_POR_REPORTE && (
             <div className="bg-red-50 border border-red-200 text-red-700 rounded-md p-4 text-sm" role="alert">
               <p className="font-bold mb-1 flex items-center gap-1.5"><Pause aria-hidden="true" className="w-4 h-4" /> Anuncio pausado temporalmente</p>
               <p className="text-xs leading-relaxed">
@@ -381,10 +382,10 @@ export default function Detalle() {
               </p>
             </div>
           )}
-          {!isActivo && pub.estado !== 'PAUSADO_POR_REPORTE' && (
+          {!isActivo && pub.estado !== ESTADO.PAUSADO_POR_REPORTE && (
             <div className="bg-amber-50 border border-amber-200 text-amber-700 rounded-md p-3 text-sm">
               {/* UX: copia humana, sin enum de BD (ACTIVO/PENDIENTE es interno) */}
-              No disponible para contacto por ahora{pub.estado === 'PENDIENTE' ? ' — en revisión' : ''}.
+              No disponible para contacto por ahora{pub.estado === ESTADO.PENDIENTE ? ' — en revisión' : ''}.
             </div>
           )}
 

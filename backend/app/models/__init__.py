@@ -407,13 +407,13 @@ class Usuario(Base):
     nombre_completo: Mapped[str] = mapped_column(String(150), nullable=False)
     email: Mapped[str] = mapped_column(String(180), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    # v13.2 marketplace: teléfono opcional (NULL = sin vincular; el CHECK solo
+    # Marketplace: teléfono opcional (NULL = sin vincular; el CHECK solo
     # valida no-nulos). Se exige al publicar, no al registrarse.
     telefono_whatsapp: Mapped[str | None] = mapped_column(String(20), nullable=True)
     rol: Mapped[str] = mapped_column(String(20), nullable=False, default="ESTUDIANTE")  # v13 base
     telefono_verificado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    # v13 Enterprise Auth / Ley 1581:
+    # Enterprise Auth / Ley 1581:
     auth_provider: Mapped[str] = mapped_column(String(30), default="password", nullable=False)
     supabase_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     email_verificado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -421,15 +421,15 @@ class Usuario(Base):
     fecha_consentimiento: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ip_consentimiento: Mapped[str | None] = mapped_column(String(45), nullable=True)
     version_politica: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    # v13.1 soft-delete: NULL = activa; fecha = en período de gracia (30 días)
+    # Soft-delete: NULL = activa; fecha = en período de gracia (30 días)
     # antes del borrado físico (purga). Permite recuperar la cuenta.
     eliminado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # v13.2 marketplace flexible: bio, foto y preferencias extensibles.
+    # Marketplace flexible: bio, foto y preferencias extensibles.
     bio: Mapped[str | None] = mapped_column(String(500), nullable=True)
     foto_perfil_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     preferencias: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict,
                                                server_default="{}")
-    # M5 Telegram $0: chat_id para DM de OTP (NULL = sin vincular).
+    # Telegram $0: chat_id para DM de OTP (NULL = sin vincular).
     # Nunca se postea a canales/grupos; solo DM si existe.
     telegram_chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
@@ -470,7 +470,7 @@ class HousingType(Base):
 class Publicacion(Base):
     __tablename__ = "publicaciones"
     __table_args__ = (
-        # M2: chk_tipo reemplazada por FK RESTRICT a housing_types (mig 013).
+        # Chk_tipo reemplazada por FK RESTRICT a housing_types (mig 013).
         # Se evita borrar slugs en uso (ON DELETE RESTRICT).
         # Fase 5 (aditivo): + PAUSADO_POR_REPORTE + REVISION_REQUERIDA. Los 7 previos siguen válidos.
         CheckConstraint("estado IN ('PENDIENTE','ACTIVO','PAUSADO','ARRENDADO','EXPIRADO','RECHAZADO','DESACTIVADO','PAUSADO_POR_REPORTE','REVISION_REQUERIDA')", name="chk_estado"),
@@ -494,7 +494,7 @@ class Publicacion(Base):
     barrio_texto: Mapped[str | None] = mapped_column(String(120), nullable=True)
     titulo: Mapped[str] = mapped_column(String(150), nullable=False)
     descripcion: Mapped[str] = mapped_column(Text, nullable=False)
-    # M2 FK RESTRICT a housing_types.slug (mig 013). El CHECK estático se eliminó.
+    # FK RESTRICT a housing_types.slug (mig 013). El CHECK estático se eliminó.
     tipo_inmueble: Mapped[str] = mapped_column(
         String(40), ForeignKey("housing_types.slug", ondelete="RESTRICT", onupdate="CASCADE"),
         nullable=False)
@@ -508,7 +508,7 @@ class Publicacion(Base):
     latitud: Mapped[float | None] = mapped_column(Numeric(10,7), nullable=True)
     longitud: Mapped[float | None] = mapped_column(Numeric(10,7), nullable=True)
     indice_confianza: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
-    # v15.2 métrica de vistas (incremental, dedup diaria por IP en endpoint).
+    # Métrica de vistas (incremental, dedup diaria por IP en endpoint).
     vistas: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     fecha_publicacion: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     fecha_renovacion: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -603,13 +603,13 @@ class ReportePublicacion(Base):
 class PublicacionesAudit(Base):
     __tablename__ = "publicaciones_audit"
     __table_args__ = (
-        # M4 historial: + SETTINGS (ajustes) y CUENTA_DELETE (soft-delete).
+        # Historial: + SETTINGS (ajustes) y CUENTA_DELETE (soft-delete).
         CheckConstraint("evento IN ('CREATED','APPROVED','REJECTED','PAUSED','RESUMED','RENTED','EXPIRED','RENEWED','BLOCKED','SETTINGS','CUENTA_DELETE')", name="chk_evento"),
         Index("idx_audit_pub", "publicacion_id"),
         Index("idx_audit_evento", "evento"),
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    # M4: NULL cuando el acto no refiere a un aviso (SETTINGS, CUENTA_DELETE).
+    # NULL cuando el acto no refiere a un aviso (SETTINGS, CUENTA_DELETE).
     publicacion_id: Mapped[int | None] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), nullable=True)
     usuario_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
     evento: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -618,7 +618,7 @@ class PublicacionesAudit(Base):
 
 
 # ---------------------------------------------------------------------------
-# Fase 5: ajustes automatizados por UI (tabla system_settings, borrador).
+# Ajustes automatizados por UI (tabla system_settings, borrador).
 # La máquina de estados extendida (PAUSADO_POR_REPORTE, REVISION_REQUERIDA)
 # llega vía migración 005; el CHECK del modelo se amplía sin romper los
 # 7 estados previos (aditivo). Ver docs/ADMIN_AUTOMATION_SPECS.md.
@@ -637,7 +637,7 @@ class SystemSetting(Base):
 
 
 # ---------------------------------------------------------------------------
-# v13 Enterprise Auth: rate-limit persistente, OTP, recovery y sesiones.
+# Enterprise Auth: rate-limit persistente, OTP, recovery y sesiones.
 # Tablas pequeñas, TTL por expiración, índices por (clave, creado).
 # ---------------------------------------------------------------------------
 class RateLimitAttempt(Base):

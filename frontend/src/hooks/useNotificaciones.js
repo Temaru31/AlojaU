@@ -14,6 +14,7 @@
 //   useNotificaciones({ token }).
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../services/api'
+import { bearer } from '../services/authHeaders'
 
 export const NOTIF_EVENT = 'alojau:notificaciones-change'
 export const NOTIF_POLL_MS = 45_000
@@ -27,7 +28,7 @@ export function emitNotificacionesChange() {
 }
 
 function headers(token) {
-  return token ? { Authorization: `Bearer ${token}` } : {}
+  return bearer(token)
 }
 
 export default function useNotificaciones({ token } = {}) {

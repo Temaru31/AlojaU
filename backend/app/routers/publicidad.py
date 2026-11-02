@@ -23,7 +23,6 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.logseguro import exc_resumen
 from app.core.security import require_admin, require_arrendador
 from app.db.session import get_session
@@ -33,15 +32,18 @@ from app.schemas.publicidad import (
     DestacadoOut,
     PlanOut,
 )
+from app.core.db_utils import rollback_seguro
+from app.core.flags import mock_enabled
+from app.core.dominio import EstadoDestacado, EstadoPublicacion
+from app.services.publicidad_demo import (
+    MOCK_DESTACADOS, MOCK_PLANES, _mock_plan, _mock_vigente, mock_destacados_map,
+)
+from app.fixtures.publicaciones_demo import MOCK_PUBS
 
 logger = logging.getLogger("alojau.publicidad")
 
 router = APIRouter(prefix="/api/publicidad", tags=["publicidad"])
 router_admin = APIRouter(prefix="/api/admin/publicidad", tags=["admin-publicidad"])
-
-
-def _mock_enabled() -> bool:
-    return bool(getattr(settings, "mock_enabled", False))
 
 
 # --- Idempotencia (espejo de POST publicar; ruta propia en la PK) ---
@@ -77,11 +79,8 @@ async def _idem_replay(db: AsyncSession, clave: str, uid: int) -> dict | None:
     except HTTPException:
         raise
     except Exception:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "_idem_replay")
+        if not mock_enabled():
             return None
     hit = _IDEMPOTENCY_MOCK.get((clave, uid, IDEM_RUTA_DESTACAR))
     if not hit:
@@ -102,8 +101,8 @@ async def _idem_guardar(db: AsyncSession, clave: str, uid: int, cuerpo: dict) ->
                 IdempotencyKey.__table__.delete().where(
                     IdempotencyKey.expira_en < datetime.now(timezone.utc))
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("[idempotencia] limpieza de claves vencidas falló: %s", exc_resumen(e))
         db.add(IdempotencyKey(
             clave=clave, usuario_id=uid, ruta=IDEM_RUTA_DESTACAR,
             codigo=201, cuerpo=limpio, expira_en=expira,
@@ -111,18 +110,12 @@ async def _idem_guardar(db: AsyncSession, clave: str, uid: int, cuerpo: dict) ->
         await db.commit()
         return None
     except IntegrityError:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "_idem_guardar")
         return await _idem_replay(db, clave, uid)
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "_idem_guardar")
         logger.warning(f"[idempotencia] destacar no se pudo guardar: {exc_resumen(e)}")
-        if not _mock_enabled():
+        if not mock_enabled():
             return None
     _IDEMPOTENCY_MOCK[(clave, uid, IDEM_RUTA_DESTACAR)] = {
         "codigo": 201, "cuerpo": limpio, "expira_en": expira,
@@ -130,62 +123,11 @@ async def _idem_guardar(db: AsyncSession, clave: str, uid: int, cuerpo: dict) ->
     return None
 
 
-# --- Mock dev (sin PG): catálogo seed + destacados en memoria ---
-MOCK_PLANES = [
-    {"id": 1, "nombre": "Destacado 7 días", "dias": 7, "precio_cop": 15000, "prioridad": 1, "activo": True},
-    {"id": 2, "nombre": "Destacado 15 días", "dias": 15, "precio_cop": 25000, "prioridad": 2, "activo": True},
-    {"id": 3, "nombre": "Destacado 30 días", "dias": 30, "precio_cop": 40000, "prioridad": 3, "activo": True},
-]
-MOCK_DESTACADOS: list[dict] = []
 
 
 def clear_publicidad_mock_for_tests() -> None:
     MOCK_DESTACADOS.clear()
     _IDEMPOTENCY_MOCK.clear()
-
-
-def _mock_plan(plan_id: int) -> dict | None:
-    return next((p for p in MOCK_PLANES if p["id"] == plan_id and p["activo"]), None)
-
-
-def _mock_vigente(pub_id: int) -> bool:
-    ahora = datetime.now(timezone.utc)
-    return any(
-        d["publicacion_id"] == pub_id
-        and d["estado"] in ("PENDIENTE", "ACTIVO")
-        and d["vence"] > ahora
-        for d in MOCK_DESTACADOS
-    )
-
-
-def mock_destacados_map(ids=None) -> dict:
-    """{publicacion_id: {"vence", "prioridad"}} vigentes en el store mock.
-
-    Solo dev sin PG. Vigente = ACTIVO y vence futuro (PENDIENTE no muestra
-    badge, igual que en DB). Misma forma que repo.fetch_destacados_map.
-    """
-    ahora = datetime.now(timezone.utc)
-    prio = {p["id"]: p.get("prioridad", 0) for p in MOCK_PLANES}
-    wanted = set(ids) if ids is not None else None
-    out: dict = {}
-    for d in MOCK_DESTACADOS:
-        if d.get("estado") != "ACTIVO":
-            continue
-        vence = d.get("vence")
-        if vence is None:
-            continue
-        if getattr(vence, "tzinfo", None) is None:
-            vence = vence.replace(tzinfo=timezone.utc)
-        if vence <= ahora:
-            continue
-        pid = d["publicacion_id"]
-        if wanted is not None and pid not in wanted:
-            continue
-        cur = {"vence": d["vence"], "prioridad": int(prio.get(d["plan_id"], 0) or 0)}
-        prev = out.get(pid)
-        if prev is None or cur["prioridad"] > prev["prioridad"]:
-            out[pid] = cur
-    return out
 
 
 def _destacado_out(d, plan_nombre: str | None = None) -> dict:
@@ -222,11 +164,8 @@ async def listar_planes(db: AsyncSession = Depends(get_session)):
         ]
     except Exception as e:
         logger.error(f"[DB fallback] planes falló: {exc_resumen(e)}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "listar_planes")
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     return [dict(p) for p in MOCK_PLANES if p["activo"]]
 
@@ -264,13 +203,13 @@ async def destacar(
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
         if int(pub.usuario_id) != int(uid):
             raise HTTPException(status_code=403, detail="Solo el dueño puede destacar su aviso")
-        if pub.estado != "ACTIVO":
+        if pub.estado != EstadoPublicacion.ACTIVO:
             raise HTTPException(status_code=409, detail="Solo se puede destacar una publicación ACTIVO")
         ahora = datetime.now(timezone.utc)
         vigentes = (await db.execute(
             select(func.count()).select_from(PublicacionDestacado).where(
                 PublicacionDestacado.publicacion_id == pub.id,
-                PublicacionDestacado.estado.in_(["PENDIENTE", "ACTIVO"]),
+                PublicacionDestacado.estado.in_([EstadoDestacado.PENDIENTE, EstadoDestacado.ACTIVO]),
                 PublicacionDestacado.vence > ahora,
             )
         )).scalar() or 0
@@ -279,7 +218,7 @@ async def destacar(
         d = PublicacionDestacado(
             publicacion_id=pub.id, plan_id=plan.id,
             inicia=ahora, vence=ahora + timedelta(days=int(plan.dias)),
-            estado="PENDIENTE", pago_ref=(payload.pago_ref or None),
+            estado=EstadoDestacado.PENDIENTE, pago_ref=(payload.pago_ref or None),
             created_by=uid,
         )
         db.add(d)
@@ -292,21 +231,14 @@ async def destacar(
                 return ganador["cuerpo"]
         return resp
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "destacar")
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "destacar")
         logger.error(f"[DB fallback] destacar falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     # Mock dev: espejo con MOCK_PUBS (mismas reglas).
-    from app.routers.publicaciones import MOCK_PUBS
 
     plan = _mock_plan(payload.plan_id)
     if not plan:
@@ -316,7 +248,7 @@ async def destacar(
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
     if pub.get("usuario_id") != uid:
         raise HTTPException(status_code=403, detail="Solo el dueño puede destacar su aviso")
-    if pub.get("estado") != "ACTIVO":
+    if pub.get("estado") != EstadoPublicacion.ACTIVO:
         raise HTTPException(status_code=409, detail="Solo se puede destacar una publicación ACTIVO")
     if _mock_vigente(pub["id"]):
         raise HTTPException(status_code=409, detail="La publicación ya tiene un destacado vigente")
@@ -325,7 +257,7 @@ async def destacar(
         "id": max([d["id"] for d in MOCK_DESTACADOS] + [1000]) + 1,
         "publicacion_id": pub["id"], "plan_id": plan["id"], "plan_nombre": plan["nombre"],
         "inicia": ahora, "vence": ahora + timedelta(days=int(plan["dias"])),
-        "estado": "PENDIENTE", "pago_ref": payload.pago_ref or None,
+        "estado": EstadoDestacado.PENDIENTE, "pago_ref": payload.pago_ref or None,
         "created_by": uid, "created_at": ahora,
     }
     MOCK_DESTACADOS.append(nuevo)
@@ -359,11 +291,8 @@ async def mis_destacados(
         return [_destacado_out(d, nombre) for d, nombre in rows]
     except Exception as e:
         logger.error(f"[DB fallback] mias publicidad falló: {exc_resumen(e)}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "mis_destacados")
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     return [d for d in sorted(MOCK_DESTACADOS, key=lambda x: x["id"], reverse=True)
             if d.get("created_by") == uid]
@@ -381,20 +310,17 @@ async def pendientes(
         rows = (await db.execute(
             select(PublicacionDestacado, PlanPublicidad.nombre)
             .join(PlanPublicidad, PlanPublicidad.id == PublicacionDestacado.plan_id)
-            .where(PublicacionDestacado.estado == "PENDIENTE")
+            .where(PublicacionDestacado.estado == EstadoDestacado.PENDIENTE)
             .order_by(PublicacionDestacado.id.asc())
         )).all()
         return [_destacado_out(d, nombre) for d, nombre in rows]
     except Exception as e:
         logger.error(f"[DB fallback] pendientes publicidad falló: {exc_resumen(e)}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "pendientes")
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     return [d for d in sorted(MOCK_DESTACADOS, key=lambda x: x["id"])
-            if d.get("estado") == "PENDIENTE"]
+            if d.get("estado") == EstadoDestacado.PENDIENTE]
 
 
 @router_admin.post("/vencer", summary="Admin: job vencimiento de destacados")
@@ -415,11 +341,8 @@ async def vencer(
         return {"vencidos": n}
     except Exception as e:
         logger.error(f"[DB fallback] vencer destacados falló: {exc_resumen(e)}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "vencer")
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     ahora = datetime.now(timezone.utc)
     n = 0
@@ -427,8 +350,8 @@ async def vencer(
         vence = d.get("vence")
         if getattr(vence, "tzinfo", None) is None:
             vence = vence.replace(tzinfo=timezone.utc)
-        if d.get("estado") in ("PENDIENTE", "ACTIVO") and vence <= ahora:
-            d["estado"] = "VENCIDO"
+        if d.get("estado") in (EstadoDestacado.PENDIENTE, EstadoDestacado.ACTIVO) and vence <= ahora:
+            d["estado"] = EstadoDestacado.VENCIDO
             n += 1
     return {"vencidos": n}
 
@@ -451,7 +374,7 @@ async def decidir(
         d = await db.get(PublicacionDestacado, destacado_id)
         if not d:
             raise HTTPException(status_code=404, detail="Destacado no encontrado")
-        if d.estado != "PENDIENTE":
+        if d.estado != EstadoDestacado.PENDIENTE:
             raise HTTPException(status_code=409, detail=f"El destacado ya fue procesado ({d.estado})")
         if payload.accion == "aprobar":
             vence = d.vence
@@ -460,12 +383,12 @@ async def decidir(
             if vence <= datetime.now(timezone.utc):
                 raise HTTPException(status_code=409, detail="El destacado ya venció")
             pub = await db.get(Publicacion, d.publicacion_id)
-            if not pub or pub.estado != "ACTIVO":
+            if not pub or pub.estado != EstadoPublicacion.ACTIVO:
                 raise HTTPException(status_code=409, detail="La publicación ya no está ACTIVO")
         if payload.accion == "aprobar":
-            d.estado, evento = "ACTIVO", "APPROVED"
+            d.estado, evento = EstadoDestacado.ACTIVO, "APPROVED"
         else:
-            d.estado, evento = "RECHAZADO", "REJECTED"
+            d.estado, evento = EstadoDestacado.RECHAZADO, "REJECTED"
         db.add(PublicacionesAudit(
             publicacion_id=d.publicacion_id,
             usuario_id=admin.get("id") if isinstance(admin.get("id"), int) else None,
@@ -475,36 +398,26 @@ async def decidir(
         try:
             await db.commit()
         except IntegrityError:
-            try:
-                await db.rollback()
-            except Exception:
-                pass
+            await rollback_seguro(db, "decidir")
             raise HTTPException(status_code=409, detail="La publicación ya tiene un destacado ACTIVO vigente")
         await db.refresh(d)
         plan = await db.get(PlanPublicidad, d.plan_id)
         return _destacado_out(d, plan.nombre if plan else None)
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "decidir")
         raise
     except Exception as e:
         _id_seguro = str(destacado_id).replace("\n", "").replace("\r", "")
         logger.error(f"[DB fallback] decidir destacado {_id_seguro} falló: {exc_resumen(e)}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
+        await rollback_seguro(db, "decidir")
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
     d = next((x for x in MOCK_DESTACADOS if x["id"] == destacado_id), None)
     if not d:
         raise HTTPException(status_code=404, detail="Destacado no encontrado")
-    if d["estado"] != "PENDIENTE":
+    if d["estado"] != EstadoDestacado.PENDIENTE:
         raise HTTPException(status_code=409, detail=f"El destacado ya fue procesado ({d['estado']})")
     if payload.accion == "aprobar":
-        from app.routers.publicaciones import MOCK_PUBS
 
         vence = d.get("vence")
         if getattr(vence, "tzinfo", None) is None:
@@ -512,7 +425,7 @@ async def decidir(
         if vence <= datetime.now(timezone.utc):
             raise HTTPException(status_code=409, detail="El destacado ya venció")
         pub = next((p for p in MOCK_PUBS if p["id"] == d["publicacion_id"]), None)
-        if not pub or pub.get("estado") != "ACTIVO":
+        if not pub or pub.get("estado") != EstadoPublicacion.ACTIVO:
             raise HTTPException(status_code=409, detail="La publicación ya no está ACTIVO")
-    d["estado"] = "ACTIVO" if payload.accion == "aprobar" else "RECHAZADO"
+    d["estado"] = EstadoDestacado.ACTIVO if payload.accion == "aprobar" else EstadoDestacado.RECHAZADO
     return dict(d)

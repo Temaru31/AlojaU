@@ -9,6 +9,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Check } from 'lucide-react'
 import { api } from '../services/api'
 import { comprimirImagen } from '../utils/compressImage'
+import { bearer } from '../services/authHeaders'
 
 export const UPLOAD_MIN_FILES = 3
 export const UPLOAD_MAX_FILES = 10
@@ -16,7 +17,7 @@ export const UPLOAD_MAX_SIZE = 5 * 1024 * 1024 // 5MB (igual que backend uploads
 // Formatos permitidos en cliente (JPG, PNG, WEBP; el backend valida además magia binaria).
 export const UPLOAD_ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp']
 export const UPLOAD_ACCEPT = 'image/jpeg,image/png,image/webp'
-// Bloque 5: iPhone guarda en HEIC/HEIF por defecto. Se detecta por extensión
+// IPhone guarda en HEIC/HEIF por defecto. Se detecta por extensión
 // y MIME para dar guía accionable (o convertir con heic2any si está disponible).
 export const HEIC_MIMES = ['image/heic', 'image/heif', 'image/heic-sequence', 'image/heif-sequence']
 export const HEIC_EXTS = ['.heic', '.heif']
@@ -90,7 +91,7 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
       return
     }
     for (const f of arr) {
-      // Bloque 5: HEIC de iPhone con mensaje accionable (antes: error
+      // HEIC de iPhone con mensaje accionable (antes: error
       // genérico). No se convierte en cliente (sin dependencia pesada):
       // se pide JPG desde Ajustes o conversión previa.
       if (esArchivoHeic(f)) {
@@ -171,7 +172,7 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
       const form = new FormData()
       items.forEach((it) => form.append('files', it.file))
       const r = await api.post(endpoint, form, {
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' },
+        headers: { ...bearer(token), 'Content-Type': 'multipart/form-data' },
       })
       const urls = r.data.urls || []
       setUploadedUrls(urls)
@@ -239,7 +240,7 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
                 type="button"
                 onClick={() => removeFile(p.key)}
                 aria-label={`Quitar ${p.name}`}
-                // M3 táctil: área 44px vía pseudo-elemento (el visible sigue w-6).
+                // Táctil: área 44px vía pseudo-elemento (el visible sigue w-6).
                 className="absolute top-1 right-1 bg-black/60 text-white text-xs w-6 h-6 rounded-full hover:bg-red-600 before:absolute before:-inset-2.5 before:content-['']"
               >
                 ×

@@ -1,6 +1,6 @@
 // Perfil v13.2: badge de rol reactivo + checklist progresiva + tags permitidos.
 import { describe, it, expect } from 'vitest'
-import { ROL_LABEL, TAGS_DISPONIBLES, checklistPerfil } from './Perfil'
+import { ROL_LABEL, TAGS_DISPONIBLES, checklistPerfil } from '../utils/perfil'
 
 describe('ROL_LABEL (ciclo de vida visible)', () => {
   it('mapea roles técnicos a etiquetas humanas', () => {

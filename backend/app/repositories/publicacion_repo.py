@@ -1,20 +1,26 @@
 """Consultas SQL AlojaU (capa repositorio, sin HTTP ni DTOs).
 Uso: routers/publicaciones.py. Ej: total, pubs = await repo.query_lista(db, ...)."""
+import logging
 from typing import List, Optional
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.pagination import paginate_params, build_paginated
+from app.core.pagination import paginate_params
 from app.services.search import (
     clean_query_for_fts,
     escape_ilike,
     tipo_canonico_para_token,
     tokenize_query,
 )
+from app.core.db_utils import rollback_seguro
+from app.core.logseguro import exc_resumen
+from app.core.dominio import EstadoDestacado, EstadoPublicacion, EstadoReporte
 
-# Oleada 2: umbrales de búsqueda por texto (alineados al prompt táctico).
+logger = logging.getLogger("alojau.publicaciones.repo")
+
+# Umbrales de búsqueda por texto (alineados al prompt táctico).
 Q_MIN_FTS_LEN = 3  # q más corta -> solo fallback difuso (ILIKE/trigrama)
 Q_TRGM_SIMILARITY = 0.3
 
@@ -120,10 +126,7 @@ async def leer_ajuste(db, clave: str, default: str) -> str:
             select(_SS).where(_SS.clave == clave))).scalars().first()
         return row.valor if row else default
     except Exception:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "leer_ajuste")
         return default
 
 
@@ -134,7 +137,7 @@ async def vistas_publicas(db) -> bool:
 
 def lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servicios, q: Optional[str] = None, q_mode: Optional[str] = None, ciudad_id: Optional[int] = None):
     """Filtros HU-001/002 + Oleada 2 (q tokenizada) + multiciudad compartidos por COUNT y página."""
-    conds = [Publicacion.estado == "ACTIVO", dueno_activo_clause(Publicacion)]
+    conds = [Publicacion.estado == EstadoPublicacion.ACTIVO, dueno_activo_clause(Publicacion)]
     if precio_min is not None:
         conds.append(Publicacion.canon_mensual >= precio_min)
     if precio_max is not None:
@@ -263,7 +266,7 @@ def destacados_vigentes_subq():
         )
         .join(PlanPublicidad, PlanPublicidad.id == PublicacionDestacado.plan_id)
         .where(
-            PublicacionDestacado.estado == "ACTIVO",
+            PublicacionDestacado.estado == EstadoDestacado.ACTIVO,
             PublicacionDestacado.vence > func.now(),
         )
         .subquery()
@@ -302,7 +305,7 @@ async def fetch_page_aggregates(db: AsyncSession, pubs, campus_id: Optional[int]
             select(ReportePublicacion.publicacion_id, func.count())
             .where(
                 ReportePublicacion.publicacion_id.in_(page_ids),
-                ReportePublicacion.estado.in_(["PENDIENTE", "CONFIRMADO"]),
+                ReportePublicacion.estado.in_([EstadoReporte.PENDIENTE, EstadoReporte.CONFIRMADO]),
             )
             .group_by(ReportePublicacion.publicacion_id)
         )
@@ -313,7 +316,7 @@ async def fetch_page_aggregates(db: AsyncSession, pubs, campus_id: Optional[int]
     users = (
         (await db.execute(select(Usuario).where(
             Usuario.id.in_(user_ids),
-            # v14.1: dueños eliminados no se hidratan (ni teléfono ni verificado).
+            # Dueños eliminados no se hidratan (ni teléfono ni verificado).
             Usuario.eliminado_en.is_(None),
         ))).scalars().all()
         if user_ids
@@ -394,9 +397,9 @@ async def query_lista(db, campus_id, precio_min, precio_max, tipo, servicios, pa
             total = res[0] if isinstance(res, tuple) else res.get("total", 0)
             if total > 0:
                 return res
-        except Exception:
+        except Exception as e:
             # FTS no disponible (p.ej. dialecto sin websearch_to_tsquery): cae al fallback.
-            pass
+            logger.warning("[búsqueda] FTS no disponible, se usa búsqueda difusa: %s", exc_resumen(e))
         return await _consultar("fuzzy")
     if mode == "fuzzy":
         return await _consultar("fuzzy")
@@ -426,7 +429,7 @@ async def fetch_detail_bundle(db: AsyncSession, pub_id: int):
         .select_from(ReportePublicacion)
         .where(
             ReportePublicacion.publicacion_id == p.id,
-            ReportePublicacion.estado.in_(["PENDIENTE", "CONFIRMADO"]),
+            ReportePublicacion.estado.in_([EstadoReporte.PENDIENTE, EstadoReporte.CONFIRMADO]),
         )
     )
     u = await db.get(Usuario, p.usuario_id)
@@ -508,7 +511,7 @@ async def create_persisted(db, payload, user_id: int, trust: dict, campus_ids, s
         direccion_referencial=payload.direccion_referencial,
         latitud=payload.latitud,
         longitud=payload.longitud,
-        estado="PENDIENTE",
+        estado=EstadoPublicacion.PENDIENTE,
         indice_confianza=trust["indice"],
         fecha_expiracion=datetime.now(timezone.utc) + timedelta(days=30),
     )
@@ -538,7 +541,7 @@ async def create_persisted(db, payload, user_id: int, trust: dict, campus_ids, s
         db.add(PublicacionServicio(publicacion_id=nueva.id, servicio_id=sid))
     for idx, url in enumerate(payload.fotos, start=1):
         db.add(ImagenPublicacion(publicacion_id=nueva.id, url=str(url), orden=idx))
-    db.add(PublicacionAudit(publicacion_id=nueva.id, usuario_id=nueva.usuario_id, evento="CREATED", detalle="PENDIENTE"))
+    db.add(PublicacionAudit(publicacion_id=nueva.id, usuario_id=nueva.usuario_id, evento="CREATED", detalle=EstadoPublicacion.PENDIENTE))
     await db.commit()
     await db.refresh(nueva)
     return nueva
@@ -591,8 +594,8 @@ async def renovar_publicacion(db: AsyncSession, pub_id: int, user_id: int) -> di
 
     # 4. Actualizar estado si la publicación está EXPIRADA
     estado_anterior = p.estado
-    if p.estado == "EXPIRADO":
-        p.estado = "ACTIVO"
+    if p.estado == EstadoPublicacion.EXPIRADO:
+        p.estado = EstadoPublicacion.ACTIVO
     # RECHAZADO y DESACTIVADO conservan su estado por regla de negocio explícita
 
     # 5. Actualizar fechas

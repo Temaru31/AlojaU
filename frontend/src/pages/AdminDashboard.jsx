@@ -11,10 +11,10 @@ import { etiquetaEvento, describirAuditoria } from '../utils/historial'
 import InfoTooltip from '../components/InfoTooltip'
 import BreadcrumbsAdmin from '../components/BreadcrumbsAdmin'
 import { ChevronLeft, ChevronRight, Eye, Flag, House, Megaphone, Newspaper, ScrollText, Settings, ShieldCheck } from 'lucide-react'
+import { authHead } from '../services/authHeaders'
 
-const authHead = (token) => ({ headers: { Authorization: `Bearer ${token}` } })
 
-// M1: tarjetas KPI con ayuda contextual (datos en vivo de /api/admin/metricas).
+// Tarjetas KPI con ayuda contextual (datos en vivo de /api/admin/metricas).
 function Stat({ label, value, tone, ayuda }) {
   const tones = {
     navy: 'bg-navy-50 border-navy-100 text-navy-800',
@@ -71,7 +71,7 @@ const SETTING_LABELS = {
   },
 }
 
-// M1: ayuda ampliada por ajuste (la leyenda corta vive en SETTING_LABELS).
+// Ayuda ampliada por ajuste (la leyenda corta vive en SETTING_LABELS).
 const SETTING_AYUDA = {
   moderacion_automatica: 'Si está ON, las reglas + heurística pueden aprobar avisos sin revisión humana. Con OFF (recomendado al inicio), todo pasa por tu bandeja.',
   umbral_aprobacion_ia: 'Solo aplica con moderación automática ON. Más alto = más estricto (menos auto-aprobados).',
@@ -206,7 +206,7 @@ function AjustesSistema({ token }) {
                     aria-checked={String(draft[s.clave]) === 'true'}
                     aria-label={meta.titulo}
                     onClick={() => setDraft((d) => ({ ...d, [s.clave]: String(d[s.clave]) === 'true' ? 'false' : 'true' }))}
-                    // M3 táctil: área 44px vía pseudo-elemento (sin deformar el track).
+                    // Táctil: área 44px vía pseudo-elemento (sin deformar el track).
                     className={`relative w-11 h-7 rounded-full transition before:absolute before:-inset-2 before:content-[''] ${String(draft[s.clave]) === 'true' ? 'bg-emerald-500' : 'bg-neutral-300'}`}
                   >
                     <span aria-hidden="true" className={`absolute top-1 w-5 h-5 rounded-full bg-white shadow transition-all ${String(draft[s.clave]) === 'true' ? 'left-[22px]' : 'left-1'}`} />
@@ -276,7 +276,7 @@ function AjustesSistema({ token }) {
   )
 }
 
-// M4: historial de cambios (usa GET /api/admin/auditoria existente).
+// Historial de cambios (usa GET /api/admin/auditoria existente).
 export function HistorialAdmin({ token }) {
   const [items, setItems] = useState([])
   const [page, setPage] = useState(1)

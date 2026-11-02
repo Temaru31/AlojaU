@@ -17,6 +17,7 @@ import time
 import urllib.parse
 import urllib.request
 from app.core.logseguro import exc_resumen
+from app.core.rate_limit import registrar_intento
 
 logger = logging.getLogger("alojau.telegram")
 
@@ -30,14 +31,8 @@ def clear_throttle_for_tests() -> None:
 
 
 def check_throttle(clave: str, limite: int, ventana_s: float, mensaje: str) -> None:
-    """Lanza HTTPException 429 si se supera el límite (import tardío)."""
-    from fastapi import HTTPException
-    ahora = time.monotonic()
-    hist = [t for t in _THROTTLE.get(clave, []) if ahora - t < ventana_s]
-    if len(hist) >= limite:
-        raise HTTPException(status_code=429, detail=mensaje)
-    hist.append(ahora)
-    _THROTTLE[clave] = hist
+    """Lanza HTTPException 429 si se supera el límite."""
+    registrar_intento(_THROTTLE, clave, limite, ventana_s, mensaje)
 
 
 def send_message_sync(bot_token: str, chat_id: str, texto: str,

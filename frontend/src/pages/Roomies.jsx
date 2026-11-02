@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth, inicialesDe } from '../contexts/AuthContext'
 import { getCandidatosRoomies, api } from '../services/api'
+import { authHead } from '../services/authHeaders'
 import {
   calcularCompletitudRoomie,
   obtenerBandaCompatibilidad,
@@ -160,7 +161,7 @@ export default function Roomies() {
         // Cargar candidatos y perfil fresco en paralelo
         const [resCandidatos, resPerfil] = await Promise.allSettled([
           getCandidatosRoomies(token, { limite: 20 }),
-          api.get('/api/auth/perfil', { headers: { Authorization: `Bearer ${token}` } }),
+          api.get('/api/auth/perfil', authHead(token)),
         ])
 
         if (!vivo) return

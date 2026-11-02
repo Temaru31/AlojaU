@@ -31,7 +31,7 @@ export default function OtpForm({ email, proposito = 'email_verify', onVerificad
     setEstado('enviando')
     setMensaje('')
     try {
-      // M3 transparencia: el backend dice por dónde viajó el código.
+      // Transparencia: el backend dice por dónde viajó el código.
       const r = await api.post('/api/auth/otp/solicitar', { email, proposito })
       const c = r?.data?.canal === 'telegram' ? 'telegram' : 'email'
       setCanal(c)

@@ -7,7 +7,7 @@ import useFocusTrap from '../hooks/useFocusTrap'
 export default function VisorFotos({ fotos, initialIndex = 0, onClose }) {
   const total = fotos.length
   const [index, setIndex] = useState(initialIndex)
-  // Bloque 3: Tab cicla dentro del visor (portal incluido) + restaura foco.
+  // Tab cicla dentro del visor (portal incluido) + restaura foco.
   const cajaRef = useRef(null)
   useFocusTrap(cajaRef, true)
 

@@ -13,7 +13,7 @@ export const SERVICIOS_OPCIONES = [
   { id: 5, label: "Lavadora" },
 ]
 
-// M4: primarios en barra superior (precio + tipo + checkboxes principales),
+// Primarios en barra superior (precio + tipo + checkboxes principales),
 // secundarios en modal "Más Filtros" desktop (el bottom sheet móvil sigue intacto).
 export const SERVICIOS_PRINCIPALES = [1, 2, 3]
 export const SERVICIOS_SECUNDARIOS = [4, 5]
@@ -114,7 +114,7 @@ export function contarAvanzados(filtros = {}) {
 }
 
 function SelectorTipo({ filtros, setFiltros, id = 'filtro-tipo' }) {
-  // M2: catálogo dinámico (/config-publica) con fallback local.
+  // Catálogo dinámico (/config-publica) con fallback local.
   // Hook incondicional (rules-of-hooks): el hook nunca lanza (fallback interno).
   const { tipos: tiposHook } = useTiposVivienda()
   const tipos = Array.isArray(tiposHook) && tiposHook.length > 0 ? tiposHook : TIPOS_FALLBACK
@@ -235,7 +235,7 @@ function PanelCampos({ filtros, setFiltros }) {
   )
 }
 
-// M4 primario desktop: precio + tipo + checkboxes principales.
+// Primario desktop: precio + tipo + checkboxes principales.
 export function PanelPrimario({ filtros, setFiltros }) {
   return (
     <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 sm:gap-3 items-end">
@@ -253,7 +253,7 @@ export function PanelPrimario({ filtros, setFiltros }) {
 // no queden valores huérfanos); por defecto solo resetea el panel.
 export function MasFiltrosModal({ filtros, setFiltros, totalResultados = null, onLimpiar = null }) {
   const [abierto, setAbierto] = useState(false)
-  // Bloque 3: Tab cicla dentro del drawer + foco vuelve al botón.
+  // Tab cicla dentro del drawer + foco vuelve al botón.
   const cajaRef = useRef(null)
   useFocusTrap(cajaRef, abierto)
   const activos = contarAvanzados(filtros)

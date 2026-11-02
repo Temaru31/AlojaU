@@ -39,7 +39,7 @@ def calcular_indice(
     w_reportes = getattr(settings, "TRUST_WEIGHT_REPORTES", 10)
 
     # ---- Factor1: Completitud 40 (desglose fino Tabla16) ----
-    # M2 allowlist dinámica: catálogo en BD (housing_types). Aquí allowlist
+    # Allowlist dinámica: catálogo en BD (housing_types). Aquí allowlist
     # estática ampliada (los 6 del seed) para cálculo sync sin I/O; la
     # validación de escritura usa la tabla (esta_activo=true) + caché 5min.
     try:

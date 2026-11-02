@@ -387,14 +387,16 @@ def test_dev_token_solo_dev_y_mock_apagado_en_prod():
         else:
             os.environ["ENV"] = old
     # El endpoint solo expone dev_token si mock_enabled (dev/test).
-    assert auth_router._mock_enabled() in (True, False)  # existe el gate
+    from app.core.flags import mock_enabled
+    assert mock_enabled() in (True, False)  # existe el gate
 
 
 def test_recovery_no_expone_dev_token_sin_mock():
     # Con mock habilitado en dev sí hay dev_token (flujo e2e local); lo que
     # se garantiza es que el gate existe y en prod mock_enabled es False.
     from app.core.config import settings as _s
-    assert hasattr(auth_router, "_mock_enabled")
+    from app.core.flags import mock_enabled
+    assert callable(mock_enabled)
     assert _s.ENV in ("dev", "test", "prod")
 
 

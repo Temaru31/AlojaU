@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.core.rate_limit import verificar_intentos_fallidos
 from app.routers import auth as auth_router
 
 client = TestClient(app)
@@ -145,13 +146,13 @@ def test_fail_closed_rate_check_503(limpieza, monkeypatch):
             return None
 
     # Dev/mock: permite con warning.
-    asyncio.run(auth_router._db_rate_check(_Dead(), "k:test", limite=5, ventana_s=60))
+    asyncio.run(verificar_intentos_fallidos(_Dead(), "k:test", limite=5, ventana_s=60))
     # Prod simulado: 503.
     monkeypatch.setattr(cfg_mod.settings, "ENV", "prod", raising=False)
     monkeypatch.setattr(cfg_mod.settings, "USE_MOCK_FALLBACK", False, raising=False)
     monkeypatch.setenv("ENV", "prod")
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(auth_router._db_rate_check(_Dead(), "k:test", limite=5, ventana_s=60))
+        asyncio.run(verificar_intentos_fallidos(_Dead(), "k:test", limite=5, ventana_s=60))
     assert exc.value.status_code == 503
 
 

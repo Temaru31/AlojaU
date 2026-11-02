@@ -16,12 +16,12 @@ import uuid
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from app.core.config import settings
-from app.core.logseguro import una_linea
+from app.core.logseguro import exc_resumen, una_linea
 from app.core.security import get_optional_user
 from app.db.chat_session import chat_configurado, get_chat_session
 from app.services.chat import orchestrator
 from app.services.chat.llm import FakeLLMProvider, HttpLLMProvider, LLMError
-from app.services.chat.net import ip_cliente
+from app.core.net import client_ip
 from app.services.chat.prompts import FALLBACK_NO_DISPONIBLE
 from app.services.chat.schemas import AccionOut, ChatIn, ChatOut, TarjetaOut
 from app.services.chat.throttle import (
@@ -38,13 +38,8 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
 def _request_id(request: Request | None) -> str:
-    try:
-        rid = getattr(getattr(request, "state", None), "request_id", None)
-        if rid:
-            return str(rid)
-    except Exception:
-        pass
-    return uuid.uuid4().hex
+    rid = getattr(getattr(request, "state", None), "request_id", None)
+    return str(rid) if rid else uuid.uuid4().hex
 
 
 def _respuesta_apagado(rid: str) -> ChatOut:
@@ -94,7 +89,7 @@ async def conversar_chat(body: ChatIn, request: Request,
     except HTTPException:
         logger.warning("[chat] rid=%s tope-diario/429", una_linea(rid, 40))
         raise
-    ip = ip_cliente(request)
+    ip = client_ip(request)
     usuario = await get_optional_user(authorization)
     uid = None
     try:
@@ -183,8 +178,8 @@ async def conversar_chat(body: ChatIn, request: Request,
     finally:
         try:
             await gen.aclose()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("[chat] cierre del generador falló: %s", exc_resumen(e))
         ms = int((time.monotonic() - t0) * 1000)
         logger.info(
             "[chat] rid=%s resultado=%s tools=%s eventos=%s ms=%s msg_len=%s",

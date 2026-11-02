@@ -16,11 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
 from app.core.logseguro import exc_resumen
-from app.core.config import settings
 from app.core.pagination import paginate_params
 from app.db.session import get_session
 
 import logging
+from app.core.db_utils import rollback_seguro
+from app.core.flags import mock_enabled
 logger = logging.getLogger("alojau.notificaciones")
 
 router = APIRouter(prefix="/api/notificaciones", tags=["notificaciones"])
@@ -46,10 +47,6 @@ def _tiene_filtros(data: "BusquedaIn") -> bool:
     if (data.tipo or "").strip():
         return True
     return bool(data.servicios_ids)
-
-
-def _mock_enabled() -> bool:
-    return bool(getattr(settings, "mock_enabled", False))
 
 
 # ---------------------------------------------------------------------------
@@ -162,12 +159,9 @@ async def listar(
     except HTTPException:
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "listar")
         logger.error(f"[notificaciones listar] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
 
@@ -193,12 +187,9 @@ async def leer_todas(
     except HTTPException:
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "leer_todas")
         logger.error(f"[notificaciones leer-todas] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
 
@@ -224,18 +215,12 @@ async def leer_una(
         await db.refresh(n)
         return _a_out(n)
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "leer_una")
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "leer_una")
         logger.error(f"[notificaciones leer] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
 
@@ -287,18 +272,12 @@ async def crear_busqueda(
         await db.refresh(b)
         return _b_out(b)
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "crear_busqueda")
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "crear_busqueda")
         logger.error(f"[busquedas crear] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
 
@@ -320,12 +299,9 @@ async def listar_busquedas(
     except HTTPException:
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "listar_busquedas")
         logger.error(f"[busquedas listar] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
 
@@ -350,17 +326,11 @@ async def eliminar_busqueda(
         await db.commit()
         return {"eliminada": True, "id": bid}
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "eliminar_busqueda")
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "eliminar_busqueda")
         logger.error(f"[busquedas eliminar] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
+        if not mock_enabled():
             raise HTTPException(status_code=503, detail="Base de datos no disponible")
         raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")

@@ -177,8 +177,8 @@ def _limpiar_memoria() -> None:
     except Exception:
         pass
     try:
-        from app.routers import publicaciones as _pub
-        _pub.clear_admin_revalid_for_tests()
+        from app.core.security import clear_admin_revalid_for_tests
+        clear_admin_revalid_for_tests()
     except Exception:
         pass
     try:
@@ -204,7 +204,7 @@ def _limpiar_memoria() -> None:
                               "_LOGIN_ATTEMPTS", "_PW_ATTEMPTS",
                               "_OAUTH_ATTEMPTS")),
         ("app.routers.publicaciones", ("_VISTAS_MEM", "_VISTAS_MOCK_SET",
-                                       "_PUB_ATTEMPTS", "_ADMIN_REVALID_MEM")),
+                                       "_PUB_ATTEMPTS")),
         ("app.routers.uploads", ("_UPLOAD_ATTEMPTS",)),
     ):
         try:

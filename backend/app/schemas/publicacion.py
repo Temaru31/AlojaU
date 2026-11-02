@@ -3,7 +3,7 @@ from typing import Optional, List
 from decimal import Decimal
 from datetime import datetime
 
-# M2 tipos dinámicos: el catálogo vive en housing_types (esta_activo=true).
+# Tipos dinámicos: el catálogo vive en housing_types (esta_activo=true).
 # Pydantic valida forma + allowlist sincrónica (FALLBACK 6 slugs); el endpoint
 # valida contra la tabla (async, con caché 5min) para tipos creados por admin.
 # Cero breaking: los 4 históricos siguen válidos.
@@ -78,7 +78,7 @@ class PublicacionCreate(BaseModel):
     @field_validator("tipo_inmueble")
     @classmethod
     def tipo_forma(cls, v):
-        # M2: forma SLUG (pertenencia contra housing_types la valida el endpoint).
+        # Forma SLUG (pertenencia contra housing_types la valida el endpoint).
         return _validar_tipo_sincrono(v)
 
     @model_validator(mode="after")
@@ -113,9 +113,9 @@ class PublicacionUpdate(BaseModel):
     direccion_referencial: Optional[str] = Field(default=None, min_length=10, max_length=200)
     # FASE 3: misma unificación que en Create (ver arriba).
     reglas_convivencia: Optional[str] = Field(default=None, min_length=10, max_length=2000)
-    # M4 edición bufferizada: etiquetas del aviso (reemplazo total, mín 1).
+    # Edición bufferizada: etiquetas del aviso (reemplazo total, mín 1).
     servicios_ids: Optional[list[int]] = Field(default=None, min_length=1, max_length=10)
-    # M4 commit único: set completo y ordenado de fotos (posición 0 = portada).
+    # Commit único: set completo y ordenado de fotos (posición 0 = portada).
     # Si viene, escalares + etiquetas + fotos se guardan en UNA transacción.
     fotos: Optional[list[str]] = Field(default=None, min_length=1, max_length=10)
 
@@ -128,7 +128,7 @@ class PublicacionUpdate(BaseModel):
     @field_validator("tipo_inmueble")
     @classmethod
     def tipo_forma(cls, v):
-        # M2: misma forma SLUG que en creación.
+        # Misma forma SLUG que en creación.
         return _validar_tipo_sincrono(v)
 
     @field_validator("fotos")
@@ -227,7 +227,7 @@ class PublicacionCardOut(BaseModel):
     # Publicidad v1: badge "Destacado" (vigente = ACTIVO y vence futuro).
     destacado: bool = False
     destacado_vence: Optional[datetime] = None
-    # v15.2 frescura + métricas (aditivos).
+    # Frescura + métricas (aditivos).
     fecha_publicacion: Optional[datetime] = None
     created_at: Optional[datetime] = None  # alias = fecha_publicacion
     updated_at: Optional[datetime] = None  # alias = fecha_renovacion
@@ -288,12 +288,12 @@ class PublicacionDetailOut(BaseModel):
     # Publicidad v1: banner vigencia en Detalle (vigente = ACTIVO y vence futuro).
     destacado: bool = False
     destacado_vence: Optional[datetime] = None
-    # Oleada 2: coords del aviso (para mapa + deep-link; null si el dueño no las informó).
+    # Coords del aviso (para mapa + deep-link; null si el dueño no las informó).
     latitud: Optional[float] = None
     longitud: Optional[float] = None
     # 004 POIs: referencia resuelta cuando se pide ?campus_id= (mapa dinámico).
     campus_ref: Optional[CampusRefOut] = None
-    # v15.2 autoría + frescura + métricas + gestión multimedia (aditivos).
+    # Autoría + frescura + métricas + gestión multimedia (aditivos).
     usuario_id: int
     fecha_publicacion: Optional[datetime] = None
     created_at: Optional[datetime] = None  # alias = fecha_publicacion
@@ -310,10 +310,10 @@ class PublicacionCreatedOut(BaseModel):
     desglose: DesgloseOut
     advertencia: Optional[str] = None
     mensaje: Optional[str] = None
-    # v13.2 reactividad de rol: el frontend refresca el perfil si cambió.
+    # Reactividad de rol: el frontend refresca el perfil si cambió.
     rol: Optional[str] = None
     rol_actualizado: bool = False
-    # v15.2 auto-moderación (None cuando el flag está OFF).
+    # Auto-moderación (None cuando el flag está OFF).
     moderacion: Optional[dict] = None
 
 

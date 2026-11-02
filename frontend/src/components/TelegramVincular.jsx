@@ -2,7 +2,7 @@
 // El enlace "Abrir Bot en Telegram" es un <a> nativo con el `bot_url`
 // pre-generado del endpoint GET /api/auth/telegram/enlace (token HMAC
 // 1 uso, 10min): ningún bloqueador lo intercepta (cero window.open).
-// F5 modo local: si el backend responde 503 (bot sin configurar en dev), se
+// Modo local: si el backend responde 503 (bot sin configurar en dev), se
 // ofrece una simulación de interfaz claramente etiquetada que NUNCA marca la
 // cuenta como vinculada (solo demuestra el flujo visual del PIN de 6).
 // Uso: <TelegramVincular token={token} vinculado={perfil?.telegram_vinculado} />
@@ -11,6 +11,7 @@ import { Check } from 'lucide-react'
 import { api } from '../services/api'
 import { notifyToast } from './Toast'
 import ConfirmDialog from './ConfirmDialog'
+import { bearer } from '../services/authHeaders'
 
 export function esErrorSinBot(err) {
   return err?.response?.status === 503
@@ -71,7 +72,7 @@ export default function TelegramVincular({
         if (cancelado || !vivoRef.current) return
         try {
           const r = await api.get('/api/auth/perfil', {
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            headers: bearer(token),
           })
           if (cancelado || !vivoRef.current) return
           if (r.data?.telegram_vinculado) {
@@ -104,7 +105,7 @@ export default function TelegramVincular({
     }
     try {
       const r = await api.get('/api/auth/telegram/enlace', {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: bearer(token),
       })
       const url = r.data?.bot_url
       if (!url || !url.startsWith('https://t.me/')) {
@@ -151,7 +152,7 @@ export default function TelegramVincular({
     setDesvinculando(true)
     try {
       await api.post('/api/auth/telegram/desvincular', {}, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: bearer(token),
       })
       setBotAbierto(false)
       setEnlace('')
@@ -178,7 +179,7 @@ export default function TelegramVincular({
     setComprobando(true)
     setError('')
     try {
-      // Bloque 1: el webhook de Telegram puede tardar unos segundos en
+      // El webhook de Telegram puede tardar unos segundos en
       // procesar el /start (cold start de Render). Reintenta con backoff
       // 3 intentos (~0s, 1s, 2s) antes de mostrar "no detectado".
       const delays = [0, 1000, 2000]
@@ -187,7 +188,7 @@ export default function TelegramVincular({
         if (!vivoRef.current) return
         try {
           const r = await api.get('/api/auth/perfil', {
-            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            headers: bearer(token),
           })
           if (!vivoRef.current) return
           if (r.data?.telegram_vinculado) {

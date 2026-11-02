@@ -6,6 +6,7 @@ from urllib.parse import quote as urlquote
 from app.fixtures.demo import MOCK_CAMPUS
 from app.services.haversine import haversine_m
 from app.services.trust import calcular_indice, dias_desde
+from app.core.dominio import EstadoPublicacion
 
 
 def whatsapp_link(titulo: str, pub_id: int, tel: Optional[str]) -> Optional[str]:
@@ -100,12 +101,12 @@ def mock_to_out(pub: dict, campus_id: Optional[int] = None,
         "telefono_whatsapp": tel,
         "whatsapp_url": whatsapp_link(pub["titulo"], pub["id"], tel),
         "usuario_id": pub.get("usuario_id"),
-        # v15.2 paridad mock (sin ids de foto ni contador en memoria).
+        # Paridad mock (sin ids de foto ni contador en memoria).
         "created_at": pub.get("fecha_publicacion"),
         "updated_at": pub.get("fecha_renovacion"),
         "vistas": (pub.get("vistas", 0) or 0) if mostrar_vistas else None,
         "imagenes": _mock_imagenes(pub),
-        # Oleada 2: coords para MapaZona modo aviso + deep-link (eran internas, ahora visibles).
+        # Coords para MapaZona modo aviso + deep-link (eran internas, ahora visibles).
         "latitud": pub.get("latitud"),
         "longitud": pub.get("longitud"),
         # Publicidad v1: badge "Destacado" (el router resuelve vigencia).
@@ -196,7 +197,7 @@ def build_card(p, dist, trust: dict, zona_nombre, tel: Optional[str],
         # Publicidad v1: badge "Destacado" (el router resuelve vigencia).
         "destacado": bool(destacado),
         "destacado_vence": destacado_vence,
-        # v15.2 frescura + métricas (aditivos, sin romper contratos).
+        # Frescura + métricas (aditivos, sin romper contratos).
         "fecha_publicacion": p.fecha_publicacion,
         "created_at": p.fecha_publicacion,
         "updated_at": p.fecha_renovacion,
@@ -236,12 +237,12 @@ def build_detail(p, reportes_activos: int, u, dist, campus_ref: Optional[dict] =
         # Publicidad v1: banner vigencia (el router resuelve vigencia).
         "destacado": bool(destacado),
         "destacado_vence": destacado_vence,
-        # Oleada 2: coords para MapaZona modo aviso + deep-link (eran internas, ahora visibles).
+        # Coords para MapaZona modo aviso + deep-link (eran internas, ahora visibles).
         "latitud": float(p.latitud) if p.latitud is not None else None,
         "longitud": float(p.longitud) if p.longitud is not None else None,
         # 004 POIs: referencia resuelta con ?campus_id= (mapa dinámico del Detalle).
         "campus_ref": campus_ref,
-        # v15.2 autoría + frescura + métricas + gestión multimedia (aditivos).
+        # Autoría + frescura + métricas + gestión multimedia (aditivos).
         "usuario_id": p.usuario_id,
         "fecha_publicacion": p.fecha_publicacion,
         "created_at": p.fecha_publicacion,
@@ -287,8 +288,8 @@ def filter_mock_pubs(pubs: List[dict], campus_id=None, precio_min=None, precio_m
         s = (s or "").lower()
         return "".join(c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn")
 
-    filtradas = [p for p in pubs if p["estado"] == "ACTIVO"]
-    # Fase 4 multiciudad (mock): los pubs demo son ciudad_id 1 salvo que el dict lo indique.
+    filtradas = [p for p in pubs if p["estado"] == EstadoPublicacion.ACTIVO]
+    # Multiciudad (mock): los pubs demo son ciudad_id 1 salvo que el dict lo indique.
     if ciudad_slug and not ciudad_id:
         wanted = slugify(ciudad_slug)
         # Mock solo conoce Popayán (id 1 / slug popayan).

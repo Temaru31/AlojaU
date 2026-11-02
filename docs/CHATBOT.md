@@ -44,7 +44,7 @@ Hallazgos F1 (resueltos): asyncpg no entiende esquema `+asyncpg` (los tests conv
 | `services/chat/llm.py` (nuevo) | `LLMProvider` + `FakeLLMProvider` (heurística + guion inyectable, contador) + `HttpLLMProvider` OpenAI-compatible por urllib (llave solo en header, URL fija de settings, llamada con `to_thread` + timeout) |
 | `services/chat/prompts.py` (nuevo) | System prompt v1 (sin secretos) + delimitadores + fallbacks |
 | `services/chat/kb/*.md` + `faq.py` (nuevos) | 9 docs de usuario final + retrieval por keywords en memoria ($0) |
-| `services/chat/net.py` + `throttle.py` (nuevos) | IP real tras proxy (réplica pura de auth, basura no abre buckets) + throttle IP/usuario, tope diario global y circuit breaker en memoria |
+| `core/net.py` + `services/chat/throttle.py` | IP real tras proxy (fuente única compartida con auth, basura no abre buckets) + throttle IP/usuario, tope diario global y circuit breaker en memoria |
 | `app/routers/chat.py` (nuevo) | `POST /api/chat`: kill switch primero (200 controlado sin LLM/BD), breaker/tope diario, auth opcional **solo p/rate-limit** (`core.security`, sin importar `routers/auth`; tools siempre visitante), sesión separada, timeout, logs solo metadata con `logseguro` |
 | `app/main.py`, `routers/publicaciones.py`, `core/config.py`, `.env.example` | Registro del router; `chat_enabled` en `/config-publica`; 9 vars `CHAT_*` documentadas |
 | `tests/test_chat_tools.py`, `test_chat_endpoint.py`, `seguridad/chat/test_chat_seguridad.py` (nuevos) | 21 tests: rechazos, parametrización, flujo Fake, 429 antes de BD, apagado sin toques (`llamadas==0`), allowlist/inyección SQL, inyección vía descripción sembrada, historial, salida, visibilidad no-ACTIVO, kill switch, logs, llave en header |

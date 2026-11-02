@@ -22,6 +22,7 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy import func, literal, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.dominio import EstadoPublicacion
 
 logger = logging.getLogger("alojau.notificaciones")
 
@@ -29,7 +30,7 @@ logger = logging.getLogger("alojau.notificaciones")
 PURGA_DIAS = 90
 PURGA_TOPE_FILAS = 500
 
-ESTADO_HUMANO = {"ACTIVO": "aprobado", "RECHAZADO": "rechazado", "PAUSADO": "pausado"}
+ESTADO_HUMANO = {EstadoPublicacion.ACTIVO: "aprobado", EstadoPublicacion.RECHAZADO: "rechazado", EstadoPublicacion.PAUSADO: "pausado"}
 
 
 def _titulo_para(titulo_pub: str | None, pub_id: int) -> str:
@@ -41,7 +42,7 @@ def _cuerpo_para(canon, tipo: str | None) -> str:
     partes: list[str] = []
     try:
         partes.append(f"${int(canon):,}".replace(",", "."))
-    except Exception:
+    except (TypeError, ValueError):
         pass
     if tipo:
         partes.append(str(tipo).replace("_", " ").title())

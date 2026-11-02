@@ -20,7 +20,7 @@ export function etiquetaEvento(evento) {
   return EVENTO_LABEL[evento] || evento || 'Evento'
 }
 
-// M1 human-readable enriquecido: convierte el log crudo en frase amigable.
+// Human-readable enriquecido: convierte el log crudo en frase amigable.
 // Ej. {evento:'RENEWED', publicacion_id:14} -> "Renovó expiración del aviso #14".
 // Si el backend ya envía `mensaje_legible`, se prefiere tal cual (contrato aditivo).
 export const MENSAJE_AUDITORIA = {
