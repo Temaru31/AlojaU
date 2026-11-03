@@ -73,14 +73,16 @@ from app.routers.auth.telegram_vinculo import (  # noqa: F401
     _TELEGRAM_USADOS,
     _TELEGRAM_VINCULOS,
     _TG_MEM,
-    _contacto_coincide,
     _desarmar_token_vinculo,
     _firmar_vinculo,
     validar_token_vinculo,
     validar_token_vinculo_db,
 )
-from app.routers.auth import oauth, otp_recuperacion, perfil, registro_login, sesiones_cuenta, telegram_vinculo
+from app.routers.auth.telegram_webhook import _contacto_coincide  # noqa: F401
+from app.routers.auth import (
+    oauth, otp_recuperacion, perfil, registro_login, sesiones_cuenta, telegram_vinculo, telegram_webhook,
+)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-for _sub in (oauth, otp_recuperacion, perfil, registro_login, sesiones_cuenta, telegram_vinculo):
+for _sub in (oauth, otp_recuperacion, perfil, registro_login, sesiones_cuenta, telegram_vinculo, telegram_webhook):
     router.include_router(_sub.router)
