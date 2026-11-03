@@ -10,7 +10,12 @@ import re
 
 REPO = pathlib.Path(__file__).resolve().parent.parent  # backend/
 SCHEMA = REPO / "db" / "schema.sql"
-MODELS = REPO / "app" / "models" / "__init__.py"
+MODELS_DIR = REPO / "app" / "models"
+
+
+def texto_modelos() -> str:
+    """Fuente de todos los modelos (el paquete está dividido por dominio)."""
+    return "\n".join(p.read_text(encoding="utf-8") for p in sorted(MODELS_DIR.glob("*.py")))
 MIG_005 = REPO / "db" / "migrations" / "005_fix_estado_and_campus.sql"
 MIG_006 = REPO / "db" / "migrations" / "006_barrio_texto.sql"
 
@@ -48,7 +53,7 @@ def test_schema_trae_trigger_distancias_y_system_settings():
 
 
 def test_migraciones_y_modelos_coinciden_con_schema():
-    modelos = MODELS.read_text(encoding="utf-8")
+    modelos = texto_modelos()
     mig005 = MIG_005.read_text(encoding="utf-8")
     schema = SCHEMA.read_text(encoding="utf-8")
     for e in ESTADOS:
