@@ -8,9 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-# --------------------------------------------------------------------------
 # Entrada / salida del endpoint
-# --------------------------------------------------------------------------
 
 ROLES_HISTORIAL = ("user", "assistant")
 
@@ -56,9 +54,7 @@ class ChatOut(BaseModel):
     request_id: str
 
 
-# --------------------------------------------------------------------------
 # Argumentos de tools (allowlist cerrada, todo acotado)
-# --------------------------------------------------------------------------
 
 class BuscarArgs(BaseModel):
     model_config = {"extra": "forbid"}

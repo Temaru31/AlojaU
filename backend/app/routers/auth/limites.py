@@ -4,10 +4,8 @@ from app.core.net import ip_para_limites
 from app.core.rate_limit import registrar_intento
 
 
-# ---------------------------------------------------------------------------
 # Rate-limit: memoria (rápido) + persistencia PG (sobrevive reinicios Render).
 # Bloqueo temporal 15 min tras 5 fallidos por IP/usuario (v13).
-# ---------------------------------------------------------------------------
 _LOGIN_ATTEMPTS: dict[str, list[float]] = {}
 LOGIN_LIMIT = 5
 LOGIN_WINDOW_S = 60.0

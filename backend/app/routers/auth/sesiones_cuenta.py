@@ -26,9 +26,7 @@ from app.routers.auth.esquemas import CuentaEliminarIn, CuentaRestaurarIn, Login
 logger = logging.getLogger("alojau.auth")
 router = APIRouter()
 
-# ---------------------------------------------------------------------------
 # Promoción dinámica ESTUDIANTE -> ARRENDADOR (al publicar)
-# ---------------------------------------------------------------------------
 async def promover_a_arrendador(db: AsyncSession, usuario_id: int) -> Optional[str]:
     """Promueve a ARRENDADOR si era ESTUDIANTE. Retorna el rol final o None si el usuario no existe.
 
@@ -59,9 +57,7 @@ async def promoverme(user: ClaimsUsuario = Depends(get_current_user),
     return {"rol": rol, "mensaje": "Cuenta promovida a ARRENDADOR." if rol == Rol.ARRENDADOR else "Sin cambios."}
 
 
-# ---------------------------------------------------------------------------
 # Sesiones activas + revocación global ("cerrar en todos los dispositivos")
-# ---------------------------------------------------------------------------
 @router.get("/sesiones", response_model=list[SesionOut], summary="Listar sesiones activas")
 async def listar_sesiones(user: ClaimsUsuario = Depends(get_current_user),
                           db: AsyncSession = Depends(get_session)):
@@ -167,9 +163,7 @@ async def logout_todas(
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
-# ---------------------------------------------------------------------------
 # Eliminar cuenta (soft-delete 30 días) + restaurar + purga.
-# ---------------------------------------------------------------------------
 @router.delete("/cuenta", summary="Eliminar mi cuenta (soft-delete 30 días)")
 async def eliminar_cuenta(data: CuentaEliminarIn,
                           user: ClaimsUsuario = Depends(get_current_user),

@@ -30,7 +30,11 @@ logger = logging.getLogger("alojau.notificaciones")
 PURGA_DIAS = 90
 PURGA_TOPE_FILAS = 500
 
-ESTADO_HUMANO = {EstadoPublicacion.ACTIVO: "aprobado", EstadoPublicacion.RECHAZADO: "rechazado", EstadoPublicacion.PAUSADO: "pausado"}
+ESTADO_HUMANO = {
+    EstadoPublicacion.ACTIVO: "aprobado",
+    EstadoPublicacion.RECHAZADO: "rechazado",
+    EstadoPublicacion.PAUSADO: "pausado",
+}
 
 
 def _titulo_para(titulo_pub: str | None, pub_id: int) -> str:

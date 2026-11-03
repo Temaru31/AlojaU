@@ -63,7 +63,9 @@ async def _vincular_campus(db: AsyncSession, pub_id: int, campus_ids, latitud, l
 
 async def create_persisted(db, payload, user_id: int, trust: dict, campus_ids, servicios_ids):
     """Persiste PENDIENTE + links N:M + fotos + audit (requiere FK validadas).
-    Uso: routers/publicaciones.py::crear_publicacion. Ej: nueva = await create_persisted(db, payload, 1, trust, [1], [1])."""
+    Uso: routers/publicaciones.py::crear_publicacion.
+    Ej: nueva = await create_persisted(db, payload, 1, trust, [1], [1]).
+    """
     from datetime import datetime, timezone, timedelta
 
     from app.models import (
@@ -97,7 +99,11 @@ async def create_persisted(db, payload, user_id: int, trust: dict, campus_ids, s
         db.add(PublicacionServicio(publicacion_id=nueva.id, servicio_id=sid))
     for idx, url in enumerate(payload.fotos, start=1):
         db.add(ImagenPublicacion(publicacion_id=nueva.id, url=str(url), orden=idx))
-    db.add(PublicacionAudit(publicacion_id=nueva.id, usuario_id=nueva.usuario_id, evento="CREATED", detalle=EstadoPublicacion.PENDIENTE))
+    db.add(
+        PublicacionAudit(
+            publicacion_id=nueva.id, usuario_id=nueva.usuario_id, evento="CREATED", detalle=EstadoPublicacion.PENDIENTE
+        )
+    )
     await db.commit()
     await db.refresh(nueva)
     return nueva
@@ -108,6 +114,18 @@ def _nueva_expiracion(fecha_anterior, now):
     from datetime import timedelta
 
     return max(fecha_anterior, now) + timedelta(days=30)
+
+
+def _detalle_renovacion(fecha_anterior, fecha_nueva, estado_anterior, estado_nuevo) -> str:
+    """JSON de la fila de auditoría RENEWED."""
+    import json
+
+    return json.dumps({
+        "fecha_expiracion_anterior": fecha_anterior.isoformat(),
+        "fecha_expiracion_nueva": fecha_nueva.isoformat(),
+        "estado_anterior": estado_anterior,
+        "estado_nuevo": estado_nuevo,
+    }, ensure_ascii=False)
 
 
 async def renovar_publicacion(db: AsyncSession, pub_id: int, user_id: int) -> dict:
@@ -126,7 +144,6 @@ async def renovar_publicacion(db: AsyncSession, pub_id: int, user_id: int) -> di
     Retorna dict con id, estado, fecha_expiracion_anterior, fecha_expiracion_nueva, dias_agregados, mensaje.
     Lanza HTTPException 404/403.
     """
-    import json
     from datetime import datetime, timezone
     from fastapi import HTTPException
     from app.models import Publicacion, PublicacionesAudit as PublicacionAudit
@@ -150,12 +167,7 @@ async def renovar_publicacion(db: AsyncSession, pub_id: int, user_id: int) -> di
     p.fecha_expiracion = fecha_nueva
     p.fecha_renovacion = now
 
-    detalle = json.dumps({
-        "fecha_expiracion_anterior": fecha_anterior.isoformat(),
-        "fecha_expiracion_nueva": fecha_nueva.isoformat(),
-        "estado_anterior": estado_anterior,
-        "estado_nuevo": p.estado,
-    }, ensure_ascii=False)
+    detalle = _detalle_renovacion(fecha_anterior, fecha_nueva, estado_anterior, p.estado)
     db.add(PublicacionAudit(
         publicacion_id=p.id,
         usuario_id=user_id,

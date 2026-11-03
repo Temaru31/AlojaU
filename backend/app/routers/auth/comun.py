@@ -31,9 +31,7 @@ async def _verify_password_async(pw: str, h: str) -> bool:
     return await asyncio.to_thread(verify_password, pw, h)
 
 
-# ---------------------------------------------------------------------------
 # Marketplace: normalización y validación de perfil flexible.
-# ---------------------------------------------------------------------------
 def normalizar_telefono(raw: str | None) -> str | None:
     """E.164 en dígitos sin '+' (canónico AlojaU, compatible wa.me y CHECK).
 
@@ -199,9 +197,7 @@ async def _emitir_token_con_sesion(db: AsyncSession, usuario, request: Request,
     return token
 
 
-# ---------------------------------------------------------------------------
 # Soft-delete de cuentas (gracia 30 días + purga física + restore).
-# ---------------------------------------------------------------------------
 
 
 def _gracia_restante(u) -> int | None:

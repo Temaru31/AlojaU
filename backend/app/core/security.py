@@ -1,10 +1,12 @@
 """JWT HS256 + bcrypt con fail-closed (sin BD -> 503).
-Uso: Depends(get_current_user/require_arrendador/require_admin) en routers. Ej: headers {"Authorization": "Bearer <jwt>"} -> {"id":1,"rol":"ARRENDADOR"}.
+Uso: Depends(get_current_user/require_arrendador/require_admin) en routers.
+Ej: headers {"Authorization": "Bearer <jwt>"} -> {"id":1,"rol":"ARRENDADOR"}.
 v13: los tokens nuevos incluyen `jti` (revocación) y `scopes` (RBAC granular).
 Los tokens legacy sin scopes se enriquecen por rol (compat total).
 v14.1: get_current_user es async y verifica revocación JTI en TODOS los
 endpoints autenticados (centralizado). Exenciones: mock-tokens (solo dev),
 tokens sin jti (legacy, máx 8h de vida). Error de BD -> 503 fail-closed."""
+
 from datetime import datetime, timezone, timedelta
 import logging
 import time
@@ -84,10 +86,38 @@ def decode_token(token: str):
 # Tokens fijos de prueba (dev/test, USE_MOCK_FALLBACK; nunca en prod).
 # Incluye ESTUDIANTE base (rol por defecto de registro nuevo).
 MOCK_TOKENS = {
-    "mock-token-arrendador": {"sub": "arrendador@alojau.com", "rol": Rol.ARRENDADOR, "id": 1, "telefono_whatsapp": "573001234567", "telefono_verificado": True, "email_verificado": True},
-    "mock-token-admin": {"sub": "admin@alojau.com", "rol": Rol.ADMIN, "id": 2, "telefono_whatsapp": "573009998877", "telefono_verificado": True, "email_verificado": True},
-    "mock-token-estudiante": {"sub": "estudiante@alojau.com", "rol": Rol.ESTUDIANTE, "id": 3, "telefono_whatsapp": "573001112233", "telefono_verificado": False, "email_verificado": False},
-    "mock-token-auditor": {"sub": "auditor@alojau.com", "rol": Rol.AUDITOR_LEGAL, "id": 4, "telefono_whatsapp": "573001112244", "telefono_verificado": False, "email_verificado": True},
+    "mock-token-arrendador": {
+        "sub": "arrendador@alojau.com",
+        "rol": Rol.ARRENDADOR,
+        "id": 1,
+        "telefono_whatsapp": "573001234567",
+        "telefono_verificado": True,
+        "email_verificado": True,
+    },
+    "mock-token-admin": {
+        "sub": "admin@alojau.com",
+        "rol": Rol.ADMIN,
+        "id": 2,
+        "telefono_whatsapp": "573009998877",
+        "telefono_verificado": True,
+        "email_verificado": True,
+    },
+    "mock-token-estudiante": {
+        "sub": "estudiante@alojau.com",
+        "rol": Rol.ESTUDIANTE,
+        "id": 3,
+        "telefono_whatsapp": "573001112233",
+        "telefono_verificado": False,
+        "email_verificado": False,
+    },
+    "mock-token-auditor": {
+        "sub": "auditor@alojau.com",
+        "rol": Rol.AUDITOR_LEGAL,
+        "id": 4,
+        "telefono_whatsapp": "573001112244",
+        "telefono_verificado": False,
+        "email_verificado": True,
+    },
 }
 
 async def _verificar_sesion_activa(claims: dict, db=None) -> None:

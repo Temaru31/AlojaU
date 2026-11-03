@@ -15,7 +15,13 @@ from app.core.rate_limit import registrar_intento, registrar_intento_persistente
 from app.db.session import get_session
 from app.services.storage import borrar_local_si_huerfano
 from app.core.normalizacion import normalizar_email
-from app.routers.auth.comun import _hash_password_async, _verify_password_async, normalizar_telefono, validar_foto_url, validar_preferencias
+from app.routers.auth.comun import (
+    _hash_password_async,
+    _verify_password_async,
+    normalizar_telefono,
+    validar_foto_url,
+    validar_preferencias,
+)
 from app.routers.auth.esquemas import PasswordChangeIn, PerfilOut, PerfilUpdateIn
 from app.routers.auth.limites import _check_password_rate_limit
 
@@ -74,9 +80,7 @@ def _perfil_out_db(u) -> "PerfilOut":
     )
 
 
-# ---------------------------------------------------------------------------
 # Perfil (extiende contrato previo con email_verificado/auth_provider)
-# ---------------------------------------------------------------------------
 @router.get("/perfil", response_model=PerfilOut, summary="Obtener perfil del usuario autenticado")
 async def get_perfil(
     user: ClaimsUsuario = Depends(get_current_user),
@@ -157,14 +161,12 @@ async def solicitar_verificacion(
     return {"mensaje": "Solicitud registrada. Un administrador verificará tu línea.", "estado": "PENDIENTE"}
 
 
-# ---------------------------------------------------------------------------
 # Avatar dedicado (solo sesión autenticada, cualquier rol incl. ESTUDIANTE).
 # PROHIBIDO reutilizar /upload/una (ese exige ARRENDADOR y daría 403 a
 # estudiantes). Valida MIME imagen + 5MB, guarda vía storage y actualiza
 # foto_perfil_url en la MISMA transacción.
 # Throttle anti-abuso (memoria en dev + PG persistente en prod,
 # mismo patrón que OTP) y limpieza de archivos huérfanos del disco local.
-# ---------------------------------------------------------------------------
 _AVATAR_MIME = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -367,4 +369,3 @@ async def update_perfil(
         await rollback_seguro(db, "update_perfil")
         logger.error(f"[auth update_perfil] DB falló: {exc_resumen(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
-

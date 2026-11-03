@@ -30,9 +30,7 @@ class LLMProvider:
         raise NotImplementedError
 
 
-# --------------------------------------------------------------------------
 # Fake determinista (tests + sin proveedor)
-# --------------------------------------------------------------------------
 
 class FakeLLMProvider(LLMProvider):
     """Heurística fija + guion opcional. `llamadas` cuenta usos (tests)."""
@@ -78,9 +76,7 @@ class FakeLLMProvider(LLMProvider):
                 "tools": []}
 
 
-# --------------------------------------------------------------------------
 # Proveedor HTTP OpenAI-compatible (urllib, sin dependencias)
-# --------------------------------------------------------------------------
 
 class HttpLLMProvider(LLMProvider):
     """POST {base_url}/chat/completions estilo OpenAI.

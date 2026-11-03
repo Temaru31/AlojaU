@@ -21,9 +21,7 @@ from app.routers.auth.esquemas import OtpSolicitarIn, OtpVerificarIn, RecoveryCo
 logger = logging.getLogger("alojau.auth")
 router = APIRouter()
 
-# ---------------------------------------------------------------------------
 # OTP ligero (6 dígitos, 10 min) vía Email o Telegram webhook gratuito
-# ---------------------------------------------------------------------------
 
 
 async def _telegram_chat_para_email(db: AsyncSession, email: str) -> str | None:
@@ -167,9 +165,7 @@ async def otp_verificar(data: OtpVerificarIn, db: AsyncSession = Depends(get_ses
     return {"mensaje": "Verificación exitosa.", "email_verificado": True}
 
 
-# ---------------------------------------------------------------------------
 # Recovery un solo uso (15 min) + fortaleza v13
-# ---------------------------------------------------------------------------
 @router.post("/recovery/solicitar", status_code=202, summary="Solicitar enlace de recuperación (15 min)")
 async def recovery_solicitar(data: RecoverySolicitarIn, request: Request,
                              db: AsyncSession = Depends(get_session)):

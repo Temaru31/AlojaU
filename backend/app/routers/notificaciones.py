@@ -47,9 +47,7 @@ def _tiene_filtros(data: "BusquedaIn") -> bool:
     return bool(data.servicios_ids)
 
 
-# ---------------------------------------------------------------------------
 # Schemas
-# ---------------------------------------------------------------------------
 class NotificacionOut(BaseModel):
     id: int
     tipo: str
@@ -115,14 +113,7 @@ def _b_out(b) -> dict:
             "activa": bool(b.activa), "created_at": b.created_at}
 
 
-def _uid(user: ClaimsUsuario) -> int:
-    uid = id_propietario(user)
-    return uid
-
-
-# ---------------------------------------------------------------------------
 # Bandeja
-# ---------------------------------------------------------------------------
 @router.get("", response_model=BandejaOut, summary="Bandeja in-app (lectura pura)")
 async def listar(
     page: int = Query(1, ge=1, le=1000),
@@ -132,7 +123,7 @@ async def listar(
     db: AsyncSession = Depends(get_session),
 ):
     """Paginado ≤50 + conteo de no leídas. Sin escrituras (ni purga)."""
-    uid = _uid(user)
+    uid = id_propietario(user)
     try:
         from app.models import Notificacion
         offset, size = paginate_params(page, size)
@@ -166,7 +157,7 @@ async def leer_todas(
     db: AsyncSession = Depends(get_session),
 ):
     """Un UPDATE por usuario. Declarada ANTES de /{id}/leer (orden de rutas)."""
-    uid = _uid(user)
+    uid = id_propietario(user)
     try:
         from app.models import Notificacion
         ahora = datetime.now(timezone.utc)
@@ -193,7 +184,7 @@ async def leer_una(
     db: AsyncSession = Depends(get_session),
 ):
     """404 si no existe, 403 si es ajena (IDOR)."""
-    uid = _uid(user)
+    uid = id_propietario(user)
     try:
         from app.models import Notificacion
         n = await db.get(Notificacion, nid)
@@ -215,9 +206,7 @@ async def leer_una(
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
-# ---------------------------------------------------------------------------
 # Búsquedas guardadas
-# ---------------------------------------------------------------------------
 @router_busquedas.post("", response_model=BusquedaOut, status_code=201,
                        summary="Guardar alerta (tope 10 activas)")
 async def crear_busqueda(
@@ -226,7 +215,7 @@ async def crear_busqueda(
     db: AsyncSession = Depends(get_session),
 ):
     """Valida tope anti-abuso + FKs de catálogo. 422 con guía si algo falla."""
-    uid = _uid(user)
+    uid = id_propietario(user)
     if not _tiene_filtros(data):
         raise HTTPException(status_code=422, detail=MENSAJE_SIN_FILTROS)
     try:
@@ -276,7 +265,7 @@ async def listar_busquedas(
     db: AsyncSession = Depends(get_session),
 ):
     """Todas las mías (≤10 activas + inactivas), recientes primero."""
-    uid = _uid(user)
+    uid = id_propietario(user)
     try:
         from app.models import BusquedaGuardada
         rows = (await db.execute(
@@ -300,7 +289,7 @@ async def eliminar_busqueda(
 ):
     """Borrado físico (config propia, sin auditoría): 404/403. Las
     notificaciones ya creadas se conservan (busqueda_id pasa a NULL)."""
-    uid = _uid(user)
+    uid = id_propietario(user)
     try:
         from app.models import BusquedaGuardada
         b = await db.get(BusquedaGuardada, bid)

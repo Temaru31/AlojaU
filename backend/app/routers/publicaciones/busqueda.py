@@ -21,19 +21,41 @@ from app.routers.publicaciones.comun import _exigir_tipo_activo, select_con_rela
 logger = logging.getLogger("alojau.publicaciones")
 router = APIRouter(prefix="/api/publicaciones", tags=["publicaciones"])
 
+
 # --- Endpoints Sprint1 ---
-@router.get("", response_model=PaginatedPublicaciones, summary="HU-001 Buscar por sede + HU-002 Filtros + búsqueda tokenizada + multiciudad")
+@router.get(
+    "",
+    response_model=PaginatedPublicaciones,
+    summary="HU-001 Buscar por sede + HU-002 Filtros + búsqueda tokenizada + multiciudad",
+)
 async def list_publicaciones(
-    campus_id: Optional[int] = Query(None, ge=1, le=1000, description="FK campus_universitarios.id - filtra por lugar cercano (POIs por categoría)"),
+    campus_id: Optional[int] = Query(
+        None, ge=1, le=1000, description="FK campus_universitarios.id - filtra por lugar cercano (POIs por categoría)"
+    ),
     precio_min: Optional[int] = Query(None, ge=0, le=10_000_000, description="COP mínimo"),
     precio_max: Optional[int] = Query(None, ge=0, le=10_000_000, description="COP máximo"),
     # Sin pattern estático (el catálogo vive en housing_types). Se valida
     # contra la tabla (esta_activo=true) con caché 5min; 422 si no existe.
-    tipo: Optional[str] = Query(None, min_length=3, max_length=40, description="Slug de housing_types (ej. APARTAESTUDIO)"),
+    tipo: Optional[str] = Query(
+        None, min_length=3, max_length=40, description="Slug de housing_types (ej. APARTAESTUDIO)"
+    ),
     servicios: Optional[str] = Query(None, max_length=50, description="IDs coma separados, ej: 1,3"),
-    q: Optional[str] = Query(None, min_length=2, max_length=100, description="Texto libre tokenizado: stop-words ES fuera, OR parcial + relevancia (Fase 2)"),
-    ciudad_id: Optional[int] = Query(None, ge=1, le=1000000, description="Fase 4 multiciudad: filtra por Ciudad.id vía zona"),
-    ciudad_slug: Optional[str] = Query(None, min_length=2, max_length=100, pattern="^[a-z0-9-]+$", description="Fase 4 multiciudad: slug de ciudad, ej: popayan"),
+    q: Optional[str] = Query(
+        None,
+        min_length=2,
+        max_length=100,
+        description="Texto libre tokenizado: stop-words ES fuera, OR parcial + relevancia (Fase 2)",
+    ),
+    ciudad_id: Optional[int] = Query(
+        None, ge=1, le=1000000, description="Fase 4 multiciudad: filtra por Ciudad.id vía zona"
+    ),
+    ciudad_slug: Optional[str] = Query(
+        None,
+        min_length=2,
+        max_length=100,
+        pattern="^[a-z0-9-]+$",
+        description="Fase 4 multiciudad: slug de ciudad, ej: popayan",
+    ),
     page: int = Query(1, ge=1, le=1000, description="Página 1-indexed"),
     size: int = Query(9, ge=1, le=50, description="Tamaño página"),
     db: AsyncSession = Depends(get_session),
@@ -78,6 +100,7 @@ async def list_publicaciones(
         await rollback_seguro(db, "list_publicaciones")
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
+
 # Mismo orden lógico que el panel: ACTIVO primero, terminales al final.
 _ORDEN_ESTADOS_PANEL = [
     EstadoPublicacion.ACTIVO, EstadoPublicacion.PENDIENTE, EstadoPublicacion.PAUSADO,
@@ -101,13 +124,24 @@ def _orden_mis_publicaciones(orden: str) -> list:
     return [Publicacion.id.desc()]
 
 
-@router.get("/mias", response_model=PaginatedPublicaciones, summary="UX Mis publicaciones del dueño (todos los estados, paginado)")
+@router.get(
+    "/mias",
+    response_model=PaginatedPublicaciones,
+    summary="UX Mis publicaciones del dueño (todos los estados, paginado)",
+)
 async def mis_publicaciones(
-    estado: Optional[str] = Query(None, pattern="^(ACTIVO|PENDIENTE|PAUSADO|PAUSADO_POR_REPORTE|REVISION_REQUERIDA|RECHAZADO|ARRENDADO|EXPIRADO|DESACTIVADO)$", description="Filtra por estado (default todos)"),
+    estado: Optional[str] = Query(
+        None,
+        pattern="^(ACTIVO|PENDIENTE|PAUSADO|PAUSADO_POR_REPORTE|REVISION_REQUERIDA|RECHAZADO|ARRENDADO|EXPIRADO|DESACTIVADO)$",
+        description="Filtra por estado (default todos)",
+    ),
     page: int = Query(1, ge=1, le=1000, description="Página 1-indexed"),
     size: int = Query(12, ge=1, le=50, description="Tamaño página"),
-    orden: str = Query("recientes", pattern="^(recientes|vistas|estado)$",
-                       description="Orden del panel: recientes (default), vistas desc o estado"),
+    orden: str = Query(
+        "recientes",
+        pattern="^(recientes|vistas|estado)$",
+        description="Orden del panel: recientes (default), vistas desc o estado",
+    ),
     db: AsyncSession = Depends(get_session),
     user: ClaimsUsuario = Depends(get_current_user),
 ):

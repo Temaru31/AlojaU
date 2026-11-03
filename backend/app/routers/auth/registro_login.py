@@ -32,9 +32,7 @@ from app.routers.auth.otp_recuperacion import _crear_otp
 logger = logging.getLogger("alojau.auth")
 router = APIRouter()
 
-# ---------------------------------------------------------------------------
 # Registro (Ley 1581 obligatoria, rol base ESTUDIANTE)
-# ---------------------------------------------------------------------------
 @router.post("/register", response_model=RegisterOut, summary="Registro (Ley 1581, rol ESTUDIANTE)")
 async def register(data: RegisterIn, request: Request, db: AsyncSession = Depends(get_session)):
     email = normalizar_email(data.email)
@@ -158,9 +156,7 @@ def _registro_out(usuario) -> dict:
             "mock": False, "email_verificado": bool(usuario.email_verificado)}
 
 
-# ---------------------------------------------------------------------------
 # Login (rate-limit memoria + persistente, sesiones registradas)
-# ---------------------------------------------------------------------------
 @router.post("/login", response_model=LoginOut, summary="Login JWT HS256 (expira según settings, hoy 2h T2)")
 async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_session)):
     _check_login_rate_limit(request)

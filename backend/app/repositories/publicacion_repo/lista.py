@@ -8,7 +8,13 @@ from app.core.pagination import paginate_params
 from app.services.search import clean_query_for_fts, tokenize_query
 from app.core.logseguro import exc_resumen
 from app.core.dominio import EstadoDestacado, EstadoPublicacion, EstadoReporte
-from app.repositories.publicacion_repo.texto import fts_condition, fuzzy_condition, resolver_modo_q, tokens_relevance, ts_rank_order
+from app.repositories.publicacion_repo.texto import (
+    fts_condition,
+    fuzzy_condition,
+    resolver_modo_q,
+    tokens_relevance,
+    ts_rank_order,
+)
 
 logger = logging.getLogger("alojau.publicaciones.repo")
 
@@ -26,7 +32,17 @@ def dueno_activo_clause(Publicacion):
     ).exists()
 
 
-def lista_conditions(Publicacion, campus_id, precio_min, precio_max, tipo, servicios, q: Optional[str] = None, q_mode: Optional[str] = None, ciudad_id: Optional[int] = None):
+def lista_conditions(
+    Publicacion,
+    campus_id,
+    precio_min,
+    precio_max,
+    tipo,
+    servicios,
+    q: Optional[str] = None,
+    q_mode: Optional[str] = None,
+    ciudad_id: Optional[int] = None,
+):
     """Filtros HU-001/002 + Oleada 2 (q tokenizada) + multiciudad compartidos por COUNT y página."""
     conds = [Publicacion.estado == EstadoPublicacion.ACTIVO, dueno_activo_clause(Publicacion)]
     if precio_min is not None:
@@ -84,7 +100,15 @@ def _orden_resultados(tokens: list, fts_q, campus_id: Optional[int]) -> list:
     return [Publicacion.id.asc()]
 
 
-async def fetch_page(db: AsyncSession, conds, campus_id: Optional[int], limit: int, offset: int, q: Optional[str] = None, q_mode: Optional[str] = None):
+async def fetch_page(
+    db: AsyncSession,
+    conds,
+    campus_id: Optional[int],
+    limit: int,
+    offset: int,
+    q: Optional[str] = None,
+    q_mode: Optional[str] = None,
+):
     """Página en SQL con orden determinista (distancia NULLS LAST + id).
 
     Fase 2: con q tokenizada ordena por nº de tokens que matchean (mayoría
@@ -225,10 +249,23 @@ async def resolver_ciudad_id(db, ciudad_id: Optional[int] = None, ciudad_slug: O
     raise ValueError(f"ciudad '{ciudad_slug}' no existe")
 
 
-async def query_lista(db, campus_id, precio_min, precio_max, tipo, servicios, page=1, size=9, q: Optional[str] = None, ciudad_id: Optional[int] = None, ciudad_slug: Optional[str] = None):
+async def query_lista(
+    db,
+    campus_id,
+    precio_min,
+    precio_max,
+    tipo,
+    servicios,
+    page=1,
+    size=9,
+    q: Optional[str] = None,
+    ciudad_id: Optional[int] = None,
+    ciudad_slug: Optional[str] = None,
+):
     """COUNT + página + agregados para GET /api/publicaciones.
 
-    Uso: routers/publicaciones.py::list_publicaciones. Ej: total, pubs, *_map, size = await query_lista(db, 1, None, None, None, None).
+    Uso: routers/publicaciones.py::list_publicaciones.
+    Ej: total, pubs, *_map, size = await query_lista(db, 1, None, None, None, None).
     Fase 2: q tokenizada (stop-words ES fuera); FTS con query limpia primero,
     fallback tokenizado OR (parciales incluidos, mayoría primero).
     q de 1-2 chars -> directo a fallback. q vacía o solo stop-words -> sin filtro.

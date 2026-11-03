@@ -4,7 +4,6 @@ from datetime import time
 import enum
 
 
-# ---------------------------------------------------------------------------
 # Preferencias de convivencia / roomie (Opciones de personalización.pdf).
 # Diseño: NO son tablas nuevas. Son `Enum` de Python + clase `Preferencias`
 # (dataclass embebida) que se persiste serializada en la columna existente
@@ -12,7 +11,6 @@ import enum
 # migración ni se rompe el contrato actual del PATCH /api/auth/perfil
 # (validar_preferencias). `Usuario.preferencias_obj` expone la instancia.
 # Todos los enums incluyen SIN_DATO ("sin_dato") como valor por defecto.
-# ---------------------------------------------------------------------------
 class MomentoAseoSemana(str, enum.Enum):
     """Punto 1: momento de la semana para el aseo."""
     SIN_DATO = "sin_dato"

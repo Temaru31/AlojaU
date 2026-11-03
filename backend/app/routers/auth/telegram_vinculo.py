@@ -22,19 +22,15 @@ TG_LIMIT = 5
 TG_WINDOW_S = 900.0
 
 
-# ---------------------------------------------------------------------------
 # Vinculación Telegram $0 (HMAC un solo uso, 10min).
-# ---------------------------------------------------------------------------
 _TELEGRAM_VINCULOS: dict[str, dict] = {}  # nonce -> {user_id, exp, usado}
 _TELEGRAM_USADOS: set[str] = set()
 
-# ---------------------------------------------------------------------------
 # Opción A: verificación por contacto (request_contact, $0).
 # El /start solo REGISTRA qué chat pidió el enlace; la vinculación exige
 # que el número de esa cuenta Telegram coincida con el teléfono VERIFICADO
 # (OTP) del perfil AlojaU. Sin esto, cualquiera con el enlace (reenviado o
 # sesión comprometida) vincularía su propio Telegram y recibiría los OTP.
-# ---------------------------------------------------------------------------
 _TELEGRAM_PENDIENTES: dict[str, str] = {}  # chat_id -> nonce (espejo memoria/dev)
 
 
@@ -167,6 +163,20 @@ async def validar_token_vinculo_db(db: AsyncSession, token: str,
         return None
 
 
+def _purgar_vinculos_vencidos(ahora: int) -> None:
+    """Memoria acotada: un nonce vencido ya no valida (exp va en la firma), así que
+    puede salir de los stores sin reabrir su uso."""
+    vencidos = {n for n, rec in _TELEGRAM_VINCULOS.items() if rec.get("exp", 0) < ahora}
+    for n in vencidos:
+        _TELEGRAM_VINCULOS.pop(n, None)
+        _TELEGRAM_USADOS.discard(n)
+    # Solo los pendientes de nonces vencidos: tras un redeploy hay pendientes
+    # cuyo nonce vive solo en PG y siguen siendo válidos.
+    for chat, n in list(_TELEGRAM_PENDIENTES.items()):
+        if n in vencidos:
+            _TELEGRAM_PENDIENTES.pop(chat, None)
+
+
 async def _acuñar_vinculo(db: AsyncSession, uid: int) -> tuple[str, int]:
     """Crea un token de vinculación (memoria + PG) y anula los previos.
 
@@ -178,6 +188,7 @@ async def _acuñar_vinculo(db: AsyncSession, uid: int) -> tuple[str, int]:
     # (límite de Telegram para `?start=`). Formato URL-safe con "_".
     nonce = secrets.token_hex(4)
     token = _firmar_vinculo(uid, exp, nonce)
+    _purgar_vinculos_vencidos(int(time.time()))
     _TELEGRAM_VINCULOS[nonce] = {"user_id": uid, "exp": exp, "usado": False}
     # Anula enlaces previos del mismo usuario (memoria + PG): un solo vivo.
     for _k, _v in list(_TELEGRAM_VINCULOS.items()):
@@ -256,7 +267,9 @@ async def telegram_vincular_inicio(
     await verificar_intentos_fallidos(db, f"tg:{uid}", limite=TG_LIMIT, ventana_s=int(TG_WINDOW_S))
     username = (settings.TELEGRAM_BOT_USERNAME or "").strip().lstrip("@")
     if not username:
-        raise HTTPException(status_code=503, detail="Telegram no configurado (TELEGRAM_BOT_USERNAME). Vincula por correo.")
+        raise HTTPException(
+            status_code=503, detail="Telegram no configurado (TELEGRAM_BOT_USERNAME). Vincula por correo."
+        )
     token, exp = await _acuñar_vinculo(db, uid)
     await registrar_intento_persistente(db, f"tg:{uid}", False)
     # Limpieza best-effort de expirados (memoria acotada + PG).
@@ -292,7 +305,9 @@ async def telegram_enlace(
     uid = id_propietario(user)
     username = (settings.TELEGRAM_BOT_USERNAME or "").strip().lstrip("@")
     if not username:
-        raise HTTPException(status_code=503, detail="Telegram no configurado (TELEGRAM_BOT_USERNAME). Vincula por correo.")
+        raise HTTPException(
+            status_code=503, detail="Telegram no configurado (TELEGRAM_BOT_USERNAME). Vincula por correo."
+        )
     # Prerrequisito: número guardado (el frontend también bloquea la tarjeta).
     tiene_fono = False
     try:

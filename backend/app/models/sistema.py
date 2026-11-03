@@ -5,12 +5,10 @@ from datetime import datetime
 from app.models.base import Base
 
 
-# ---------------------------------------------------------------------------
 # Ajustes automatizados por UI (tabla system_settings, borrador).
 # La máquina de estados extendida (PAUSADO_POR_REPORTE, REVISION_REQUERIDA)
 # llega vía migración 005; el CHECK del modelo se amplía sin romper los
 # 7 estados previos (aditivo). Ver docs/ADMIN_AUTOMATION_SPECS.md.
-# ---------------------------------------------------------------------------
 class SystemSetting(Base):
     __tablename__ = "system_settings"
     __table_args__ = (

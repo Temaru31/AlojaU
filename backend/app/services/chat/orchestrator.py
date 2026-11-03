@@ -140,18 +140,28 @@ async def _tarjetas_desde_turno(db, usadas: list[dict]) -> list[dict]:
                     continue
                 vistos.add(pid)
                 fotos = await ro.fotos_de(db, pid, limit=1)
-                tarjetas.append({
-                    "id": pid,
-                    "titulo": str(r.get("titulo") or "")[:150],
-                    "precio": r.get("canon_mensual"),
-                    "tipo": str(r.get("tipo_inmueble") or "") or None,
-                    "zona": str(r.get("zona_nombre") or "") or None,
-                    "distancia_m": r.get("distancia_m"),
-                    "indice_confianza": (r.get("trust") or {}).get("indice") if isinstance(r.get("trust"), dict) else r.get("indice_confianza"),
-                    "nivel_confianza": (r.get("trust") or {}).get("nivel") if isinstance(r.get("trust"), dict) else r.get("nivel_confianza"),
-                    "foto": (fotos[0]["url"] if fotos else None),
-                    "url": f"/publicacion/{pid}",
-                })
+                tarjetas.append(
+                    {
+                        "id": pid,
+                        "titulo": str(r.get("titulo") or "")[:150],
+                        "precio": r.get("canon_mensual"),
+                        "tipo": str(r.get("tipo_inmueble") or "") or None,
+                        "zona": str(r.get("zona_nombre") or "") or None,
+                        "distancia_m": r.get("distancia_m"),
+                        "indice_confianza": (
+                            (r.get("trust") or {}).get("indice")
+                            if isinstance(r.get("trust"), dict)
+                            else r.get("indice_confianza")
+                        ),
+                        "nivel_confianza": (
+                            (r.get("trust") or {}).get("nivel")
+                            if isinstance(r.get("trust"), dict)
+                            else r.get("nivel_confianza")
+                        ),
+                        "foto": (fotos[0]["url"] if fotos else None),
+                        "url": f"/publicacion/{pid}",
+                    }
+                )
         elif nombre == "obtener_publicacion" and datos.get("encontrada"):
             pid = int(datos.get("id", 0) or 0)
             if pid and pid not in vistos:
@@ -186,18 +196,39 @@ def _acciones_desde_turno(usadas: list[dict]) -> list[dict]:
     """Acciones server-side: solo rutas de la allowlist fija."""
     acciones: list[dict] = [{"etiqueta": "Buscar vivienda", "ruta": "/"}]
     vistos = {"/"}
-    for uso in usadas:
-        for acc in _ACCIONES_POR_HERRAMIENTA.get(uso.get("tool") or "", []):
+
+    def agregar(candidatas: list[dict]) -> None:
+        for acc in candidatas:
             if acc["ruta"] not in vistos and acc["ruta"] in _RUTAS_PERMITIDAS:
                 vistos.add(acc["ruta"])
                 acciones.append(dict(acc))
+
+    for uso in usadas:
+        agregar(_ACCIONES_POR_HERRAMIENTA.get(uso.get("tool") or "", []))
         if uso.get("tool") == "buscar_en_faq":
             for frag in (uso.get("datos") or {}).get("fragmentos") or []:
-                for acc in _ACCIONES_POR_DOC_FAQ.get(frag.get("doc") or "", []):
-                    if acc["ruta"] not in vistos and acc["ruta"] in _RUTAS_PERMITIDAS:
-                        vistos.add(acc["ruta"])
-                        acciones.append(dict(acc))
+                agregar(_ACCIONES_POR_DOC_FAQ.get(frag.get("doc") or "", []))
     return acciones
+
+
+async def _ejecutar_llamada(db, llamada: dict, mensajes: list[dict],
+                            usadas: list[dict], eventos: list[str]) -> None:
+    """Ejecuta una tool pedida por el LLM y deja su resultado (o el rechazo) en `mensajes`."""
+    nombre = str(llamada.get("nombre") or "")
+    args = llamada.get("argumentos")
+    if not isinstance(args, dict):
+        args = {}
+        eventos.append(f"tool-args-no-dict:{nombre[:40]}")
+    try:
+        datos = await ejecutar_tool(db, nombre, args)
+        usadas.append({"tool": nombre, "datos": datos})
+        mensajes.append({"rol": "tool",
+                         "texto": empaquetar_datos(nombre, datos)})
+    except ToolRechazada:
+        eventos.append(f"tool-rechazada:{nombre[:40]}")
+        mensajes.append({"rol": "tool", "texto": (
+            f"{BLOQUE_DATOS_INICIO} herramienta={nombre}\n"
+            f'{{"error": "no disponible"}}\n{BLOQUE_DATOS_FIN}')})
 
 
 async def conversar(db, *, mensaje: str, historial: list[dict],
@@ -230,21 +261,7 @@ async def conversar(db, *, mensaje: str, historial: list[dict],
             mensajes.append({"rol": "assistant",
                              "texto": str((resp or {}).get("texto") or "")})
             for llamada in llamadas[:3]:
-                nombre = str(llamada.get("nombre") or "")
-                args = llamada.get("argumentos")
-                if not isinstance(args, dict):
-                    args = {}
-                    eventos.append(f"tool-args-no-dict:{nombre[:40]}")
-                try:
-                    datos = await ejecutar_tool(db, nombre, args)
-                    usadas.append({"tool": nombre, "datos": datos})
-                    mensajes.append({"rol": "tool",
-                                     "texto": empaquetar_datos(nombre, datos)})
-                except ToolRechazada:
-                    eventos.append(f"tool-rechazada:{nombre[:40]}")
-                    mensajes.append({"rol": "tool", "texto": (
-                        f"{BLOQUE_DATOS_INICIO} herramienta={nombre}\n"
-                        f'{{"error": "no disponible"}}\n{BLOQUE_DATOS_FIN}')})
+                await _ejecutar_llamada(db, llamada, mensajes, usadas, eventos)
         else:
             eventos.append("iters-agotadas")
         tarjetas = await _tarjetas_desde_turno(db, usadas)

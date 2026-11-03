@@ -1,21 +1,37 @@
 """Avisos (publicaciones) y sus relaciones: servicios, campus, fotos, reportes y auditoría."""
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, SmallInteger, String, Text, Numeric, UniqueConstraint, Index, func, text as sa_text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    Numeric,
+    UniqueConstraint,
+    Index,
+    func,
+    text as sa_text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from datetime import datetime
 from app.models.base import Base
 
 
-# ---------------------------------------------------------------------------
 # Publicaciones (FIX: + latitud, longitud, indice_confianza + relationships)
-# ---------------------------------------------------------------------------
 class Publicacion(Base):
     __tablename__ = "publicaciones"
     __table_args__ = (
         # Chk_tipo reemplazada por FK RESTRICT a housing_types (mig 013).
         # Se evita borrar slugs en uso (ON DELETE RESTRICT).
         # Fase 5 (aditivo): + PAUSADO_POR_REPORTE + REVISION_REQUERIDA. Los 7 previos siguen válidos.
-        CheckConstraint("estado IN ('PENDIENTE','ACTIVO','PAUSADO','ARRENDADO','EXPIRADO','RECHAZADO','DESACTIVADO','PAUSADO_POR_REPORTE','REVISION_REQUERIDA')", name="chk_estado"),
+        CheckConstraint(
+            "estado IN ('PENDIENTE','ACTIVO','PAUSADO','ARRENDADO','EXPIRADO','RECHAZADO','DESACTIVADO','PAUSADO_POR_REPORTE','REVISION_REQUERIDA')",
+            name="chk_estado",
+        ),
         CheckConstraint("canon_mensual > 0", name="chk_canon"),
         CheckConstraint("deposito_requerido >= 0", name="chk_deposito"),
         CheckConstraint("indice_confianza BETWEEN 0 AND 100", name="chk_confianza"),
@@ -32,7 +48,9 @@ class Publicacion(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     usuario_id: Mapped[int] = mapped_column(ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False)
     # Zona opcional: el barrio personalizado vive en barrio_texto.
-    zona_barrio_id: Mapped[int | None] = mapped_column(ForeignKey("zonas_barrios.id", ondelete="RESTRICT"), nullable=True)
+    zona_barrio_id: Mapped[int | None] = mapped_column(
+        ForeignKey("zonas_barrios.id", ondelete="RESTRICT"), nullable=True
+    )
     barrio_texto: Mapped[str | None] = mapped_column(String(120), nullable=True)
     titulo: Mapped[str] = mapped_column(String(150), nullable=False)
     descripcion: Mapped[str] = mapped_column(Text, nullable=False)
@@ -54,7 +72,9 @@ class Publicacion(Base):
     vistas: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     fecha_publicacion: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     fecha_renovacion: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    fecha_expiracion: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sa_text("NOW() + INTERVAL '30 days'"))
+    fecha_expiracion: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sa_text("NOW() + INTERVAL '30 days'")
+    )
 
     # Relationships para evitar N+1 y permitir selectinload (router espera .servicios y .imagenes)
     zona: Mapped["ZonaBarrio | None"] = relationship(lazy="joined")
@@ -64,20 +84,20 @@ class Publicacion(Base):
     # detail, mias, pendientes, cambiar-estado, similares, editar). Sin esto
     # fotos[0] era orden de heap, no la portada (orden=1). Fuente única de
     # verdad a nivel ORM; la capa vista además ordena defensivamente por orden.
-    imagenes: Mapped[list["ImagenPublicacion"]] = relationship(back_populates="publicacion", cascade="all, delete-orphan", lazy="selectin", order_by="ImagenPublicacion.orden")
-    campus_links: Mapped[list["PublicacionCampus"]] = relationship(back_populates="publicacion", cascade="all, delete-orphan", lazy="selectin")
+    imagenes: Mapped[list["ImagenPublicacion"]] = relationship(
+        back_populates="publicacion", cascade="all, delete-orphan", lazy="selectin", order_by="ImagenPublicacion.orden"
+    )
+    campus_links: Mapped[list["PublicacionCampus"]] = relationship(
+        back_populates="publicacion", cascade="all, delete-orphan", lazy="selectin"
+    )
 
-# ---------------------------------------------------------------------------
 # N:M publicacion_servicios
-# ---------------------------------------------------------------------------
 class PublicacionServicio(Base):
     __tablename__ = "publicacion_servicios"
     publicacion_id: Mapped[int] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), primary_key=True)
     servicio_id: Mapped[int] = mapped_column(ForeignKey("servicios_catalogo.id", ondelete="CASCADE"), primary_key=True)
 
-# ---------------------------------------------------------------------------
 # N:M publicacion_campus (distancia precalculada Haversine)
-# ---------------------------------------------------------------------------
 class PublicacionCampus(Base):
     __tablename__ = "publicacion_campus"
     __table_args__ = (
@@ -92,9 +112,7 @@ class PublicacionCampus(Base):
 
     publicacion: Mapped["Publicacion"] = relationship(back_populates="campus_links")
 
-# ---------------------------------------------------------------------------
 # Imagenes
-# ---------------------------------------------------------------------------
 class ImagenPublicacion(Base):
     __tablename__ = "imagenes_publicacion"
     __table_args__ = (
@@ -109,13 +127,14 @@ class ImagenPublicacion(Base):
 
     publicacion: Mapped["Publicacion"] = relationship(back_populates="imagenes")
 
-# ---------------------------------------------------------------------------
 # Reportes (FIX estado solo PENDIENTE/DESCARTADO/CONFIRMADO)
-# ---------------------------------------------------------------------------
 class ReportePublicacion(Base):
     __tablename__ = "reportes_publicacion"
     __table_args__ = (
-        CheckConstraint("motivo IN ('POSIBLE_ESTAFA','DATOS_FALSOS','INMUEBLE_ARRENDADO','FOTOS_ENGANOSAS','OTRO')", name="chk_motivo"),
+        CheckConstraint(
+            "motivo IN ('POSIBLE_ESTAFA','DATOS_FALSOS','INMUEBLE_ARRENDADO','FOTOS_ENGANOSAS','OTRO')",
+            name="chk_motivo",
+        ),
         CheckConstraint("estado IN ('PENDIENTE','DESCARTADO','CONFIRMADO')", name="chk_reporte_estado"),
         Index("idx_reportes_pub_estado", "publicacion_id", "estado"),
     )
@@ -127,20 +146,23 @@ class ReportePublicacion(Base):
     estado: Mapped[str] = mapped_column(String(20), default="PENDIENTE", nullable=False)
     fecha_creacion: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-# ---------------------------------------------------------------------------
 # Audit (FIX tabla faltante) - alineado a schema.sql
-# ---------------------------------------------------------------------------
 class PublicacionesAudit(Base):
     __tablename__ = "publicaciones_audit"
     __table_args__ = (
         # Historial: + SETTINGS (ajustes) y CUENTA_DELETE (soft-delete).
-        CheckConstraint("evento IN ('CREATED','APPROVED','REJECTED','PAUSED','RESUMED','RENTED','EXPIRED','RENEWED','BLOCKED','SETTINGS','CUENTA_DELETE')", name="chk_evento"),
+        CheckConstraint(
+            "evento IN ('CREATED','APPROVED','REJECTED','PAUSED','RESUMED','RENTED','EXPIRED','RENEWED','BLOCKED','SETTINGS','CUENTA_DELETE')",
+            name="chk_evento",
+        ),
         Index("idx_audit_pub", "publicacion_id"),
         Index("idx_audit_evento", "evento"),
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     # NULL cuando el acto no refiere a un aviso (SETTINGS, CUENTA_DELETE).
-    publicacion_id: Mapped[int | None] = mapped_column(ForeignKey("publicaciones.id", ondelete="CASCADE"), nullable=True)
+    publicacion_id: Mapped[int | None] = mapped_column(
+        ForeignKey("publicaciones.id", ondelete="CASCADE"), nullable=True
+    )
     usuario_id: Mapped[int | None] = mapped_column(ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
     evento: Mapped[str] = mapped_column(String(20), nullable=False)
     detalle: Mapped[str | None] = mapped_column(Text, nullable=True)

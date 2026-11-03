@@ -151,7 +151,12 @@ def _respuesta_creacion(nueva, trust: dict, rol: str | None, rol_actualizado: bo
     }
 
 
-@router.post("", response_model=PublicacionCreatedOut, status_code=status.HTTP_201_CREATED, summary="HU-005 Publicar oferta estructurada -> PENDIENTE (auto-promueve ESTUDIANTE)")
+@router.post(
+    "",
+    response_model=PublicacionCreatedOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="HU-005 Publicar oferta estructurada -> PENDIENTE (auto-promueve ESTUDIANTE)",
+)
 async def crear_publicacion(
     payload: PublicacionCreate,
     user: ClaimsUsuario = Depends(get_current_user),

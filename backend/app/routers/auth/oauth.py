@@ -77,9 +77,7 @@ async def _verificar_jwt_google(data: "GoogleCallbackIn") -> dict:
     return claims
 
 
-# ---------------------------------------------------------------------------
 # Google OAuth vía Supabase + identity linking anti-duplicados
-# ---------------------------------------------------------------------------
 @router.get("/oauth/google", summary="URL de login con Google (Supabase OAuth)")
 async def oauth_google_url(redirect_to: str | None = None):
     """Retorna la authorization URL. `redirect_to` opcional debe estar en la

@@ -32,17 +32,47 @@ async def metricas(
 
         dueno_ok = dueno_activo_clause(Publicacion)
         total = (await db.execute(select(func.count()).select_from(Publicacion).where(dueno_ok))).scalar() or 0
-        activas = (await db.execute(select(func.count()).select_from(Publicacion).where(Publicacion.estado == EstadoPublicacion.ACTIVO, dueno_ok))).scalar() or 0
-        pendientes = (await db.execute(select(func.count()).select_from(Publicacion).where(Publicacion.estado == EstadoPublicacion.PENDIENTE, dueno_ok))).scalar() or 0
-        rep_act = (await db.execute(select(func.count()).select_from(ReportePublicacion).where(ReportePublicacion.estado.in_([EstadoReporte.PENDIENTE, EstadoReporte.CONFIRMADO])))).scalar() or 0
-        rep_pen = (await db.execute(select(func.count()).select_from(ReportePublicacion).where(ReportePublicacion.estado == EstadoReporte.PENDIENTE))).scalar() or 0
+        activas = (
+            await db.execute(
+                select(func.count())
+                .select_from(Publicacion)
+                .where(Publicacion.estado == EstadoPublicacion.ACTIVO, dueno_ok)
+            )
+        ).scalar() or 0
+        pendientes = (
+            await db.execute(
+                select(func.count())
+                .select_from(Publicacion)
+                .where(Publicacion.estado == EstadoPublicacion.PENDIENTE, dueno_ok)
+            )
+        ).scalar() or 0
+        rep_act = (
+            await db.execute(
+                select(func.count())
+                .select_from(ReportePublicacion)
+                .where(ReportePublicacion.estado.in_([EstadoReporte.PENDIENTE, EstadoReporte.CONFIRMADO]))
+            )
+        ).scalar() or 0
+        rep_pen = (
+            await db.execute(
+                select(func.count())
+                .select_from(ReportePublicacion)
+                .where(ReportePublicacion.estado == EstadoReporte.PENDIENTE)
+            )
+        ).scalar() or 0
         # Inmuebles distintos con reportes PENDIENTE (usa idx_reportes_pub_estado).
         inmuebles_rep = (await db.execute(
             select(func.count(func.distinct(ReportePublicacion.publicacion_id))).where(
                 ReportePublicacion.estado == EstadoReporte.PENDIENTE)
         )).scalar() or 0
         vivos = Usuario.eliminado_en.is_(None)
-        verif = (await db.execute(select(func.count()).select_from(Usuario).where(Usuario.rol == Rol.ARRENDADOR, Usuario.telefono_verificado.is_(True), vivos))).scalar() or 0
+        verif = (
+            await db.execute(
+                select(func.count())
+                .select_from(Usuario)
+                .where(Usuario.rol == Rol.ARRENDADOR, Usuario.telefono_verificado.is_(True), vivos)
+            )
+        ).scalar() or 0
         users = (await db.execute(select(func.count()).select_from(Usuario).where(vivos))).scalar() or 0
         return MetricasOut(
             total_publicaciones=total, activas=activas, pendientes=pendientes,
@@ -69,7 +99,11 @@ async def pendientes(
     try:
         from app.models import Publicacion
 
-        total = (await db.execute(select(func.count()).select_from(Publicacion).where(Publicacion.estado == EstadoPublicacion.PENDIENTE))).scalar() or 0
+        total = (
+            await db.execute(
+                select(func.count()).select_from(Publicacion).where(Publicacion.estado == EstadoPublicacion.PENDIENTE)
+            )
+        ).scalar() or 0
         offset, size_norm = paginate_params(page, size)
         stmt = (
             select(Publicacion)

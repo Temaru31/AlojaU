@@ -1,5 +1,6 @@
 """Calcula índice confianza 0-100 (40+20+15+15+10) con desglose y nivel.
-Uso: routers/publicaciones.py::crear/list/detalle. Ej: calcular_indice(..., telefono_verificado=True, num_fotos=4, dias_vigencia=5, reportes_activos=0) -> {"indice": 95, ...}."""
+Uso: routers/publicaciones.py::crear/list/detalle.
+Ej: calcular_indice(..., telefono_verificado=True, num_fotos=4, dias_vigencia=5, reportes_activos=0) -> {"indice": 95, ...}."""
 
 from datetime import datetime, timezone
 from typing import Optional
@@ -69,7 +70,9 @@ def calcular_indice(
     Firma canónica Sprint1 (dónde se llama ver abajo).
 
     Returns:
-      {"indice": int 0-100, "desglose": {completitud, telefono, fotos, vigencia, reportes}, "nivel": str, "advertencia": str}
+      {"indice": int 0-100,
+       "desglose": {completitud, telefono, fotos, vigencia, reportes},
+       "nivel": str, "advertencia": str}
     """
     w_completitud = getattr(settings, "TRUST_WEIGHT_COMPLETITUD", 40)
     desglose = {

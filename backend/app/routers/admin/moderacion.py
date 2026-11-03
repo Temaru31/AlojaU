@@ -16,13 +16,23 @@ from app.services import publicacion_view as view
 from app.schemas.publicacion import PublicacionCardOut
 from app.core.db_utils import rollback_seguro
 from app.core.dominio import EstadoPublicacion
-from app.routers.admin.avisos_dueno import ESTADO_A_EVENTO, _evaluar_democion_dueno, _notificar_dueno_estado, _notificar_moderacion_in_app
+from app.routers.admin.avisos_dueno import (
+    ESTADO_A_EVENTO,
+    _evaluar_democion_dueno,
+    _notificar_dueno_estado,
+    _notificar_moderacion_in_app,
+)
 from app.routers.admin.esquemas import BulkEstadoIn, CambioEstadoIn
 
 logger = logging.getLogger("alojau.admin")
 router = APIRouter()
 
-@router.patch("/publicaciones/{pub_id}", response_model=PublicacionCardOut, summary="Admin cambiar estado (aprobar/rechazar/pausar)")
+
+@router.patch(
+    "/publicaciones/{pub_id}",
+    response_model=PublicacionCardOut,
+    summary="Admin cambiar estado (aprobar/rechazar/pausar)",
+)
 async def cambiar_estado(
     pub_id: int = Path(..., ge=1, le=1000000),
     payload: CambioEstadoIn = ...,

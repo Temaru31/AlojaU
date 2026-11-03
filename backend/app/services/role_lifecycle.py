@@ -18,9 +18,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dominio import EstadoPublicacion, Rol
 
-ESTADOS_VIGENTES = frozenset({
-    EstadoPublicacion.PENDIENTE, EstadoPublicacion.ACTIVO, EstadoPublicacion.PAUSADO, EstadoPublicacion.PAUSADO_POR_REPORTE, EstadoPublicacion.REVISION_REQUERIDA,
-})
+ESTADOS_VIGENTES = frozenset(
+    {
+        EstadoPublicacion.PENDIENTE,
+        EstadoPublicacion.ACTIVO,
+        EstadoPublicacion.PAUSADO,
+        EstadoPublicacion.PAUSADO_POR_REPORTE,
+        EstadoPublicacion.REVISION_REQUERIDA,
+    }
+)
 
 # Roles que la democión puede degradar. Fuera de aquí: intocables.
 ROLES_DEMOTABLES = frozenset({Rol.ARRENDADOR})

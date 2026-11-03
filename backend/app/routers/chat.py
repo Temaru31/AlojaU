@@ -142,6 +142,47 @@ async def _aplicar_limites(request: Request, authorization: str | None, rid: str
         raise
 
 
+async def _abrir_sesion_chat(gen, rid: str):
+    """Primera sesión del generador de solo lectura, o None si no hay (se responde apagado)."""
+    try:
+        return await gen.__anext__()
+    except HTTPException:
+        logger.error("[chat] rid=%s sin-sesion-chat", una_linea(rid, 40))
+    except Exception:
+        logger.error("[chat] rid=%s error-sesion", una_linea(rid, 40))
+    return None
+
+
+async def _turno(db, body: ChatIn) -> tuple[dict, str]:
+    """Llama al orquestador; ante fallo del LLM o interno, salida de respaldo. Devuelve (salida, resultado)."""
+    historial = [{"rol": t.rol, "texto": t.texto} for t in body.historial]
+    try:
+        sal = await orchestrator.conversar(
+            db, mensaje=body.mensaje, historial=historial,
+            proveedor=obtener_proveedor(), timeout_s=settings.CHAT_TIMEOUT_S)
+    except LLMError:
+        registrar_fallo_llm()
+        return _salida_fallback("llm-error"), "fallback-llm"
+    except Exception:
+        return _salida_fallback("error-interno"), "error-interno"
+    return sal, "ok"
+
+
+async def _cerrar_y_medir(gen, rid: str, t0: float, resultado: str,
+                          tools: list[str], eventos: list[str], msg_len: int) -> None:
+    """Cierra la sesión del chat y deja el log de métricas (nunca el texto del mensaje)."""
+    try:
+        await gen.aclose()
+    except Exception as e:
+        logger.warning("[chat] cierre del generador falló: %s", exc_resumen(e))
+    ms = int((time.monotonic() - t0) * 1000)
+    logger.info(
+        "[chat] rid=%s resultado=%s tools=%s eventos=%s ms=%s msg_len=%s",
+        una_linea(rid, 40), una_linea(resultado, 20),
+        una_linea(",".join(tools), 120), una_linea(",".join(eventos), 120),
+        ms, msg_len)
+
+
 @router.post("", response_model=ChatOut, summary="Chatbot (solo lectura)")
 async def conversar_chat(body: ChatIn, request: Request,
                          authorization: str | None = Header(None)):
@@ -161,27 +202,11 @@ async def conversar_chat(body: ChatIn, request: Request,
 
     # Sesión SEPARADA de solo lectura (rol chatbot_ro). Nunca la principal.
     gen = get_chat_session()
-    try:
-        db = await gen.__anext__()
-    except HTTPException:
-        logger.error("[chat] rid=%s sin-sesion-chat", una_linea(rid, 40))
-        return _respuesta_apagado(rid)
-    except Exception:
-        logger.error("[chat] rid=%s error-sesion", una_linea(rid, 40))
+    db = await _abrir_sesion_chat(gen, rid)
+    if db is None:
         return _respuesta_apagado(rid)
     try:
-        historial = [{"rol": t.rol, "texto": t.texto} for t in body.historial]
-        try:
-            sal = await orchestrator.conversar(
-                db, mensaje=body.mensaje, historial=historial,
-                proveedor=obtener_proveedor(), timeout_s=settings.CHAT_TIMEOUT_S)
-        except LLMError:
-            registrar_fallo_llm()
-            resultado = "fallback-llm"
-            sal = _salida_fallback("llm-error")
-        except Exception:
-            resultado = "error-interno"
-            sal = _salida_fallback("error-interno")
+        sal, resultado = await _turno(db, body)
         tools = [str(t)[:40] for t in (sal.get("tools_usadas") or [])]
         eventos = [str(e)[:40] for e in (sal.get("eventos") or [])]
         if "llm-error" not in eventos and "error-interno" not in eventos:
@@ -191,13 +216,4 @@ async def conversar_chat(body: ChatIn, request: Request,
                        acciones_sugeridas=_acciones_out(sal),
                        deshabilitado=False, request_id=rid)
     finally:
-        try:
-            await gen.aclose()
-        except Exception as e:
-            logger.warning("[chat] cierre del generador falló: %s", exc_resumen(e))
-        ms = int((time.monotonic() - t0) * 1000)
-        logger.info(
-            "[chat] rid=%s resultado=%s tools=%s eventos=%s ms=%s msg_len=%s",
-            una_linea(rid, 40), una_linea(resultado, 20),
-            una_linea(",".join(tools), 120), una_linea(",".join(eventos), 120),
-            ms, len(body.mensaje or ""))
+        await _cerrar_y_medir(gen, rid, t0, resultado, tools, eventos, len(body.mensaje or ""))

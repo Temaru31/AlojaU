@@ -7,9 +7,7 @@ from app.models.base import Base
 from app.models.preferencias import Preferencias
 
 
-# ---------------------------------------------------------------------------
 # Usuarios (v13: ESTUDIANTE base + ARRENDADOR + ADMIN + futuros roles)
-# ---------------------------------------------------------------------------
 class Usuario(Base):
     __tablename__ = "usuarios"
     __table_args__ = (
@@ -71,10 +69,8 @@ class Usuario(Base):
             raise TypeError("preferencias_obj debe ser Preferencias, dict o None")
 
 
-# ---------------------------------------------------------------------------
 # Enterprise Auth: rate-limit persistente, OTP, recovery y sesiones.
 # Tablas pequeñas, TTL por expiración, índices por (clave, creado).
-# ---------------------------------------------------------------------------
 class RateLimitAttempt(Base):
     """Intentos de login/recovery persistentes (sobreviven reinicios Render)."""
     __tablename__ = "rate_limit_attempts"

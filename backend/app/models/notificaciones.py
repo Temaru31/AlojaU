@@ -1,5 +1,19 @@
 """Vinculación de Telegram, búsquedas guardadas y notificaciones in-app."""
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, Numeric, UniqueConstraint, Index, func, text as sa_text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    Numeric,
+    UniqueConstraint,
+    Index,
+    func,
+    text as sa_text,
+)
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
@@ -30,12 +44,10 @@ class TelegramVinculo(Base):
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-# ---------------------------------------------------------------------------
 # Notificaciones in-app + búsquedas guardadas (mig 019, Fase 1).
 # Campanita: bandeja por usuario_id; matcher futuro filtra por precio,
 # campus/tipo/zona y servicios (@>); dedupe por evento_id (reintentos
 # seguros sin prohibir repeticiones futuras del mismo tipo).
-# ---------------------------------------------------------------------------
 class BusquedaGuardada(Base):
     __tablename__ = "busquedas_guardadas"
     __table_args__ = (

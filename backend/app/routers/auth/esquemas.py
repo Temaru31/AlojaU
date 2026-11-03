@@ -4,9 +4,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 from app.core.config import settings
 
 
-# ---------------------------------------------------------------------------
 # Esquemas
-# ---------------------------------------------------------------------------
 class RegisterIn(BaseModel):
     # Ingesta estricta: campos extra (rol, verificados...) se rechazan 422
     # en vez de ignorarse en silencio (anti mass-assignment por sondeo).

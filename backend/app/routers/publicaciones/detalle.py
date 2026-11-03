@@ -36,10 +36,46 @@ async def _db_rate_check_vista(db: AsyncSession, ip: str) -> None:
     except Exception:
         await rollback_seguro(db, "_db_rate_check_vista")
 
-@router.get("/{pub_id}", response_model=PublicacionDetailOut, summary="HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp")
+async def _exigir_detalle_visible(p, dueno, current_user) -> None:
+    """404 (sin filtrar existencia) si el aviso no es visible para quien consulta."""
+    # Ley 1581: dueño eliminado -> invisible salvo ADMIN
+    # (la búsqueda ya los excluye; esto cubre acceso directo por URL).
+    if (dueno is not None and getattr(dueno, "eliminado_en", None) is not None
+            and not (current_user and current_user.get("rol") == Rol.ADMIN)):
+        raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    # Detalle no-ACTIVO privado.
+    if p.estado != EstadoPublicacion.ACTIVO and not await es_dueno_o_admin(current_user, p.usuario_id):
+        raise HTTPException(status_code=404, detail="Publicación no encontrada")
+
+
+async def _referencia_campus(db: AsyncSession, pub_id: int, campus_id: int) -> tuple:
+    """Distancia y datos del lugar buscado: el mapa del Detalle se sincroniza a ESTE
+    punto (sin campus_id se usa la distancia mínima). Devuelve (dist_m, campus_ref)."""
+    from app.services.haversine import tiempo_pie_min
+
+    dist_ref, lugar = await repo.fetch_detail_campus_ref(db, pub_id, campus_id)
+    return dist_ref, {
+        "campus_id": lugar.id,
+        "institucion": lugar.institucion,
+        "nombre_sede": lugar.nombre_sede,
+        "latitud": float(lugar.latitud),
+        "longitud": float(lugar.longitud),
+        "dist_m": dist_ref,
+        "tiempo_pie_min": tiempo_pie_min(dist_ref),
+    }
+
+
+@router.get(
+    "/{pub_id}", response_model=PublicacionDetailOut, summary="HU-003 Detalle + HU-007 Índice + HU-008 WhatsApp"
+)
 async def get_publicacion(
     pub_id: int = Path(..., ge=1, le=1000000),
-    campus_id: Optional[int] = Query(None, ge=1, le=1000000, description="004 POIs: resuelve campus_ref (distancia a ESTE lugar) para sincronizar el mapa del Detalle"),
+    campus_id: Optional[int] = Query(
+        None,
+        ge=1,
+        le=1000000,
+        description="004 POIs: resuelve campus_ref (distancia a ESTE lugar) para sincronizar el mapa del Detalle",
+    ),
     db: AsyncSession = Depends(get_session),
     authorization: Optional[str] = Header(None),
 ):
@@ -54,31 +90,10 @@ async def get_publicacion(
     try:
         p, reportes_activos, u, dist_detalle = await repo.fetch_detail_bundle(db, pub_id)
         if p:
-            # Ley 1581: dueño eliminado -> invisible salvo ADMIN
-            # (la búsqueda ya los excluye; esto cubre acceso directo por URL).
-            if (u is not None and getattr(u, "eliminado_en", None) is not None
-                    and not (current_user and current_user.get("rol") == Rol.ADMIN)):
-                raise HTTPException(status_code=404, detail="Publicación no encontrada")
-            # Detalle no-ACTIVO privado (404 para no filtrar existencia).
-            if p.estado != EstadoPublicacion.ACTIVO and not await es_dueno_o_admin(current_user, p.usuario_id):
-                raise HTTPException(status_code=404, detail="Publicación no encontrada")
-            # 004 POIs: referencia al lugar buscado (el mapa del Detalle se
-            # sincroniza a ESTE punto; sin campus_id se usa la distancia mínima).
-            campus_ref = None
-            dist = dist_detalle
+            await _exigir_detalle_visible(p, u, current_user)
+            dist, campus_ref = dist_detalle, None
             if campus_id is not None:
-                from app.services.haversine import tiempo_pie_min
-                dist_ref, lugar = await repo.fetch_detail_campus_ref(db, pub_id, campus_id)
-                dist = dist_ref
-                campus_ref = {
-                    "campus_id": lugar.id,
-                    "institucion": lugar.institucion,
-                    "nombre_sede": lugar.nombre_sede,
-                    "latitud": float(lugar.latitud),
-                    "longitud": float(lugar.longitud),
-                    "dist_m": dist_ref,
-                    "tiempo_pie_min": tiempo_pie_min(dist_ref),
-                }
+                dist, campus_ref = await _referencia_campus(db, pub_id, campus_id)
             _dest_map = await repo.fetch_destacados_map(db, [p.id])
             _info = _dest_map.get(p.id)
             return view.build_detail(

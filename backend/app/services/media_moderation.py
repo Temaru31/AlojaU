@@ -51,7 +51,14 @@ def validar_imagen_local(filename: str, data: bytes) -> dict:
         im = Image.open(BytesIO(data))
         w, h = im.size
         if w < 200 or h < 200:
-            return {"ok": True, "kind": kind, "w": w, "h": h, "flag": "REVISION_REQUERIDA", "motivo": "muy pequeña, posible placeholder"}
+            return {
+                "ok": True,
+                "kind": kind,
+                "w": w,
+                "h": h,
+                "flag": "REVISION_REQUERIDA",
+                "motivo": "muy pequeña, posible placeholder",
+            }
         return {"ok": True, "kind": kind, "w": w, "h": h}
     except Exception:
         # Sin Pillow o imagen corrupta: acepta por magic-bytes pero pide revisión.

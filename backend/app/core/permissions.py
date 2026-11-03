@@ -31,9 +31,7 @@ from fastapi import Depends, HTTPException
 from app.core.dominio import Rol
 from app.core.security import ClaimsUsuario
 
-# ---------------------------------------------------------------------------
 # Catálogo de scopes (estable; añadir nuevos es aditivo y no rompe nada)
-# ---------------------------------------------------------------------------
 SCOPE_CATALOG: tuple[str, ...] = (
     "publications:read",
     "favorites:manage",

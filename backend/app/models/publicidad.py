@@ -1,17 +1,26 @@
 """Planes de publicidad y avisos destacados."""
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Integer, Text, Index, func, text as sa_text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Text,
+    Index,
+    func,
+    text as sa_text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
 from app.models.base import Base
 
 
-# ---------------------------------------------------------------------------
 # Publicidad: planes + destacados de publicaciones (mig 022, Fase 1).
 # Un destacado = una compra de visibilidad por días con pago manual v1
 # (pago_ref + aprobación admin). El historial nunca se borra: PENDIENTE
 # vencido -> VENCIDO vía job vencer_destacados(); el unique parcial
 # garantiza UN solo ACTIVO por publicación.
-# ---------------------------------------------------------------------------
 class PlanPublicidad(Base):
     __tablename__ = "planes_publicidad"
     __table_args__ = (

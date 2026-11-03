@@ -205,7 +205,9 @@ async def reemplazar_fotos(
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
-@router.patch("/{pub_id}/renovar", response_model=RenovacionOut, summary="PA-01 Renovar vigencia 30 días (solo propietario)")
+@router.patch(
+    "/{pub_id}/renovar", response_model=RenovacionOut, summary="PA-01 Renovar vigencia 30 días (solo propietario)"
+)
 async def renovar_publicacion(
     pub_id: int = Path(..., ge=1, le=1000000),
     db: AsyncSession = Depends(get_session),
@@ -238,7 +240,9 @@ async def renovar_publicacion(
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
-@router.delete("/{pub_id}", status_code=status.HTTP_200_OK, summary="Dueño: eliminar aviso (democión N->0 si queda sin inventario)")
+@router.delete(
+    "/{pub_id}", status_code=status.HTTP_200_OK, summary="Dueño: eliminar aviso (democión N->0 si queda sin inventario)"
+)
 async def eliminar_publicacion(
     pub_id: int = Path(..., ge=1, le=1000000),
     db: AsyncSession = Depends(get_session),
@@ -281,6 +285,23 @@ async def eliminar_publicacion(
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
+async def _aviso_pausable(db: AsyncSession, pub_id: int, user: ClaimsUsuario):
+    """Aviso propio (o ADMIN) en ACTIVO o PAUSADO: 404, 403 o 409 si no."""
+    from app.models import Publicacion
+
+    p = await db.get(Publicacion, pub_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    if not await es_dueno_o_admin(user, p.usuario_id):
+        raise HTTPException(status_code=403, detail="Solo el dueño puede cambiar el estado")
+    if p.estado not in (EstadoPublicacion.ACTIVO, EstadoPublicacion.PAUSADO):
+        raise HTTPException(
+            status_code=409,
+            detail=f"No se puede cambiar estado desde {p.estado} (solo ACTIVO<->PAUSADO)",
+        )
+    return p
+
+
 @router.patch("/{pub_id}/estado", summary="Dueño: pausar/reanudar aviso (ACTIVO<->PAUSADO)")
 async def cambiar_estado_dueno(
     pub_id: int = Path(..., ge=1, le=1000000),
@@ -301,18 +322,9 @@ async def cambiar_estado_dueno(
         raise HTTPException(status_code=422, detail="estado debe ser ACTIVO o PAUSADO")
     uid = id_propietario(user)
     try:
-        from app.models import Publicacion, PublicacionesAudit
+        from app.models import PublicacionesAudit
 
-        p = await db.get(Publicacion, pub_id)
-        if not p:
-            raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await es_dueno_o_admin(user, p.usuario_id):
-            raise HTTPException(status_code=403, detail="Solo el dueño puede cambiar el estado")
-        if p.estado not in (EstadoPublicacion.ACTIVO, EstadoPublicacion.PAUSADO):
-            raise HTTPException(
-                status_code=409,
-                detail=f"No se puede cambiar estado desde {p.estado} (solo ACTIVO<->PAUSADO)",
-            )
+        p = await _aviso_pausable(db, pub_id, user)
         if p.estado == nuevo:
             return {"id": p.id, "estado": p.estado, "rol": user.get("rol"),
                     "rol_actualizado": False, "mensaje": "Sin cambios."}

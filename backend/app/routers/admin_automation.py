@@ -182,7 +182,11 @@ async def evaluar_pub(
 
     try:
         umbral = 3
-        row = (await db.execute(select(SystemSetting).where(SystemSetting.clave == "max_reportes_para_pausa_automatica"))).scalars().first()
+        row = (
+            (await db.execute(select(SystemSetting).where(SystemSetting.clave == "max_reportes_para_pausa_automatica")))
+            .scalars()
+            .first()
+        )
         if row:
             try:
                 umbral = int(row.valor)

@@ -55,7 +55,9 @@ def _validate_mime_ext(file: UploadFile):
     # MIME exacto en lista blanca (sin startswith("image/"): colaba SVG).
     mime = (file.content_type or "").lower()
     if mime not in ALLOWED_MIME:
-        raise HTTPException(status_code=400, detail=f"Archivo {file.filename} no permitido (solo JPEG/PNG/WebP/GIF, SVG bloqueado)")
+        raise HTTPException(
+            status_code=400, detail=f"Archivo {file.filename} no permitido (solo JPEG/PNG/WebP/GIF, SVG bloqueado)"
+        )
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in ALLOWED_MIME[mime]:
         raise HTTPException(status_code=400, detail=f"Extensión {ext or '(sin extensión)'} no coincide con {mime}")

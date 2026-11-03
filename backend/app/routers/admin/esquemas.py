@@ -18,7 +18,9 @@ class MetricasOut(BaseModel):
 
 
 class CambioEstadoIn(BaseModel):
-    estado: Literal["ACTIVO", "RECHAZADO", "PAUSADO"] = Field(description="aprobar->ACTIVO, rechazar->RECHAZADO, pausar->PAUSADO")
+    estado: Literal["ACTIVO", "RECHAZADO", "PAUSADO"] = Field(
+        description="aprobar->ACTIVO, rechazar->RECHAZADO, pausar->PAUSADO"
+    )
 
 
 class BulkEstadoIn(BaseModel):

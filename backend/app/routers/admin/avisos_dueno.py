@@ -6,7 +6,11 @@ from app.core.dominio import EstadoPublicacion
 
 logger = logging.getLogger("alojau.admin")
 
-ESTADO_A_EVENTO = {EstadoPublicacion.ACTIVO: "APPROVED", EstadoPublicacion.RECHAZADO: "REJECTED", EstadoPublicacion.PAUSADO: "PAUSED"}
+ESTADO_A_EVENTO = {
+    EstadoPublicacion.ACTIVO: "APPROVED",
+    EstadoPublicacion.RECHAZADO: "REJECTED",
+    EstadoPublicacion.PAUSADO: "PAUSED",
+}
 
 
 async def _evaluar_democion_dueno(db: AsyncSession, dueno_id: int | None) -> bool:
