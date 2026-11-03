@@ -26,6 +26,41 @@ async def validate_fks(db: AsyncSession, zona_id: int | None, campus_ids: List[i
     return campus_ids, servicios_ids
 
 
+async def _distancia_a_campus(db: AsyncSession, campus_id: int, latitud, longitud) -> float | None:
+    """Distancia geodésica aviso→campus; None si falta alguna coordenada."""
+    from app.models import CampusUniversitario
+    from app.services.haversine import haversine_m
+
+    if latitud is None or longitud is None:
+        return None
+    campus = await db.get(CampusUniversitario, campus_id)
+    if campus is None or campus.latitud is None or campus.longitud is None:
+        return None
+    return haversine_m(float(latitud), float(longitud), float(campus.latitud), float(campus.longitud))
+
+
+async def _vincular_campus(db: AsyncSession, pub_id: int, campus_ids, latitud, longitud) -> None:
+    """Enlaza los campus elegidos con su distancia.
+
+    El trigger trg_publicacion_recalcular_distancias ya insertó filas para TODOS
+    los lugares activos en el flush anterior; reescribir las elegidas (mismo
+    valor) evita violar la PK (publicacion_id, campus_id).
+    """
+    from sqlalchemy import delete as sa_delete
+
+    from app.models import PublicacionCampus
+
+    await db.execute(
+        sa_delete(PublicacionCampus).where(
+            PublicacionCampus.publicacion_id == pub_id,
+            PublicacionCampus.campus_id.in_(campus_ids),
+        )
+    )
+    for cid in campus_ids:
+        dist = await _distancia_a_campus(db, cid, latitud, longitud)
+        db.add(PublicacionCampus(publicacion_id=pub_id, campus_id=cid, distancia_geodesica_m=dist))
+
+
 async def create_persisted(db, payload, user_id: int, trust: dict, campus_ids, servicios_ids):
     """Persiste PENDIENTE + links N:M + fotos + audit (requiere FK validadas).
     Uso: routers/publicaciones.py::crear_publicacion. Ej: nueva = await create_persisted(db, payload, 1, trust, [1], [1])."""
@@ -34,12 +69,9 @@ async def create_persisted(db, payload, user_id: int, trust: dict, campus_ids, s
     from app.models import (
         ImagenPublicacion,
         Publicacion,
-        PublicacionCampus,
         PublicacionServicio,
         PublicacionesAudit as PublicacionAudit,
     )
-    from app.services.haversine import haversine_m
-    from app.models import CampusUniversitario
 
     nueva = Publicacion(
         usuario_id=user_id,
@@ -60,26 +92,7 @@ async def create_persisted(db, payload, user_id: int, trust: dict, campus_ids, s
     )
     db.add(nueva)
     await db.flush()
-    # 004 POIs: el trigger trg_publicacion_recalcular_distancias ya insertó
-    # filas para TODOS los lugares activos en el flush anterior. Reescribir las
-    # elegidas (mismo valor) evita violar la PK (publicacion_id, campus_id).
-    from sqlalchemy import delete as sa_delete
-    await db.execute(
-        sa_delete(PublicacionCampus).where(
-            PublicacionCampus.publicacion_id == nueva.id,
-            PublicacionCampus.campus_id.in_(campus_ids),
-        )
-    )
-    for cid in campus_ids:
-        dist = None
-        if payload.latitud is not None and payload.longitud is not None:
-            campus = await db.get(CampusUniversitario, cid)
-            if campus is not None and campus.latitud is not None and campus.longitud is not None:
-                dist = haversine_m(
-                    float(payload.latitud), float(payload.longitud),
-                    float(campus.latitud), float(campus.longitud),
-                )
-        db.add(PublicacionCampus(publicacion_id=nueva.id, campus_id=cid, distancia_geodesica_m=dist))
+    await _vincular_campus(db, nueva.id, campus_ids, payload.latitud, payload.longitud)
     for sid in servicios_ids:
         db.add(PublicacionServicio(publicacion_id=nueva.id, servicio_id=sid))
     for idx, url in enumerate(payload.fotos, start=1):
@@ -88,6 +101,13 @@ async def create_persisted(db, payload, user_id: int, trust: dict, campus_ids, s
     await db.commit()
     await db.refresh(nueva)
     return nueva
+
+
+def _nueva_expiracion(fecha_anterior, now):
+    """30 días reales: desde la expiración si sigue vigente, o desde ahora si ya venció."""
+    from datetime import timedelta
+
+    return max(fecha_anterior, now) + timedelta(days=30)
 
 
 async def renovar_publicacion(db: AsyncSession, pub_id: int, user_id: int) -> dict:
@@ -107,45 +127,29 @@ async def renovar_publicacion(db: AsyncSession, pub_id: int, user_id: int) -> di
     Lanza HTTPException 404/403.
     """
     import json
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timezone
     from fastapi import HTTPException
     from app.models import Publicacion, PublicacionesAudit as PublicacionAudit
 
-    # 1. Cargar publicación (404 si no existe)
     p = await db.get(Publicacion, pub_id)
     if not p:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-
-    # 2. Verificar propiedad (403 si no es el dueño)
     if p.usuario_id != user_id:
         raise HTTPException(status_code=403, detail="No tienes permisos para renovar esta publicación.")
 
-    # 3. Calcular nueva fecha de expiración (30 días reales exactos)
     now = datetime.now(timezone.utc)
     fecha_anterior = p.fecha_expiracion
-
-    # Asegurar que fecha_anterior tiene tzinfo para comparar
     if fecha_anterior.tzinfo is None:
         fecha_anterior = fecha_anterior.replace(tzinfo=timezone.utc)
+    fecha_nueva = _nueva_expiracion(fecha_anterior, now)
 
-    if fecha_anterior > now:
-        # Publicación vigente: extender desde la fecha actual de expiración
-        fecha_nueva = fecha_anterior + timedelta(days=30)
-    else:
-        # Publicación vencida: nueva vigencia desde ahora
-        fecha_nueva = now + timedelta(days=30)
-
-    # 4. Actualizar estado si la publicación está EXPIRADA
     estado_anterior = p.estado
+    # RECHAZADO y DESACTIVADO conservan su estado por regla de negocio explícita.
     if p.estado == EstadoPublicacion.EXPIRADO:
         p.estado = EstadoPublicacion.ACTIVO
-    # RECHAZADO y DESACTIVADO conservan su estado por regla de negocio explícita
-
-    # 5. Actualizar fechas
     p.fecha_expiracion = fecha_nueva
     p.fecha_renovacion = now
 
-    # 6. Insertar fila de auditoría
     detalle = json.dumps({
         "fecha_expiracion_anterior": fecha_anterior.isoformat(),
         "fecha_expiracion_nueva": fecha_nueva.isoformat(),

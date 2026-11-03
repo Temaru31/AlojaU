@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import require_admin
+from app.core.security import require_admin, ClaimsUsuario
 from app.core.logseguro import exc_resumen
 from app.db.session import get_session
 
@@ -68,7 +68,7 @@ def _to_out(r) -> dict:
     }
 
 
-async def _auditar(db: AsyncSession, admin: dict, detalle: str) -> None:
+async def _auditar(db: AsyncSession, admin: ClaimsUsuario, detalle: str) -> None:
     try:
         from app.models import PublicacionesAudit
         db.add(PublicacionesAudit(
@@ -90,7 +90,7 @@ async def listar_publicos(db: AsyncSession = Depends(get_session)):
 @router_admin.get("", response_model=list[HousingOut], summary="Admin: listar todos los tipos")
 async def listar_admin(
     db: AsyncSession = Depends(get_session),
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
 ):
     try:
         from app.models import HousingType
@@ -108,7 +108,7 @@ async def listar_admin(
 async def crear_tipo(
     data: HousingCreateIn,
     db: AsyncSession = Depends(get_session),
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
 ):
     slug = _validar_slug(data.slug)
     try:
@@ -146,7 +146,7 @@ async def editar_tipo(
     slug: str = Path(..., min_length=3, max_length=40),
     data: HousingUpdateIn = ...,
     db: AsyncSession = Depends(get_session),
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
 ):
     slug = _validar_slug(slug)
     cambios = {k: v for k, v in data.model_dump().items() if v is not None}
@@ -184,7 +184,7 @@ async def editar_tipo(
 async def eliminar_tipo(
     slug: str = Path(..., min_length=3, max_length=40),
     db: AsyncSession = Depends(get_session),
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
 ):
     from fastapi import Response
     slug = _validar_slug(slug)

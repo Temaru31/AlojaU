@@ -4,10 +4,10 @@ from fastapi import APIRouter
 from typing import Optional
 from fastapi import Depends, Query, Path, HTTPException, Header, Request
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.routers.publicaciones.comun import select_con_relaciones
 from app.db.session import get_session
-from app.core.security import get_current_user, get_optional_user
+from app.core.security import get_current_user, get_optional_user, id_propietario, ClaimsUsuario
 from app.core.logseguro import exc_resumen
 from app.repositories import publicacion_repo as repo
 from app.services import publicacion_view as view
@@ -102,14 +102,12 @@ async def get_publicacion(
 async def historial_aviso(
     pub_id: int = Path(..., ge=1, le=1000000),
     db: AsyncSession = Depends(get_session),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
 ):
     """M4 historial del inmueble: eventos del aviso (creada, pausada,
     aprobada...) en orden cronológico. Solo dueño o ADMIN (401/403/404).
     """
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     try:
         from app.models import Publicacion, PublicacionesAudit
 
@@ -170,12 +168,7 @@ async def similares(
         else:
             return {"items": [], "total": 0}
         stmt = (
-            select(Publicacion)
-            .options(
-                selectinload(Publicacion.imagenes),
-                selectinload(Publicacion.servicios),
-                selectinload(Publicacion.zona),
-            )
+            select_con_relaciones()
             .where(*conds)
             .order_by(Publicacion.indice_confianza.desc(), Publicacion.id.asc())
             .limit(limit)

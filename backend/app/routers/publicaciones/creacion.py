@@ -7,7 +7,7 @@ from fastapi import Depends, HTTPException, status, Header
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_session
-from app.core.security import get_current_user
+from app.core.security import get_current_user, ClaimsUsuario, id_propietario
 from app.core.logseguro import exc_resumen
 from app.repositories import publicacion_repo as repo
 from app.services import publicacion_view as view
@@ -15,7 +15,8 @@ from app.schemas.publicacion import PublicacionCreate, PublicacionCreatedOut
 from app.core.db_utils import rollback_seguro
 from app.core.dominio import EstadoPublicacion, Rol
 from app.core.permissions import has_scope
-from app.routers.publicaciones.comun import _check_pub_rate_limit, _exigir_tipo_activo, _idem_guardar, _idem_replay, _idem_validar
+from app.routers.publicaciones.comun import IDEM_RUTA_CREAR, _check_pub_rate_limit, _exigir_tipo_activo
+from app.services import idempotencia
 
 logger = logging.getLogger("alojau.publicaciones")
 router = APIRouter(prefix="/api/publicaciones", tags=["publicaciones"])
@@ -30,7 +31,7 @@ class _Escritor:
     de_fuente_real: bool = False  # False: solo se conocen los claims del JWT
 
 
-async def _gate_escritura(db: AsyncSession, user: dict) -> tuple[dict, bool]:
+async def _gate_escritura(db: AsyncSession, user: ClaimsUsuario) -> tuple[dict, bool]:
     """Guard de escritura con el rol REAL (el claim del JWT puede estar rancio).
 
     Orden: cuenta no eliminada -> email confirmado -> teléfono vinculado ->
@@ -65,7 +66,7 @@ async def _gate_escritura(db: AsyncSession, user: dict) -> tuple[dict, bool]:
     return user, promovido
 
 
-async def _escritor_real(db: AsyncSession, user: dict) -> _Escritor:
+async def _escritor_real(db: AsyncSession, user: ClaimsUsuario) -> _Escritor:
     from app.models import Usuario
     try:
         res = await db.execute(select(Usuario).where(Usuario.id == user["id"]))
@@ -85,7 +86,7 @@ async def _escritor_real(db: AsyncSession, user: dict) -> _Escritor:
     return _Escritor(rol=user.get("rol"))
 
 
-async def _autopromover_estudiante(db: AsyncSession, user: dict) -> tuple[dict, bool]:
+async def _autopromover_estudiante(db: AsyncSession, user: ClaimsUsuario) -> tuple[dict, bool]:
     """ESTUDIANTE -> ARRENDADOR al publicar por primera vez."""
     if user.get("rol") != Rol.ESTUDIANTE:
         return user, False
@@ -153,7 +154,7 @@ def _respuesta_creacion(nueva, trust: dict, rol: str | None, rol_actualizado: bo
 @router.post("", response_model=PublicacionCreatedOut, status_code=status.HTTP_201_CREATED, summary="HU-005 Publicar oferta estructurada -> PENDIENTE (auto-promueve ESTUDIANTE)")
 async def crear_publicacion(
     payload: PublicacionCreate,
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
     # Reintento seguro. Sin header no hay replay (el cliente ya
     # no reintenta escrituras salvo con clave).
@@ -167,12 +168,11 @@ async def crear_publicacion(
     401 sin propietario válido, 403 sin email/scope o cuenta en borrado,
     400 sin teléfono, 422 tipo inválido, 404 FK inexistente, 503 sin BD.
     """
-    if not isinstance(user.get("id"), int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    id_propietario(user)
     user, rol_actualizado = await _gate_escritura(db, user)
-    clave_idem = _idem_validar(idempotency_key)
+    clave_idem = idempotencia.validar_clave(idempotency_key)
     if clave_idem:
-        previo = await _idem_replay(db, clave_idem, user["id"])
+        previo = await idempotencia.respuesta_previa(db, clave_idem, user["id"], IDEM_RUTA_CREAR)
         if previo is not None:
             return previo["cuerpo"]
     # Anti-flood tras el replay: los reintentos del cliente no queman cuota.
@@ -189,7 +189,7 @@ async def crear_publicacion(
             await _alertar_auto_aprobacion(db, nueva, payload, user["id"], campus_ids, servicios_ids)
         resp = _respuesta_creacion(nueva, trust, user.get("rol"), rol_actualizado, moderacion)
         if clave_idem:
-            ganador = await _idem_guardar(db, clave_idem, user["id"], resp)
+            ganador = await idempotencia.guardar_respuesta(db, clave_idem, user["id"], IDEM_RUTA_CREAR, resp)
             if ganador is not None:  # carrera: gana la respuesta ya guardada
                 return ganador["cuerpo"]
         return resp

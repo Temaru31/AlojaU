@@ -4,11 +4,10 @@ from fastapi import APIRouter
 from typing import Optional
 from fastapi import Depends, Query, HTTPException
 from sqlalchemy import select, func
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_session
 from app.core.config import settings
-from app.core.security import get_current_user
+from app.core.security import get_current_user, id_propietario, ClaimsUsuario
 from app.core.logseguro import exc_resumen
 from app.repositories import publicacion_repo as repo
 from app.services import publicacion_view as view
@@ -17,7 +16,7 @@ from app.core.pagination import paginate_params, build_paginated
 from app.core.db_utils import rollback_seguro
 from app.core.dominio import EstadoPublicacion
 from app.services.config_sistema import DEFAULTS
-from app.routers.publicaciones.comun import _exigir_tipo_activo
+from app.routers.publicaciones.comun import _exigir_tipo_activo, select_con_relaciones
 
 logger = logging.getLogger("alojau.publicaciones")
 router = APIRouter(prefix="/api/publicaciones", tags=["publicaciones"])
@@ -79,6 +78,29 @@ async def list_publicaciones(
         await rollback_seguro(db, "list_publicaciones")
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
+# Mismo orden lógico que el panel: ACTIVO primero, terminales al final.
+_ORDEN_ESTADOS_PANEL = [
+    EstadoPublicacion.ACTIVO, EstadoPublicacion.PENDIENTE, EstadoPublicacion.PAUSADO,
+    EstadoPublicacion.PAUSADO_POR_REPORTE, EstadoPublicacion.REVISION_REQUERIDA,
+    EstadoPublicacion.RECHAZADO, EstadoPublicacion.ARRENDADO,
+    EstadoPublicacion.EXPIRADO, EstadoPublicacion.DESACTIVADO,
+]
+
+
+def _orden_mis_publicaciones(orden: str) -> list:
+    """Columnas ORDER BY del panel del dueño: recientes (default), vistas o estado."""
+    from sqlalchemy import case
+
+    from app.models import Publicacion
+
+    if orden == "vistas":
+        return [Publicacion.vistas.desc(), Publicacion.id.desc()]
+    if orden == "estado":
+        rango = case({e: i for i, e in enumerate(_ORDEN_ESTADOS_PANEL)}, value=Publicacion.estado, else_=99)
+        return [rango.asc(), Publicacion.id.desc()]
+    return [Publicacion.id.desc()]
+
+
 @router.get("/mias", response_model=PaginatedPublicaciones, summary="UX Mis publicaciones del dueño (todos los estados, paginado)")
 async def mis_publicaciones(
     estado: Optional[str] = Query(None, pattern="^(ACTIVO|PENDIENTE|PAUSADO|PAUSADO_POR_REPORTE|REVISION_REQUERIDA|RECHAZADO|ARRENDADO|EXPIRADO|DESACTIVADO)$", description="Filtra por estado (default todos)"),
@@ -87,20 +109,16 @@ async def mis_publicaciones(
     orden: str = Query("recientes", pattern="^(recientes|vistas|estado)$",
                        description="Orden del panel: recientes (default), vistas desc o estado"),
     db: AsyncSession = Depends(get_session),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
 ):
     """Lista las publicaciones del usuario autenticado en TODOS los estados
     (ACTIVO + PENDIENTE en moderación + otros), paginado, con orden server-side
     (M6: el orden en cliente mentiría con paginación multipágina).
     Sin token -> 401. Cada dueño solo ve las suyas (filtro usuario_id).
     NOTA: declarada ANTES de /{pub_id} para que "mias" no caiga en el path param."""
-    uid = user.get("id")
-    # Token sin id entero válido -> 401 (nunca filtrar por dueño ajeno).
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     try:
         from app.models import Publicacion
-        from sqlalchemy import case as _case
 
         conds = [Publicacion.usuario_id == uid]
         if estado:
@@ -108,26 +126,9 @@ async def mis_publicaciones(
         total_stmt = select(func.count()).select_from(Publicacion).where(*conds)
         total = (await db.execute(total_stmt)).scalar() or 0
         offset, size_norm = paginate_params(page, size)
-        if orden == "vistas":
-            order_cols = [Publicacion.vistas.desc(), Publicacion.id.desc()]
-        elif orden == "estado":
-            # Mismo orden lógico que el panel (ACTIVO primero, terminales al final).
-            order_cols = [_case(
-                {e: i for i, e in enumerate([
-                    EstadoPublicacion.ACTIVO, EstadoPublicacion.PENDIENTE, EstadoPublicacion.PAUSADO, EstadoPublicacion.PAUSADO_POR_REPORTE,
-                    EstadoPublicacion.REVISION_REQUERIDA, EstadoPublicacion.RECHAZADO, EstadoPublicacion.ARRENDADO,
-                    EstadoPublicacion.EXPIRADO, EstadoPublicacion.DESACTIVADO])},
-                value=Publicacion.estado, else_=99,
-            ).asc(), Publicacion.id.desc()]
-        else:
-            order_cols = [Publicacion.id.desc()]
+        order_cols = _orden_mis_publicaciones(orden)
         stmt = (
-            select(Publicacion)
-            .options(
-                selectinload(Publicacion.imagenes),
-                selectinload(Publicacion.servicios),
-                selectinload(Publicacion.zona),
-            )
+            select_con_relaciones()
             .where(*conds)
             .order_by(*order_cols)
             .limit(size_norm)
@@ -153,16 +154,14 @@ async def mi_historial(
     page: int = Query(1, ge=1, le=1000),
     size: int = Query(20, ge=1, le=50),
     db: AsyncSession = Depends(get_session),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
 ):
     """Trazabilidad agregada: últimos eventos (creada, aprobada, pausada,
     renovada...) de TODOS los avisos del dueño, con título del aviso.
     Solo dueño (401/403 por contrato). Base del centro de notificaciones
     dentro de la app (ver docs/NOTIFICACIONES.md).
     """
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     try:
         from app.models import Publicacion, PublicacionesAudit
 

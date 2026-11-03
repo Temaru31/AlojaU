@@ -15,7 +15,6 @@ POST /api/publicaciones (tabla idempotency_keys, ruta propia).
 """
 from datetime import datetime, timezone, timedelta
 import logging
-import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, status
@@ -24,8 +23,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logseguro import exc_resumen
-from app.core.security import require_admin, require_arrendador
+from app.core.security import require_admin, require_arrendador, id_propietario, ClaimsUsuario
 from app.db.session import get_session
+from app.services import idempotencia
 from app.schemas.publicidad import (
     AdminDecisionIn,
     DestacarIn,
@@ -43,66 +43,6 @@ router_admin = APIRouter(prefix="/api/admin/publicidad", tags=["admin-publicidad
 
 # --- Idempotencia (espejo de POST publicar; ruta propia en la PK) ---
 IDEM_RUTA_DESTACAR = "POST /api/publicidad/destacar"
-IDEM_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
-IDEM_TTL_HORAS = 24
-
-
-def _idem_validar(clave: str | None) -> str | None:
-    if clave is None or not isinstance(clave, str):
-        return None
-    clave = clave.strip()
-    if not clave:
-        return None
-    if not IDEM_RE.match(clave):
-        raise HTTPException(status_code=422, detail="Idempotency-Key inválida (8-64 [A-Za-z0-9_-])")
-    return clave
-
-
-async def _idem_replay(db: AsyncSession, clave: str, uid: int) -> dict | None:
-    try:
-        from app.models import IdempotencyKey
-        row = await db.get(IdempotencyKey, (clave, uid, IDEM_RUTA_DESTACAR))
-        if row is None:
-            return None
-        exp = row.expira_en
-        if getattr(exp, "tzinfo", None) is None:
-            exp = exp.replace(tzinfo=timezone.utc)
-        if exp <= datetime.now(timezone.utc):
-            return None
-        return {"codigo": int(row.codigo), "cuerpo": dict(row.cuerpo)}
-    except HTTPException:
-        raise
-    except Exception:
-        await rollback_seguro(db, "_idem_replay")
-        return None
-
-
-async def _idem_guardar(db: AsyncSession, clave: str, uid: int, cuerpo: dict) -> dict | None:
-    import json as _json
-    limpio = _json.loads(_json.dumps(cuerpo, default=str))
-    expira = datetime.now(timezone.utc) + timedelta(hours=IDEM_TTL_HORAS)
-    try:
-        from app.models import IdempotencyKey
-        try:
-            await db.execute(
-                IdempotencyKey.__table__.delete().where(
-                    IdempotencyKey.expira_en < datetime.now(timezone.utc))
-            )
-        except Exception as e:
-            logger.warning("[idempotencia] limpieza de claves vencidas falló: %s", exc_resumen(e))
-        db.add(IdempotencyKey(
-            clave=clave, usuario_id=uid, ruta=IDEM_RUTA_DESTACAR,
-            codigo=201, cuerpo=limpio, expira_en=expira,
-        ))
-        await db.commit()
-        return None
-    except IntegrityError:
-        await rollback_seguro(db, "_idem_guardar")
-        return await _idem_replay(db, clave, uid)
-    except Exception as e:
-        await rollback_seguro(db, "_idem_guardar")
-        logger.warning(f"[idempotencia] destacar no se pudo guardar: {exc_resumen(e)}")
-        return None
 
 
 def _destacado_out(d, plan_nombre: str | None = None) -> dict:
@@ -143,11 +83,41 @@ async def listar_planes(db: AsyncSession = Depends(get_session)):
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
+async def _validar_destacable(db: AsyncSession, payload, uid: int):
+    """Plan activo y aviso propio en estado ACTIVO; devuelve (plan, publicación)."""
+    from app.models import PlanPublicidad, Publicacion
+
+    plan = await db.get(PlanPublicidad, payload.plan_id)
+    if not plan or not plan.activo:
+        raise HTTPException(status_code=404, detail="Plan no encontrado o inactivo")
+    pub = await db.get(Publicacion, payload.publicacion_id)
+    if not pub:
+        raise HTTPException(status_code=404, detail="Publicación no encontrada")
+    if int(pub.usuario_id) != int(uid):
+        raise HTTPException(status_code=403, detail="Solo el dueño puede destacar su aviso")
+    if pub.estado != EstadoPublicacion.ACTIVO:
+        raise HTTPException(status_code=409, detail="Solo se puede destacar una publicación ACTIVO")
+    return plan, pub
+
+
+async def _tiene_destacado_vigente(db: AsyncSession, pub_id: int, ahora: datetime) -> bool:
+    from app.models import PublicacionDestacado
+
+    vigentes = (await db.execute(
+        select(func.count()).select_from(PublicacionDestacado).where(
+            PublicacionDestacado.publicacion_id == pub_id,
+            PublicacionDestacado.estado.in_([EstadoDestacado.PENDIENTE, EstadoDestacado.ACTIVO]),
+            PublicacionDestacado.vence > ahora,
+        )
+    )).scalar() or 0
+    return bool(vigentes)
+
+
 @router.post("/destacar", response_model=DestacadoOut, status_code=status.HTTP_201_CREATED,
              summary="Destacar aviso propio (ARRENDADOR, dueño, pub ACTIVO)")
 async def destacar(
     payload: DestacarIn,
-    user: dict = Depends(require_arrendador),
+    user: ClaimsUsuario = Depends(require_arrendador),
     db: AsyncSession = Depends(get_session),
     idempotency_key: Optional[str] = Header(None),
 ):
@@ -157,36 +127,18 @@ async def destacar(
     inactivo, 409 si la pub no está ACTIVO o ya tiene destacado vigente.
     Misma Idempotency-Key -> replay del primer 201 (sin duplicar).
     """
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
-    clave = _idem_validar(idempotency_key)
+    uid = id_propietario(user)
+    clave = idempotencia.validar_clave(idempotency_key)
     if clave:
-        previo = await _idem_replay(db, clave, uid)
+        previo = await idempotencia.respuesta_previa(db, clave, uid, IDEM_RUTA_DESTACAR)
         if previo is not None:
             return previo["cuerpo"]
     try:
-        from app.models import PlanPublicidad, Publicacion, PublicacionDestacado
+        from app.models import PublicacionDestacado
 
-        plan = await db.get(PlanPublicidad, payload.plan_id)
-        if not plan or not plan.activo:
-            raise HTTPException(status_code=404, detail="Plan no encontrado o inactivo")
-        pub = await db.get(Publicacion, payload.publicacion_id)
-        if not pub:
-            raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if int(pub.usuario_id) != int(uid):
-            raise HTTPException(status_code=403, detail="Solo el dueño puede destacar su aviso")
-        if pub.estado != EstadoPublicacion.ACTIVO:
-            raise HTTPException(status_code=409, detail="Solo se puede destacar una publicación ACTIVO")
+        plan, pub = await _validar_destacable(db, payload, uid)
         ahora = datetime.now(timezone.utc)
-        vigentes = (await db.execute(
-            select(func.count()).select_from(PublicacionDestacado).where(
-                PublicacionDestacado.publicacion_id == pub.id,
-                PublicacionDestacado.estado.in_([EstadoDestacado.PENDIENTE, EstadoDestacado.ACTIVO]),
-                PublicacionDestacado.vence > ahora,
-            )
-        )).scalar() or 0
-        if vigentes:
+        if await _tiene_destacado_vigente(db, pub.id, ahora):
             raise HTTPException(status_code=409, detail="La publicación ya tiene un destacado vigente")
         d = PublicacionDestacado(
             publicacion_id=pub.id, plan_id=plan.id,
@@ -199,7 +151,7 @@ async def destacar(
         await db.refresh(d)
         resp = _destacado_out(d, plan.nombre)
         if clave:
-            ganador = await _idem_guardar(db, clave, uid, resp)
+            ganador = await idempotencia.guardar_respuesta(db, clave, uid, IDEM_RUTA_DESTACAR, resp)
             if ganador is not None:
                 return ganador["cuerpo"]
         return resp
@@ -214,13 +166,11 @@ async def destacar(
 
 @router.get("/mias", response_model=list[DestacadoOut], summary="Dueño: mis destacados (historial y estado)")
 async def mis_destacados(
-    user: dict = Depends(require_arrendador),
+    user: ClaimsUsuario = Depends(require_arrendador),
     db: AsyncSession = Depends(get_session),
 ):
     """Destacados creados por el dueño, más recientes primero. Sin token -> 401."""
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     try:
         from app.models import PlanPublicidad, PublicacionDestacado
 
@@ -239,7 +189,7 @@ async def mis_destacados(
 
 @router_admin.get("/pendientes", response_model=list[DestacadoOut], summary="Admin: destacados PENDIENTE")
 async def pendientes(
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
     db: AsyncSession = Depends(get_session),
 ):
     """Bandeja de aprobación (más antiguos primero). Solo ADMIN (401/403)."""
@@ -261,7 +211,7 @@ async def pendientes(
 
 @router_admin.post("/vencer", summary="Admin: job vencimiento de destacados")
 async def vencer(
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
     db: AsyncSession = Depends(get_session),
 ):
     """Marca VENCIDO los destacados con vence pasado (PENDIENTE/ACTIVO).
@@ -286,7 +236,7 @@ async def decidir(
     destacado_id: int = Path(..., ge=1, le=1000000),
     payload: AdminDecisionIn = ...,
     db: AsyncSession = Depends(get_session),
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
 ):
     """aprobar->ACTIVO (+audit APPROVED), rechazar->RECHAZADO (+REJECTED).
 

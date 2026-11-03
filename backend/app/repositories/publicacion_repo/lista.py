@@ -66,6 +66,24 @@ async def count_total(db: AsyncSession, conds, campus_id: Optional[int]) -> int:
     return (await db.execute(stmt)).scalar() or 0
 
 
+def _orden_resultados(tokens: list, fts_q, campus_id: Optional[int]) -> list:
+    """Orden tras los destacados: ts_rank (FTS) > tokens que casan > distancia al campus > id."""
+    from app.models import Publicacion, PublicacionCampus
+
+    if fts_q:
+        return [
+            ts_rank_order(Publicacion, fts_q),
+            tokens_relevance(Publicacion, tokens).desc() if tokens else Publicacion.id.asc(),
+            Publicacion.fecha_renovacion.desc(),
+            Publicacion.id.asc(),
+        ]
+    if tokens:
+        return [tokens_relevance(Publicacion, tokens).desc(), Publicacion.fecha_renovacion.desc(), Publicacion.id.asc()]
+    if campus_id:
+        return [PublicacionCampus.distancia_geodesica_m.asc().nullslast(), Publicacion.id.asc()]
+    return [Publicacion.id.asc()]
+
+
 async def fetch_page(db: AsyncSession, conds, campus_id: Optional[int], limit: int, offset: int, q: Optional[str] = None, q_mode: Optional[str] = None):
     """Página en SQL con orden determinista (distancia NULLS LAST + id).
 
@@ -93,40 +111,7 @@ async def fetch_page(db: AsyncSession, conds, campus_id: Optional[int], limit: i
             stmt.join(PublicacionCampus, PublicacionCampus.publicacion_id == Publicacion.id)
             .where(PublicacionCampus.campus_id == campus_id)
         )
-        if q_mode == "fts" and fts_q:
-            stmt = stmt.order_by(
-                _destacado_primero,
-                ts_rank_order(Publicacion, fts_q),
-                tokens_relevance(Publicacion, tokens).desc() if tokens else Publicacion.id.asc(),
-                Publicacion.fecha_renovacion.desc(),
-                Publicacion.id.asc(),
-            )
-        elif tokens:
-            stmt = stmt.order_by(
-                _destacado_primero,
-                tokens_relevance(Publicacion, tokens).desc(),
-                Publicacion.fecha_renovacion.desc(),
-                Publicacion.id.asc(),
-            )
-        else:
-            stmt = stmt.order_by(_destacado_primero, PublicacionCampus.distancia_geodesica_m.asc().nullslast(), Publicacion.id.asc())
-    elif q_mode == "fts" and fts_q:
-        stmt = stmt.order_by(
-            _destacado_primero,
-            ts_rank_order(Publicacion, fts_q),
-            tokens_relevance(Publicacion, tokens).desc() if tokens else Publicacion.id.asc(),
-            Publicacion.fecha_renovacion.desc(),
-            Publicacion.id.asc(),
-        )
-    elif tokens:
-        stmt = stmt.order_by(
-            _destacado_primero,
-            tokens_relevance(Publicacion, tokens).desc(),
-            Publicacion.fecha_renovacion.desc(),
-            Publicacion.id.asc(),
-        )
-    else:
-        stmt = stmt.order_by(_destacado_primero, Publicacion.id.asc())
+    stmt = stmt.order_by(_destacado_primero, *_orden_resultados(tokens, fts_q if q_mode == "fts" else None, campus_id))
     stmt = stmt.limit(limit).offset(offset)
     return (await db.execute(stmt)).scalars().unique().all()
 

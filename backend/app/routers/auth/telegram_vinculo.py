@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.security import get_current_user
+from app.core.security import get_current_user, id_propietario, ClaimsUsuario
 from app.core.config import settings
 from app.core.db_utils import rollback_seguro
 from app.core.logseguro import exc_resumen
@@ -93,7 +93,8 @@ def _desarmar_token_vinculo(token: str) -> tuple[int, int, str] | None:
             ):
                 return uid, exp, nonce
         return None
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
+        # Token no-str o firma con caracteres no ASCII (compare_digest): inválido.
         return None
 
 
@@ -119,7 +120,7 @@ def validar_token_vinculo(token: str) -> int | None:
         rec["usado"] = True
         _TELEGRAM_USADOS.add(nonce)
         return uid
-    except Exception:
+    except (ValueError, TypeError, AttributeError):
         return None
 
 
@@ -239,7 +240,7 @@ async def _enlace_vigente(db: AsyncSession, uid: int, username: str) -> tuple[st
 
 @router.post("/telegram/vincular-inicio", summary="M5: iniciar vinculación Telegram (bot_url HMAC 10min)")
 async def telegram_vincular_inicio(
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """Requiere sesión autenticada. Retorna bot_url t.me con token HMAC
@@ -248,9 +249,7 @@ async def telegram_vincular_inicio(
     Al generar uno nuevo se anulan los previos del mismo usuario (un solo
     enlace vivo a la vez: si el anterior se filtró, deja de valer).
     """
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     # Throttle 5/15min por usuario (memoria en dev + PG en prod).
     registrar_intento(_TG_MEM, f"tg:{uid}", TG_LIMIT, TG_WINDOW_S,
                    "Demasiadas vinculaciones de Telegram, espera 15 minutos")
@@ -278,7 +277,7 @@ async def telegram_vincular_inicio(
 
 @router.get("/telegram/enlace", summary="M5: enlace pre-generado del bot (deep link para <a>)")
 async def telegram_enlace(
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """Entrega el deep link `t.me/...?start=TOKEN` ya firmado.
@@ -290,9 +289,7 @@ async def telegram_enlace(
     válido (con el mismo throttle de vincular-inicio). Exige teléfono
     guardado (422 si no hay nada que verificar) y bot configurado (503).
     """
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     username = (settings.TELEGRAM_BOT_USERNAME or "").strip().lstrip("@")
     if not username:
         raise HTTPException(status_code=503, detail="Telegram no configurado (TELEGRAM_BOT_USERNAME). Vincula por correo.")
@@ -325,7 +322,7 @@ async def telegram_enlace(
 
 @router.post("/telegram/desvincular", summary="M5: desvincular Telegram y liberar el número")
 async def telegram_desvincular(
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """Libera el chat y el número de la cuenta: `telegram_chat_id=NULL`,
@@ -338,9 +335,7 @@ async def telegram_desvincular(
     pierde la verificación (+20 pts) y la capacidad de publicar hasta
     registrar otro número. Idempotente (repetirla no falla).
     """
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     # Caché L1 en memoria: invalida los vínculos previos del usuario.
     for _k, _v in list(_TELEGRAM_VINCULOS.items()):
         if _v.get("user_id") == uid and not _v.get("usado"):

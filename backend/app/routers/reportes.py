@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import get_optional_user, require_admin
+from app.core.security import get_optional_user, require_admin, ClaimsUsuario
 from app.core.logseguro import exc_resumen
 from app.db.session import get_session
 
@@ -144,7 +144,7 @@ async def crear_reporte(
 async def listar_reportes(
     estado: Optional[str] = Query(None, pattern="^(PENDIENTE|CONFIRMADO|DESCARTADO)$"),
     db: AsyncSession = Depends(get_session),
-    _admin: dict = Depends(require_admin),
+    _admin: ClaimsUsuario = Depends(require_admin),
     # Al final a propósito: llamadas directas existentes usan (estado, db, admin)
     # posicional. Cota defensiva sin cambiar el shape de respuesta.
     limit: int = Query(200, ge=1, le=500, description="Cota defensiva: la bandeja crece sin paginar"),
@@ -180,7 +180,7 @@ async def revisar_reporte(
     reporte_id: int,
     payload: ReporteAccionIn,
     db: AsyncSession = Depends(get_session),
-    _admin: dict = Depends(require_admin),
+    _admin: ClaimsUsuario = Depends(require_admin),
 ):
     """confirmar -> CONFIRMADO (revisado, procede) | descartar -> DESCARTADO. Solo desde PENDIENTE."""
     from app.models import ReportePublicacion

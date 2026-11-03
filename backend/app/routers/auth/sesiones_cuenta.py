@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import HTTPException, Depends, Request, Header
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.security import get_current_user
+from app.core.security import get_current_user, id_propietario, ClaimsUsuario
 from app.core.config import settings
 from app.core.db_utils import rollback_seguro
 from app.core.logseguro import exc_resumen
@@ -30,35 +30,32 @@ router = APIRouter()
 # Promoción dinámica ESTUDIANTE -> ARRENDADOR (al publicar)
 # ---------------------------------------------------------------------------
 async def promover_a_arrendador(db: AsyncSession, usuario_id: int) -> Optional[str]:
-    """Promueve a ARRENDADOR si era ESTUDIANTE. Retorna el rol final o None.
+    """Promueve a ARRENDADOR si era ESTUDIANTE. Retorna el rol final o None si el usuario no existe.
 
     v13.2: delega en role_lifecycle (row-lock); NO hace commit (lo hace el
     endpoint dueño de la transacción).
     """
-    try:
-        from app.services import role_lifecycle as _rl
-        return await _rl.promover_si_estudiante(db, usuario_id)
-    except Exception:
-        return None
+    from app.services import role_lifecycle as _rl
+    return await _rl.promover_si_estudiante(db, usuario_id)
 
 
 @router.post("/promover", summary="Promover mi cuenta a ARRENDADOR (desde ESTUDIANTE)")
-async def promoverme(user: dict = Depends(get_current_user),
+async def promoverme(user: ClaimsUsuario = Depends(get_current_user),
                      db: AsyncSession = Depends(get_session)):
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
-    rol = await promover_a_arrendador(db, uid)
-    if rol is not None:
+    uid = id_propietario(user)
+    try:
+        rol = await promover_a_arrendador(db, uid)
+        if rol is None:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
         # El helper no hace commit: lo hace el endpoint, dueño de la transacción.
-        try:
-            await db.commit()
-        except Exception as e:
-            await rollback_seguro(db, "promoverme")
-            logger.error("[auth promover] commit falló: %s", exc_resumen(e), exc_info=True)
-            raise HTTPException(status_code=503, detail="No se pudo actualizar tu rol, intenta de nuevo")
-    if rol is None:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        await db.commit()
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Un fallo de BD no es "usuario no encontrado": 503 reintentable.
+        await rollback_seguro(db, "promoverme")
+        logger.error("[auth promover] falló: %s", exc_resumen(e), exc_info=True)
+        raise HTTPException(status_code=503, detail="No se pudo actualizar tu rol, intenta de nuevo")
     return {"rol": rol, "mensaje": "Cuenta promovida a ARRENDADOR." if rol == Rol.ARRENDADOR else "Sin cambios."}
 
 
@@ -66,7 +63,7 @@ async def promoverme(user: dict = Depends(get_current_user),
 # Sesiones activas + revocación global ("cerrar en todos los dispositivos")
 # ---------------------------------------------------------------------------
 @router.get("/sesiones", response_model=list[SesionOut], summary="Listar sesiones activas")
-async def listar_sesiones(user: dict = Depends(get_current_user),
+async def listar_sesiones(user: ClaimsUsuario = Depends(get_current_user),
                           db: AsyncSession = Depends(get_session)):
     uid = user.get("id")
     actual_jti = user.get("jti")
@@ -90,7 +87,7 @@ async def listar_sesiones(user: dict = Depends(get_current_user),
 
 
 @router.post("/sesiones/revocar-todas", summary="Cerrar sesión en todos los dispositivos")
-async def revocar_sesiones(user: dict = Depends(get_current_user),
+async def revocar_sesiones(user: ClaimsUsuario = Depends(get_current_user),
                            db: AsyncSession = Depends(get_session)):
     uid = user.get("id")
     try:
@@ -114,10 +111,10 @@ def _claims_sin_verificar_revocacion(authorization: str | None) -> dict | None:
     parts = authorization.strip().split()
     if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
         return None
+    from app.core.security import decode_token
     try:
-        from app.core.security import decode_token
         return decode_token(parts[1].strip())
-    except Exception:
+    except HTTPException:  # decode_token traduce todo token inválido a 401
         return None
 
 
@@ -175,7 +172,7 @@ async def logout_todas(
 # ---------------------------------------------------------------------------
 @router.delete("/cuenta", summary="Eliminar mi cuenta (soft-delete 30 días)")
 async def eliminar_cuenta(data: CuentaEliminarIn,
-                          user: dict = Depends(get_current_user),
+                          user: ClaimsUsuario = Depends(get_current_user),
                           db: AsyncSession = Depends(get_session)):
     """Borrado con doble confirmación y período de gracia recuperable.
 
@@ -184,9 +181,7 @@ async def eliminar_cuenta(data: CuentaEliminarIn,
     Efecto: eliminado_en=ahora + sesiones revocadas. Purga física a los
     30 días (login/register la ejecutan si la gracia venció + endpoint admin).
     """
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     if normalizar_email(data.confirm_email) != normalizar_email(user.get("sub") or ""):
         raise HTTPException(status_code=422, detail="El correo de confirmación no coincide")
     try:

@@ -7,7 +7,7 @@ from fastapi import File, HTTPException, Depends, Request, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
-from app.core.security import get_current_user
+from app.core.security import get_current_user, id_propietario, ClaimsUsuario
 from app.core.config import settings
 from app.core.db_utils import rollback_seguro
 from app.core.logseguro import exc_resumen
@@ -79,7 +79,7 @@ def _perfil_out_db(u) -> "PerfilOut":
 # ---------------------------------------------------------------------------
 @router.get("/perfil", response_model=PerfilOut, summary="Obtener perfil del usuario autenticado")
 async def get_perfil(
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session)
 ):
     email = user.get("sub")
@@ -106,7 +106,7 @@ async def get_perfil(
 @router.patch("/perfil/password", summary="Cambiar contraseña (requiere la actual)")
 async def cambiar_password(
     data: PasswordChangeIn,
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     import re as _re
@@ -151,7 +151,7 @@ async def cambiar_password(
 
 @router.post("/perfil/solicitud-verificacion", status_code=202, summary="Solicitar verificación de teléfono")
 async def solicitar_verificacion(
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     return {"mensaje": "Solicitud registrada. Un administrador verificará tu línea.", "estado": "PENDIENTE"}
@@ -181,7 +181,7 @@ AVATAR_WINDOW_S = 3600.0
 async def subir_avatar(
     request: Request,
     file: UploadFile = File(..., description="Imagen de perfil, max 5MB, JPEG/PNG/WebP/GIF"),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """M3 endpoint dedicado (no reutiliza /upload/una que exige ARRENDADOR).
@@ -192,55 +192,49 @@ async def subir_avatar(
     return await _avatar_guardar(request, file, user, db)
 
 
-async def _avatar_guardar(
-    request,
-    file,
-    user: dict,
-    db: AsyncSession,
-) -> dict:
+# Firma mínima del contenido por MIME (misma política que uploads.py, sin Pillow).
+_AVATAR_FIRMAS = {
+    "image/jpeg": (lambda c: c.startswith(b"\xff\xd8\xff"), "Contenido no es JPEG válido"),
+    "image/png": (lambda c: c.startswith(b"\x89PNG\r\n\x1a\n"), "Contenido no es PNG válido"),
+    "image/gif": (lambda c: c.startswith((b"GIF87a", b"GIF89a")), "Contenido no es GIF válido"),
+    "image/webp": (lambda c: c[:4] == b"RIFF" and c[8:12] == b"WEBP", "Contenido no es WebP válido"),
+}
+
+
+def _validar_formato_avatar(file) -> tuple[str, str]:
+    """MIME permitido y extensión coherente con él; devuelve (mime, ext)."""
     import os as _os
-    import uuid as _uuid
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
     mime = (getattr(file, "content_type", "") or "").lower()
     if mime not in _AVATAR_MIME:
         raise HTTPException(status_code=400, detail="Solo imágenes JPEG/PNG/WebP/GIF (SVG bloqueado)")
     ext = _os.path.splitext(getattr(file, "filename", "") or "")[1].lower()
     if ext != _AVATAR_MIME[mime]:
         raise HTTPException(status_code=400, detail=f"Extensión {ext or '(sin extensión)'} no coincide con {mime}")
-    # Throttle tras validar forma (los 400 no queman cuota ni
-    # disco) y antes de leer bytes/guardar. 10/hora por usuario.
-    registrar_intento(_AVATAR_MEM, f"avatar:{uid}", AVATAR_LIMIT, AVATAR_WINDOW_S,
-                   "Demasiadas subidas de avatar, espera 1 hora")
-    await verificar_intentos_fallidos(db, f"avatar:{uid}", limite=AVATAR_LIMIT, ventana_s=int(AVATAR_WINDOW_S))
+    return mime, ext
+
+
+async def _leer_avatar(file, mime: str) -> bytes:
+    """Lee por bloques: firma del primer bloque, tope de 5MB y rechazo de vacíos."""
+    es_valido, error_firma = _AVATAR_FIRMAS[mime]
     size = 0
     chunks: list[bytes] = []
-    first = True
-    while True:
-        chunk = await file.read(1024 * 1024)
-        if not chunk:
-            break
-        if first:
-            # Magic check mínimo (misma política que uploads.py, sin Pillow).
-            if mime == "image/jpeg" and not chunk.startswith(b"\xff\xd8\xff"):
-                raise HTTPException(status_code=400, detail="Contenido no es JPEG válido")
-            if mime == "image/png" and not chunk.startswith(b"\x89PNG\r\n\x1a\n"):
-                raise HTTPException(status_code=400, detail="Contenido no es PNG válido")
-            if mime == "image/gif" and not (chunk.startswith(b"GIF87a") or chunk.startswith(b"GIF89a")):
-                raise HTTPException(status_code=400, detail="Contenido no es GIF válido")
-            if mime == "image/webp" and not (chunk[:4] == b"RIFF" and chunk[8:12] == b"WEBP"):
-                raise HTTPException(status_code=400, detail="Contenido no es WebP válido")
-            first = False
+    while chunk := await file.read(1024 * 1024):
+        if not chunks and not es_valido(chunk):
+            raise HTTPException(status_code=400, detail=error_firma)
         size += len(chunk)
         if size > _AVATAR_MAX:
             raise HTTPException(status_code=413, detail="La imagen excede 5MB")
         chunks.append(chunk)
     if size == 0:
         raise HTTPException(status_code=400, detail="Archivo vacío")
-    content = b"".join(chunks)
+    return b"".join(chunks)
+
+
+async def _subir_avatar(request, content: bytes, ext: str, mime: str) -> str:
+    """Guarda en el storage configurado (disco/Cloudinary) y devuelve la URL pública."""
+    import uuid as _uuid
     try:
-        from app.services.storage import get_storage_backend, es_persistente
+        from app.services.storage import get_storage_backend
         base = str(request.base_url).rstrip("/") if request is not None else ""
         backend = get_storage_backend(base_url=base or "http://localhost")
         # Disco local en prod = EFÍMERO (Render lo borra al redeploy). No se
@@ -248,31 +242,33 @@ async def _avatar_guardar(
         if getattr(backend, "name", "") == "local" and getattr(settings, "ENV", "dev") == "prod":
             logger.warning("[avatar] prod con disco EFÍMERO (sin CLOUDINARY_*): el avatar se perderá al redeploy")
         filename = f"avatar-{_uuid.uuid4().hex}{ext}"
-        # Subida (disco/Cloudinary) fuera del event loop: puede tardar segundos.
-        url = await asyncio.to_thread(backend.save, content, filename, mime)
+        # Subida fuera del event loop: puede tardar segundos.
+        return await asyncio.to_thread(backend.save, content, filename, mime)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"[avatar storage] falló: {exc_resumen(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="No se pudo guardar la imagen")
-    # Misma transacción: actualiza foto_perfil_url en BD.
+
+
+async def _persistir_avatar(db: AsyncSession, uid: int, url: str) -> dict:
+    """Actualiza foto_perfil_url; si falla, borra el archivo recién subido (huérfano)."""
     try:
         from app.models import Usuario
         u = await db.get(Usuario, uid)
         if not u:
             borrar_local_si_huerfano(url)
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
-        else:
-            anterior = u.foto_perfil_url
-            u.foto_perfil_url = url[:500]
-            await db.commit()
-            await db.refresh(u)
-            # Registra el intento (cuota) y borra el avatar previo si era
-            # archivo local (el reemplazo lo deja huérfano).
-            await registrar_intento_persistente(db, f"avatar:{uid}", False)
-            if anterior and anterior != u.foto_perfil_url:
-                borrar_local_si_huerfano(anterior)
-            return {"foto_perfil_url": u.foto_perfil_url, "mensaje": "Foto de perfil actualizada."}
+        anterior = u.foto_perfil_url
+        u.foto_perfil_url = url[:500]
+        await db.commit()
+        await db.refresh(u)
+        # Registra el intento (cuota) y borra el avatar previo si era
+        # archivo local (el reemplazo lo deja huérfano).
+        await registrar_intento_persistente(db, f"avatar:{uid}", False)
+        if anterior and anterior != u.foto_perfil_url:
+            borrar_local_si_huerfano(anterior)
+        return {"foto_perfil_url": u.foto_perfil_url, "mensaje": "Foto de perfil actualizada."}
     except HTTPException:
         raise
     except Exception as e:
@@ -282,9 +278,22 @@ async def _avatar_guardar(
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
+async def _avatar_guardar(request, file, user: ClaimsUsuario, db: AsyncSession) -> dict:
+    uid = id_propietario(user)
+    mime, ext = _validar_formato_avatar(file)
+    # Throttle tras validar forma (los 400 no queman cuota ni
+    # disco) y antes de leer bytes/guardar. 10/hora por usuario.
+    registrar_intento(_AVATAR_MEM, f"avatar:{uid}", AVATAR_LIMIT, AVATAR_WINDOW_S,
+                      "Demasiadas subidas de avatar, espera 1 hora")
+    await verificar_intentos_fallidos(db, f"avatar:{uid}", limite=AVATAR_LIMIT, ventana_s=int(AVATAR_WINDOW_S))
+    content = await _leer_avatar(file, mime)
+    url = await _subir_avatar(request, content, ext, mime)
+    return await _persistir_avatar(db, uid, url)
+
+
 @router.delete("/avatar", summary="M3: quitar foto (muestra iniciales)")
 async def quitar_avatar(
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """Setea foto_perfil_url=null (el frontend muestra iniciales).
@@ -292,9 +301,7 @@ async def quitar_avatar(
     Bloque 1: también borra el archivo local anterior (quitar dejaba el
     archivo huérfano ocupando disco para siempre).
     """
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     try:
         from app.models import Usuario
         u = await db.get(Usuario, uid)
@@ -316,7 +323,7 @@ async def quitar_avatar(
 @router.patch("/perfil", response_model=PerfilOut, summary="Actualizar nombre y teléfono (verificación solo-lectura)")
 async def update_perfil(
     data: PerfilUpdateIn,
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session)
 ):
     email = user.get("sub")

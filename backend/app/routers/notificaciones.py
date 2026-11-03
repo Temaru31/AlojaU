@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import get_current_user
+from app.core.security import get_current_user, id_propietario, ClaimsUsuario
 from app.core.logseguro import exc_resumen
 from app.core.pagination import paginate_params
 from app.db.session import get_session
@@ -115,10 +115,8 @@ def _b_out(b) -> dict:
             "activa": bool(b.activa), "created_at": b.created_at}
 
 
-def _uid(user: dict) -> int:
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+def _uid(user: ClaimsUsuario) -> int:
+    uid = id_propietario(user)
     return uid
 
 
@@ -130,7 +128,7 @@ async def listar(
     page: int = Query(1, ge=1, le=1000),
     size: int = Query(9, ge=1, le=50),
     solo_no_leidas: bool = Query(False),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """Paginado ≤50 + conteo de no leídas. Sin escrituras (ni purga)."""
@@ -164,7 +162,7 @@ async def listar(
 
 @router.patch("/leer-todas", summary="Marcar toda la bandeja como leída")
 async def leer_todas(
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """Un UPDATE por usuario. Declarada ANTES de /{id}/leer (orden de rutas)."""
@@ -191,7 +189,7 @@ async def leer_todas(
 @router.patch("/{nid}/leer", response_model=NotificacionOut, summary="Marcar una como leída")
 async def leer_una(
     nid: int = Path(..., ge=1),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """404 si no existe, 403 si es ajena (IDOR)."""
@@ -224,7 +222,7 @@ async def leer_una(
                        summary="Guardar alerta (tope 10 activas)")
 async def crear_busqueda(
     data: BusquedaIn,
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """Valida tope anti-abuso + FKs de catálogo. 422 con guía si algo falla."""
@@ -274,7 +272,7 @@ async def crear_busqueda(
 
 @router_busquedas.get("", summary="Listar mis alertas")
 async def listar_busquedas(
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """Todas las mías (≤10 activas + inactivas), recientes primero."""
@@ -297,7 +295,7 @@ async def listar_busquedas(
 @router_busquedas.delete("/{bid}", summary="Eliminar una alerta propia")
 async def eliminar_busqueda(
     bid: int = Path(..., ge=1),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """Borrado físico (config propia, sin auditoría): 404/403. Las

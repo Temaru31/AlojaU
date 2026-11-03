@@ -14,7 +14,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request, Path
 from pydantic import BaseModel
 
-from app.core.security import get_current_user, require_arrendador
+from app.core.security import get_current_user, require_arrendador, id_propietario, ClaimsUsuario
 from app.services.storage import get_storage_backend
 from app.db.session import get_session
 from sqlalchemy import select
@@ -98,11 +98,9 @@ def _check_upload_rate_limit(uid: int) -> None:
 async def upload_fotos(
     request: Request,
     files: List[UploadFile] = File(..., description="3-10 imágenes, cada una max 5MB, image/*"),
-    user: dict = Depends(require_arrendador),
+    user: ClaimsUsuario = Depends(require_arrendador),
 ):
-    uid_t = user.get("id")
-    if not isinstance(uid_t, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid_t = id_propietario(user)
     _check_upload_rate_limit(uid_t)
     if len(files) < MIN_FILES:
         raise HTTPException(status_code=422, detail=f"Mínimo {MIN_FILES} fotos (HU-005 C2), recibidas {len(files)}")
@@ -151,15 +149,13 @@ async def upload_fotos(
 async def upload_una_foto(
     request: Request,
     file: UploadFile = File(..., description="1 imagen, max 5MB, image/*"),
-    user: dict = Depends(require_arrendador),
+    user: ClaimsUsuario = Depends(require_arrendador),
 ):
     """v15.2 paso 1 del gestor: UNA foto (el /upload grupal exige 3-10).
 
     Misma validación (MIME+magic+5MB+uuid). Respuesta compatible UploadOut.
     """
-    uid_1 = user.get("id")
-    if not isinstance(uid_1, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid_1 = id_propietario(user)
     _check_upload_rate_limit(uid_1)
     ext = _validate_mime_ext(file)
     mime = (file.content_type or "").lower()
@@ -190,15 +186,13 @@ async def upload_una_foto(
 async def eliminar_foto(
     foto_id: int = Path(..., ge=1),
     db: AsyncSession = Depends(get_session),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
 ):
     """v15.2 gestión multimedia. Solo dueño o ADMIN. Reordena `orden`
     contiguamente tras borrar (misma transacción). 401/403/404."""
     from app.models import ImagenPublicacion, Publicacion
 
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     try:
         img = await db.get(ImagenPublicacion, foto_id)
         if not img:
@@ -251,7 +245,7 @@ class VincularIn(BaseModel):
 async def reordenar_fotos(
     data: OrdenIn,
     db: AsyncSession = Depends(get_session),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
 ):
     """v15.2 portada = primer id de `orden_ids` (pasa a orden=1).
 
@@ -260,9 +254,7 @@ async def reordenar_fotos(
     """
     from app.models import ImagenPublicacion, Publicacion
 
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     if not data.orden_ids:
         raise HTTPException(status_code=422, detail="orden_ids vacío")
     try:
@@ -303,16 +295,14 @@ async def reordenar_fotos(
 async def vincular_fotos(
     data: VincularIn,
     db: AsyncSession = Depends(get_session),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
 ):
     """v15.2 paso 2 del gestor multimedia: tras `POST /upload`, vincula las
     URLs como filas `ImagenPublicacion` (orden consecutivo, máx 10 en total).
     Solo dueño o ADMIN. 401/403/404/422."""
     from app.models import ImagenPublicacion, Publicacion
 
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     urls = [str(u or "").strip()[:500] for u in (data.urls or []) if str(u or "").strip()]
     if not urls:
         raise HTTPException(status_code=422, detail="urls vacío")

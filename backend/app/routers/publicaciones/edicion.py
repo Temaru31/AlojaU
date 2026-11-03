@@ -3,10 +3,9 @@ import logging
 from fastapi import APIRouter
 from fastapi import Depends, Path, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_session
-from app.core.security import get_current_user
+from app.core.security import get_current_user, id_propietario, ClaimsUsuario
 from app.core.logseguro import exc_resumen
 from app.repositories import publicacion_repo as repo
 from app.services import publicacion_view as view
@@ -15,17 +14,53 @@ from pydantic import BaseModel, Field
 from app.core.db_utils import rollback_seguro
 from app.core.dominio import EstadoPublicacion
 from app.core.security import es_dueno_o_admin
-from app.routers.publicaciones.comun import _exigir_tipo_activo
+from app.routers.publicaciones.comun import _exigir_tipo_activo, select_con_relaciones
 
 logger = logging.getLogger("alojau.publicaciones")
 router = APIRouter(prefix="/api/publicaciones", tags=["publicaciones"])
+
+async def _exigir_servicios_existentes(db: AsyncSession, servicios_ids: list[int]) -> None:
+    from app.models import ServicioCatalogo
+
+    for sid in servicios_ids:
+        if not await db.get(ServicioCatalogo, sid):
+            raise HTTPException(status_code=404, detail=f"servicio_id {sid} no existe")
+
+
+async def _reemplazar_servicios(db: AsyncSession, pub_id: int, servicios_ids: list[int]) -> None:
+    """Reemplazo total de las etiquetas del aviso (sin commit)."""
+    from app.models import PublicacionServicio
+
+    await db.execute(
+        PublicacionServicio.__table__.delete().where(
+            PublicacionServicio.publicacion_id == pub_id)
+    )
+    for sid in servicios_ids:
+        db.add(PublicacionServicio(publicacion_id=pub_id, servicio_id=sid))
+
+
+async def _tarjeta_recien_editada(db: AsyncSession, p) -> PublicacionCardOut:
+    """Relee el aviso con sus relaciones (refresh() no las recarga en async) y arma la tarjeta.
+
+    La sesión usa expire_on_commit=False: el DELETE Core no invalida la
+    colección ORM en el identity map y el re-read la traería rancia, así que
+    se expira explícitamente. AsyncSession.expire es síncrono (sin await).
+    """
+    from app.models import Publicacion
+
+    db.expire(p, ["servicios"])
+    stmt = select_con_relaciones().where(Publicacion.id == p.id)
+    p = (await db.execute(stmt)).scalars().unique().one()
+    rep_map, users_map, _ = await repo.fetch_page_aggregates(db, [p], None)
+    return view.cards_for_page([p], rep_map, users_map, {}, None, True)[0]
+
 
 @router.patch("/{pub_id}", response_model=PublicacionCardOut, summary="UX Editar aviso del dueño (solo owner/ADMIN)")
 async def editar_publicacion(
     pub_id: int = Path(..., ge=1, le=1000000),
     payload: PublicacionUpdate = ...,
     db: AsyncSession = Depends(get_session),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
 ):
     """Edición parcial del dueño: escalares + `servicios_ids` opcional
     (reemplazo total de etiquetas, con FK validadas). Las fotos van por
@@ -45,7 +80,7 @@ async def editar_publicacion(
     if "tipo_inmueble" in cambios:
         await _exigir_tipo_activo(db, cambios["tipo_inmueble"], "tipo_inmueble")
     try:
-        from app.models import Publicacion, PublicacionServicio, ServicioCatalogo
+        from app.models import Publicacion
 
         p = await db.get(Publicacion, pub_id)
         if not p:
@@ -53,40 +88,15 @@ async def editar_publicacion(
         if not await es_dueno_o_admin(user, p.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede editar")
         if servicios_nuevos is not None:
-            for sid in servicios_nuevos:
-                if not await db.get(ServicioCatalogo, sid):
-                    raise HTTPException(status_code=404, detail=f"servicio_id {sid} no existe")
+            await _exigir_servicios_existentes(db, servicios_nuevos)
         for k, v in cambios.items():
             setattr(p, k, v)
         if servicios_nuevos is not None:
-            await db.execute(
-                PublicacionServicio.__table__.delete().where(
-                    PublicacionServicio.publicacion_id == pub_id)
-            )
-            for sid in servicios_nuevos:
-                db.add(PublicacionServicio(publicacion_id=pub_id, servicio_id=sid))
+            await _reemplazar_servicios(db, pub_id, servicios_nuevos)
         if fotos_nuevas is not None:
             await _reconciliar_fotos_urls(db, pub_id, list(fotos_nuevas))
         await db.commit()
-        # La sesión usa expire_on_commit=False: el DELETE Core no invalida la
-        # colección ORM en el identity map y el re-read la traería rancia.
-        # Se expira explícitamente antes de releer con eager loading.
-        # OJO: AsyncSession.expire es síncrono (no lleva await; await None
-        # lanzaría TypeError y respondería 503 en vez de 422).
-        db.expire(p, ["servicios"])
-        # Re-lee con eager loading (refresh() no recarga relaciones en async).
-        stmt = (
-            select(Publicacion)
-            .options(
-                selectinload(Publicacion.imagenes),
-                selectinload(Publicacion.servicios),
-                selectinload(Publicacion.zona),
-            )
-            .where(Publicacion.id == pub_id)
-        )
-        p = (await db.execute(stmt)).scalars().unique().one()
-        rep_map, users_map, _ = await repo.fetch_page_aggregates(db, [p], None)
-        return view.cards_for_page([p], rep_map, users_map, {}, None, True)[0]
+        return await _tarjeta_recien_editada(db, p)
     except HTTPException:
         await rollback_seguro(db, "editar_publicacion")
         raise
@@ -145,7 +155,7 @@ async def reemplazar_fotos(
     pub_id: int = Path(..., ge=1, le=1000000),
     payload: FotosSetIn = ...,
     db: AsyncSession = Depends(get_session),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
 ):
     """M4 edición bufferizada: el frontend acumula altas/bajas/reorden en
     estado local y commitea UNA vez aquí (1 transacción: altas + bajas +
@@ -165,9 +175,7 @@ async def reemplazar_fotos(
     for u in urls:
         if not (u.startswith("https://") or u.startswith("http://")):
             raise HTTPException(status_code=422, detail="URLs deben ser http(s)")
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     try:
         from app.models import ImagenPublicacion, Publicacion
 
@@ -201,7 +209,7 @@ async def reemplazar_fotos(
 async def renovar_publicacion(
     pub_id: int = Path(..., ge=1, le=1000000),
     db: AsyncSession = Depends(get_session),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
 ):
     """
     PA-01: Renueva la vigencia de una publicación por 30 días calendario exactos.
@@ -215,9 +223,7 @@ async def renovar_publicacion(
     - EXPIRADO → pasa a ACTIVO. RECHAZADO/DESACTIVADO conservan su estado.
     - Genera fila en publicaciones_audit con evento='RENEWED'.
     """
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     try:
         datos = await repo.renovar_publicacion(db, pub_id, uid)
         return datos
@@ -236,7 +242,7 @@ async def renovar_publicacion(
 async def eliminar_publicacion(
     pub_id: int = Path(..., ge=1, le=1000000),
     db: AsyncSession = Depends(get_session),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
 ):
     """v13.2: el dueño (o ADMIN) elimina su aviso.
 
@@ -246,9 +252,7 @@ async def eliminar_publicacion(
     401 sin token/id, 403 si no es dueño ni ADMIN, 404 si no existe.
     """
     from app.services import role_lifecycle as _rl
-    uid_token = user.get("id")
-    if not isinstance(uid_token, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid_token = id_propietario(user)
     try:
         from app.models import Publicacion
 
@@ -282,7 +286,7 @@ async def cambiar_estado_dueno(
     pub_id: int = Path(..., ge=1, le=1000000),
     payload: dict = ...,
     db: AsyncSession = Depends(get_session),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
 ):
     """v15.2 switch del arrendador. Solo dueño (o ADMIN).
 
@@ -295,9 +299,7 @@ async def cambiar_estado_dueno(
     nuevo = (payload or {}).get("estado") if isinstance(payload, dict) else None
     if nuevo not in (EstadoPublicacion.ACTIVO, EstadoPublicacion.PAUSADO):
         raise HTTPException(status_code=422, detail="estado debe ser ACTIVO o PAUSADO")
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     try:
         from app.models import Publicacion, PublicacionesAudit
 

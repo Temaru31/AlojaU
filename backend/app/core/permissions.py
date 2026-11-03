@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from fastapi import Depends, HTTPException
 from app.core.dominio import Rol
+from app.core.security import ClaimsUsuario
 
 # ---------------------------------------------------------------------------
 # Catálogo de scopes (estable; añadir nuevos es aditivo y no rompe nada)
@@ -103,7 +104,7 @@ def scopes_for_role(rol: str | None) -> frozenset:
     return ROLE_SCOPES.get(str(rol).upper(), frozenset())
 
 
-def user_scopes(user: dict | None) -> frozenset:
+def user_scopes(user: ClaimsUsuario | None) -> frozenset:
     """Scopes efectivos de un payload JWT.
 
     Precedencia: 1) claim explícito "scopes" (tokens nuevos),
@@ -135,7 +136,7 @@ def require_scope(scope: str):
     """Dependencia FastAPI: exige un scope o 403 (401 sin token lo da security)."""
     from app.core.security import get_current_user  # import tardío: evita ciclo
 
-    async def _dep(user: dict = Depends(get_current_user)) -> dict:
+    async def _dep(user: ClaimsUsuario = Depends(get_current_user)) -> dict:
         if not has_scope(user, scope):
             raise HTTPException(
                 status_code=403,
@@ -150,7 +151,7 @@ def require_any_scope(*scopes: str):
     """Dependencia: exige al menos uno de los scopes."""
     from app.core.security import get_current_user
 
-    async def _dep(user: dict = Depends(get_current_user)) -> dict:
+    async def _dep(user: ClaimsUsuario = Depends(get_current_user)) -> dict:
         actual = user_scopes(user)
         if not any(s in actual for s in scopes):
             raise HTTPException(

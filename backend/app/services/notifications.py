@@ -67,7 +67,8 @@ async def _chat_vinculado(db, usuario_id: int) -> str | None:
         u = await db.get(Usuario, usuario_id)
         chat = getattr(u, "telegram_chat_id", None) if u is not None else None
         return str(chat) if chat else None
-    except Exception:
+    except Exception as e:
+        logger.warning("[notificaciones] lectura del chat vinculado falló: %s", exc_resumen(e))
         return None
 
 

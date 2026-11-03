@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logseguro import exc_resumen
-from app.core.security import get_current_user
+from app.core.security import get_current_user, id_propietario, ClaimsUsuario
 from app.db.session import get_session
 from app.models import Usuario
 from app.services.matching import candidatos
@@ -39,7 +39,7 @@ class RoomieMatchOut(BaseModel):
 @router.get("/candidatos", response_model=list[RoomieMatchOut],
             summary="Top 5 de roomies compatibles (score 0-100)")
 async def listar_candidatos(
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """Evalúa hasta 15 candidatos y retorna solo los 5 mejores.
@@ -48,9 +48,7 @@ async def listar_candidatos(
     usuario, con preferencias registradas y sin conflictos duros
     (mascotas/invitados). Orden descendente por puntaje de compatibilidad.
     """
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
 
     ranking = None
     try:

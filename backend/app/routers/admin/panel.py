@@ -5,7 +5,7 @@ from fastapi import Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.security import require_admin
+from app.core.security import require_admin, ClaimsUsuario
 from app.core.logseguro import exc_resumen
 from app.db.session import get_session
 from app.core.pagination import paginate_params, build_paginated
@@ -22,7 +22,7 @@ router = APIRouter()
 @router.get("/metricas", response_model=MetricasOut, summary="Admin métricas globales")
 async def metricas(
     db: AsyncSession = Depends(get_session),
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
 ):
     """Totales para /admin/dashboard. Sin token 401, no-ADMIN 403.
     v14.1: excluye cuentas en soft-delete (inventario visible real)."""
@@ -63,7 +63,7 @@ async def pendientes(
     page: int = Query(1, ge=1, le=1000),
     size: int = Query(12, ge=1, le=50),
     db: AsyncSession = Depends(get_session),
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
 ):
     """Avisos PENDIENTE paginados (más recientes primero)."""
     try:
@@ -128,6 +128,41 @@ def _mensaje_auditoria_legible(evento: str | None, publicacion_id: int | None, d
     return base or ev or "Evento"
 
 
+async def _contexto_auditoria(db: AsyncSession, rows) -> tuple[dict[int, str | None], dict[int, bool]]:
+    """Batch por página: 1 query de emails y 1 de avisos existentes (best-effort)."""
+    from app.models import Publicacion, Usuario
+
+    email_por_id: dict[int, str | None] = {}
+    existe_por_pub: dict[int, bool] = {}
+    try:
+        uids = sorted({int(r.usuario_id) for r in rows if r.usuario_id is not None})
+        if uids:
+            ures = await db.execute(
+                select(Usuario.id, Usuario.email).where(Usuario.id.in_(uids)))
+            email_por_id = {int(i): e for i, e in ures.all()}
+        pids = sorted({int(r.publicacion_id) for r in rows if r.publicacion_id is not None})
+        if pids:
+            pres = await db.execute(
+                select(Publicacion.id).where(Publicacion.id.in_(pids)))
+            vivos = {int(i) for (i,) in pres.all()}
+            existe_por_pub = {pid: (pid in vivos) for pid in pids}
+    except Exception as e:
+        logger.warning("[admin auditoría] enriquecimiento de emails/publicaciones falló: %s", exc_resumen(e))
+    return email_por_id, existe_por_pub
+
+
+def _item_auditoria(r, email_por_id: dict, existe_por_pub: dict) -> dict:
+    pid = r.publicacion_id
+    return {
+        "id": r.id, "publicacion_id": pid, "usuario_id": r.usuario_id,
+        "evento": r.evento, "detalle": r.detalle,
+        "creado_en": r.creado_en.isoformat() if r.creado_en else None,
+        "usuario_email": email_por_id.get(int(r.usuario_id)) if r.usuario_id is not None else None,
+        "publicacion_existe": (existe_por_pub.get(int(pid)) if pid is not None else None),
+        "mensaje_legible": _mensaje_auditoria_legible(r.evento, pid, r.detalle),
+    }
+
+
 @router.get("/auditoria", summary="Admin: ver log de auditoría (motivos IA/reglas)")
 async def ver_auditoria(
     publicacion_id: int | None = Query(None, ge=1),
@@ -135,7 +170,7 @@ async def ver_auditoria(
     page: int = Query(1, ge=1, le=1000),
     size: int = Query(20, ge=1, le=50),
     db: AsyncSession = Depends(get_session),
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
 ):
     """v15.2 trazabilidad: por qué se aprobó/rechazó (humano o auto).
 
@@ -162,35 +197,8 @@ async def ver_auditoria(
             select(PublicacionesAudit).where(*conds)
             .order_by(PublicacionesAudit.id.desc()).limit(size_norm).offset(offset)
         )).scalars().all()
-        # Batch por página: 1 query usuarios + 1 query publicaciones existentes.
-        email_por_id: dict[int, str | None] = {}
-        existe_por_pub: dict[int, bool] = {}
-        try:
-            from app.models import Publicacion, Usuario
-            uids = sorted({int(r.usuario_id) for r in rows if r.usuario_id is not None})
-            if uids:
-                ures = await db.execute(
-                    select(Usuario.id, Usuario.email).where(Usuario.id.in_(uids)))
-                email_por_id = {int(i): e for i, e in ures.all()}
-            pids = sorted({int(r.publicacion_id) for r in rows if r.publicacion_id is not None})
-            if pids:
-                pres = await db.execute(
-                    select(Publicacion.id).where(Publicacion.id.in_(pids)))
-                vivos = {int(i) for (i,) in pres.all()}
-                existe_por_pub = {pid: (pid in vivos) for pid in pids}
-        except Exception as e:
-            logger.warning("[admin auditoría] enriquecimiento de emails/publicaciones falló: %s", exc_resumen(e))
-        items = []
-        for r in rows:
-            pid = r.publicacion_id
-            items.append({
-                "id": r.id, "publicacion_id": pid, "usuario_id": r.usuario_id,
-                "evento": r.evento, "detalle": r.detalle,
-                "creado_en": r.creado_en.isoformat() if r.creado_en else None,
-                "usuario_email": email_por_id.get(int(r.usuario_id)) if r.usuario_id is not None else None,
-                "publicacion_existe": (existe_por_pub.get(int(pid)) if pid is not None else None),
-                "mensaje_legible": _mensaje_auditoria_legible(r.evento, pid, r.detalle),
-            })
+        email_por_id, existe_por_pub = await _contexto_auditoria(db, rows)
+        items = [_item_auditoria(r, email_por_id, existe_por_pub) for r in rows]
         return {"items": items, "total": total, "page": page, "size": size_norm}
     except HTTPException:
         raise

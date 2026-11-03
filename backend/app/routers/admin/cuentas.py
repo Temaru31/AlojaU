@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from fastapi import Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.security import require_admin
+from app.core.security import require_admin, ClaimsUsuario
 from app.core.logseguro import exc_resumen
 from app.db.session import get_session
 from app.core.db_utils import rollback_seguro
@@ -16,7 +16,7 @@ router = APIRouter()
 @router.post("/cuentas/purgar", summary="Admin: purga física de cuentas con gracia vencida")
 async def purgar_cuentas(
     db: AsyncSession = Depends(get_session),
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
 ):
     """v13.1: borra físicamente cuentas con eliminado_en > 30 días.
 

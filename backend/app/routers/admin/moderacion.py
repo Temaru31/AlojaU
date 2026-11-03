@@ -1,11 +1,14 @@
 """Moderación de avisos: aprobar/rechazar/pausar, borrar y cambios masivos."""
+import asyncio
 import logging
+from dataclasses import dataclass, field
+
 from fastapi import APIRouter
 from fastapi import Depends, HTTPException, Path, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.security import require_admin
+from app.core.security import require_admin, ClaimsUsuario
 from app.core.logseguro import exc_resumen
 from app.db.session import get_session
 from app.repositories import publicacion_repo as repo
@@ -24,7 +27,7 @@ async def cambiar_estado(
     pub_id: int = Path(..., ge=1, le=1000000),
     payload: CambioEstadoIn = ...,
     db: AsyncSession = Depends(get_session),
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
 ):
     """approve->ACTIVO (+audit APPROVED), rechazar->RECHAZADO (+REJECTED), pausar->PAUSADO (+PAUSED).
     404 si no existe. El dueño ve el cambio en Mis Publicaciones y recibe DM
@@ -75,7 +78,7 @@ async def cambiar_estado(
 async def eliminar(
     pub_id: int = Path(..., ge=1, le=1000000),
     db: AsyncSession = Depends(get_session),
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
 ):
     """Elimina cualquier aviso (hijos por ON DELETE CASCADE). 404 si no existe."""
     try:
@@ -104,7 +107,7 @@ async def eliminar(
 async def bulk_approve(
     data: BulkEstadoIn,
     db: AsyncSession = Depends(get_session),
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
 ):
     """v15.2 moderación masiva. Transacción única: estados + audit APPROVED."""
     return await _bulk_cambiar_estado(db, admin, data.ids, EstadoPublicacion.ACTIVO, "APPROVED")
@@ -114,92 +117,115 @@ async def bulk_approve(
 async def bulk_reject(
     data: BulkEstadoIn,
     db: AsyncSession = Depends(get_session),
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
 ):
     """v15.2 moderación masiva. Transacción única: estados + audit REJECTED."""
     return await _bulk_cambiar_estado(db, admin, data.ids, EstadoPublicacion.RECHAZADO, "REJECTED")
 
 
-async def _bulk_cambiar_estado(db: AsyncSession, admin: dict, ids: list[int],
+_ESTADOS_CON_AVISO_IN_APP = (EstadoPublicacion.ACTIVO, EstadoPublicacion.RECHAZADO, EstadoPublicacion.PAUSADO)
+
+
+@dataclass
+class _ResultadoBulk:
+    vistos: list = field(default_factory=list)
+    cambiados: list[int] = field(default_factory=list)
+    faltantes: list = field(default_factory=list)
+    duenos_afectados: set[int] = field(default_factory=set)
+    # (pub_id, dueno_id, titulo) de cada aviso cambiado, para los avisos externos.
+    cambiados_info: list[tuple[int, int, str]] = field(default_factory=list)
+
+
+async def _aplicar_cambios_bulk(db: AsyncSession, admin: ClaimsUsuario, ids: list[int],
+                                estado: str, evento: str) -> _ResultadoBulk:
+    """Cambia el estado de cada aviso existente y deja su fila de auditoría (sin commit)."""
+    from app.models import Publicacion, PublicacionesAudit
+
+    r = _ResultadoBulk()
+    admin_id = admin.get("id") if isinstance(admin.get("id"), int) else None
+    for pid in dict.fromkeys(ids):
+        p = await db.get(Publicacion, pid) if isinstance(pid, int) and pid >= 1 else None
+        if not p:
+            r.faltantes.append(pid)
+            continue
+        r.vistos.append(pid)
+        if p.estado == estado:
+            continue
+        p.estado = estado
+        db.add(PublicacionesAudit(
+            publicacion_id=pid,
+            usuario_id=admin_id,
+            evento=evento,
+            detalle=f"Cambio masivo a {estado} por admin",
+        ))
+        r.cambiados.append(pid)
+        try:
+            r.duenos_afectados.add(int(p.usuario_id))
+            r.cambiados_info.append((pid, int(p.usuario_id), str(p.titulo or f"aviso {pid}")))
+        except (TypeError, ValueError):
+            pass
+    return r
+
+
+async def _notificar_bulk_in_app(db: AsyncSession, cambiados: list[int], estado: str) -> None:
+    """Fan-out por aviso cambiado (bulk acotado a 50 por schema): una query trae las
+    relaciones; cada aviso usa su savepoint aislado y nada tumba el commit."""
+    from app.models import Publicacion
+
+    if estado not in _ESTADOS_CON_AVISO_IN_APP or not cambiados:
+        return
+    filas = (await db.execute(
+        select(Publicacion).options(
+            selectinload(Publicacion.servicios),
+            selectinload(Publicacion.campus_links),
+        ).where(Publicacion.id.in_(cambiados))
+    )).scalars().all()
+    for fila in filas:
+        await _notificar_moderacion_in_app(db, fila, estado)
+
+
+async def _avisar_duenos_externo(db: AsyncSession, cambiados_info: list[tuple[int, int, str]],
+                                 estado: str) -> int:
+    """Avisos fuera de la app (best-effort, tras el commit), en paralelo con tope
+    de 5 para no saturar la Bot API. Devuelve cuántos dueños se notificaron."""
+    semaforo = asyncio.Semaphore(5)
+
+    async def _uno(dueno, titulo):
+        async with semaforo:
+            try:
+                return await _notificar_dueno_estado(db, dueno, titulo, estado)
+            except Exception as e:
+                logger.warning("[admin bulk] aviso externo al dueño %s falló: %s", dueno, exc_resumen(e))
+                return "none"
+
+    try:
+        resultados = await asyncio.gather(
+            *[_uno(dueno, titulo) for _pid, dueno, titulo in cambiados_info],
+            return_exceptions=True,
+        )
+    except Exception as e:
+        logger.warning("[admin bulk] avisos externos fallaron: %s", exc_resumen(e))
+        return 0
+    return sum(1 for r in resultados if r != "none" and not isinstance(r, Exception))
+
+
+async def _bulk_cambiar_estado(db: AsyncSession, admin: ClaimsUsuario, ids: list[int],
                                estado: str, evento: str) -> dict:
     """Cambio masivo con democión por dueño en la misma transacción.
 
-    Detalle #1: un bulk-reject total dejaba ARRENDADOR con 0 vigentes sin
-    democionar (los endpoints individuales sí lo hacían). Se recoge el set
-    de dueños afectados por los cambios y se evalúa democión con row-lock
-    antes del commit. Retorna además `democionados: [usuario_ids]`.
+    Un bulk-reject total no debe dejar a un ARRENDADOR con 0 vigentes sin
+    democionar (igual que los endpoints individuales): se evalúa la democión
+    de cada dueño afectado con row-lock antes del commit.
     """
-    from app.models import Publicacion, PublicacionesAudit
-
-    vistos, cambiados, faltantes = [], [], []
-    duenos_afectados: set[int] = set()
-    cambiados_info: list[tuple[int, int, str]] = []  # (pub_id, dueno_id, titulo)
     try:
-        for pid in dict.fromkeys(ids):
-            if not isinstance(pid, int) or pid < 1:
-                faltantes.append(pid)
-                continue
-            p = await db.get(Publicacion, pid)
-            if not p:
-                faltantes.append(pid)
-                continue
-            vistos.append(pid)
-            if p.estado == estado:
-                continue
-            p.estado = estado
-            db.add(PublicacionesAudit(
-                publicacion_id=pid,
-                usuario_id=admin.get("id") if isinstance(admin.get("id"), int) else None,
-                evento=evento,
-                detalle=f"Cambio masivo a {estado} por admin",
-            ))
-            cambiados.append(pid)
-            try:
-                duenos_afectados.add(int(p.usuario_id))
-                cambiados_info.append((pid, int(p.usuario_id), str(p.titulo or f"aviso {pid}")))
-            except (TypeError, ValueError):
-                pass
-        # Misma transacción: flush de estados + democión N->0 por dueño.
-        democionados = [d for d in sorted(duenos_afectados) if await _evaluar_democion_dueno(db, d)]
-        # Fan-out por aviso aprobado (bulk acotado a 50 por schema)
-        # + aviso de moderación al dueño ante cualquier cambio (ACTIVO,
-        # RECHAZADO, PAUSADO). Una query trae relaciones; cada aviso usa su
-        # savepoint aislado y nada tumba el commit.
-        if estado in (EstadoPublicacion.ACTIVO, EstadoPublicacion.RECHAZADO, EstadoPublicacion.PAUSADO) and cambiados:
-            filas = (await db.execute(
-                select(Publicacion).options(
-                    selectinload(Publicacion.servicios),
-                    selectinload(Publicacion.campus_links),
-                ).where(Publicacion.id.in_(cambiados))
-            )).scalars().all()
-            for fila in filas:
-                await _notificar_moderacion_in_app(db, fila, estado)
+        r = await _aplicar_cambios_bulk(db, admin, ids, estado, evento)
+        democionados = [d for d in sorted(r.duenos_afectados) if await _evaluar_democion_dueno(db, d)]
+        await _notificar_bulk_in_app(db, r.cambiados, estado)
         await db.commit()
-        # Avisos fuera de la app (best-effort, tras el commit, en paralelo
-        # con tope de 5 para no saturar la Bot API).
-        notificados = 0
-        try:
-            import asyncio as _asyncio
-            _semaforo = _asyncio.Semaphore(5)
-
-            async def _uno(_dueno, _titulo):
-                async with _semaforo:
-                    try:
-                        return await _notificar_dueno_estado(db, _dueno, _titulo, estado)
-                    except Exception as e:
-                        logger.warning("[admin bulk] aviso externo al dueño %s falló: %s", _dueno, exc_resumen(e))
-                        return "none"
-
-            resultados = await _asyncio.gather(
-                *[_uno(_d, _t) for _p, _d, _t in cambiados_info],
-                return_exceptions=True,
-            )
-            notificados = sum(1 for r in resultados if r != "none" and not isinstance(r, Exception))
-        except Exception as e:
-            logger.warning("[admin bulk] avisos externos fallaron: %s", exc_resumen(e))
-        return {"estado": estado, "solicitados": len(ids), "cambiados": cambiados,
-                "sin_cambios": [i for i in vistos if i not in cambiados],
-                "no_encontrados": faltantes, "democionados": democionados,
+        notificados = await _avisar_duenos_externo(db, r.cambiados_info, estado)
+        return {"estado": estado, "solicitados": len(ids), "cambiados": r.cambiados,
+                "sin_cambios": [i for i in r.vistos if i not in r.cambiados],
+                "no_encontrados": r.faltantes, "democionados": democionados,
                 "notificados": notificados}
     except Exception as e:
         await rollback_seguro(db, "_bulk_cambiar_estado")
