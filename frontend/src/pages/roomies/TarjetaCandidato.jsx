@@ -125,7 +125,7 @@ export default function TarjetaCandidato({ cand, onVerDetalle, urlWhatsApp }) {
           </a>
         ) : (
           <span className={`w-full ${tienePreferencias ? 'sm:w-1/2' : ''} text-center text-xs text-neutral-400 py-2.5`}>
-            Sin WhatsApp público
+            {cand.ejemplo ? 'Perfil de ejemplo: sin contacto' : 'Sin WhatsApp público'}
           </span>
         )}
       </div>

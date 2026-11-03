@@ -1,20 +1,10 @@
-// Candidatos de demostración que la página muestra cuando la API de matching no responde.
-
-
-
-
-
-
-
-
-
-// Candidatos demo con datos realistas para cuando el backend está en desarrollo/mockup
+// Perfiles de EJEMPLO que Roomies muestra (con aviso visible) cuando la API de matching no
+// responde o aún no hay candidatos. No son personas reales: sin teléfono ni correo de contacto.
 export const CANDIDATOS_DEMO = [
   {
     usuario_id: 101,
+    ejemplo: true,
     nombre_completo: 'Valentina Muñoz',
-    email: 'vmunoz@unicauca.edu.co',
-    telefono_whatsapp: '3128904561',
     carrera: 'Ingeniería de Sistemas',
     bio: 'Estudiante de 6to semestre. Busco ambiente tranquilo para estudiar, responsable con el aseo y puntual con los servicios.',
     score: 94,
@@ -40,9 +30,8 @@ export const CANDIDATOS_DEMO = [
   },
   {
     usuario_id: 102,
+    ejemplo: true,
     nombre_completo: 'Carlos Andrés Rivera',
-    email: 'crivera@unicauca.edu.co',
-    telefono_whatsapp: '3147890123',
     carrera: 'Medicina',
     bio: 'Interno de medicina. Suelo tener horarios rotativos pero soy muy silencioso y ordenado. No fumo.',
     score: 86,
@@ -68,9 +57,8 @@ export const CANDIDATOS_DEMO = [
   },
   {
     usuario_id: 103,
+    ejemplo: true,
     nombre_completo: 'Mariana Gómez',
-    email: 'mgomez@unicauca.edu.co',
-    telefono_whatsapp: '3104567890',
     carrera: 'Diseño Gráfico',
     bio: 'Amante de las plantas y los perros. Me gusta cocinar y compartir charlas amenas, pero respeto el espacio personal.',
     score: 78,
@@ -96,9 +84,8 @@ export const CANDIDATOS_DEMO = [
   },
   {
     usuario_id: 104,
+    ejemplo: true,
     nombre_completo: 'Sebastián Caicedo',
-    email: 'scaicedo@unicauca.edu.co',
-    telefono_whatsapp: '3189012345',
     carrera: 'Derecho',
     bio: 'Estudiante de 8vo semestre. Paso mucho tiempo en biblioteca, enfocado en preparatorios.',
     score: 68,

@@ -197,12 +197,17 @@ export default function Roomies() {
           </button>
         </div>
 
-        {modoDemo && (
-          <span className="text-[11px] font-semibold text-neutral-400 bg-neutral-100 px-2.5 py-1 rounded-full self-start sm:self-center">
-            Modo demostración activo
-          </span>
-        )}
       </div>
+
+      {modoDemo && (
+        <div role="status" className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p className="font-semibold">Estos perfiles son ejemplos ilustrativos, no personas reales.</p>
+          <p className="text-xs mt-0.5">
+            Aún no hay compañeros compatibles disponibles (o el servicio no respondió). Completa tus hábitos
+            de convivencia y vuelve más tarde para ver estudiantes reales.
+          </p>
+        </div>
+      )}
 
       {/* Grid de Candidatos */}
       {loading ? (
