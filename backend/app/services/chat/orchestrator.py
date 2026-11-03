@@ -19,7 +19,6 @@ from app.services.chat.prompts import (
     BLOQUE_DATOS_FIN,
     BLOQUE_DATOS_INICIO,
     CHAT_SYSTEM_PROMPT_V1,
-    FALLBACK_NO_DISPONIBLE,
     MARCADORES_NEUTRALIZADOS,
 )
 from app.services.chat.schemas import TOOLS_ALLOWLIST

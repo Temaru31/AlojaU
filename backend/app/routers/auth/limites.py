@@ -1,6 +1,6 @@
 """Límites de frecuencia en memoria de login, cambio de contraseña y OAuth."""
 from fastapi import Request
-from app.core.net import ip_de_conexion
+from app.core.net import ip_para_limites
 from app.core.rate_limit import registrar_intento
 
 
@@ -24,7 +24,7 @@ def _check_password_rate_limit(uid: str) -> None:
 
 
 def _check_login_rate_limit(request: Request) -> None:
-    registrar_intento(_LOGIN_ATTEMPTS, ip_de_conexion(request), LOGIN_LIMIT, LOGIN_WINDOW_S,
+    registrar_intento(_LOGIN_ATTEMPTS, ip_para_limites(request), LOGIN_LIMIT, LOGIN_WINDOW_S,
                       "Demasiados intentos de login, espera 1 minuto")
 
 
@@ -37,5 +37,5 @@ OAUTH_WINDOW_S = 60.0
 
 
 def _check_oauth_rate_limit(request: Request) -> None:
-    registrar_intento(_OAUTH_ATTEMPTS, ip_de_conexion(request), OAUTH_LIMIT, OAUTH_WINDOW_S,
+    registrar_intento(_OAUTH_ATTEMPTS, ip_para_limites(request), OAUTH_LIMIT, OAUTH_WINDOW_S,
                       "Demasiados intentos con Google, espera 1 minuto")

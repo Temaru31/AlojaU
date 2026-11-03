@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
 import { MemoryRouter, Routes, Route, useNavigate } from 'react-router-dom'
-import Detalle, { humanizarTipo } from './Detalle'
+import Detalle from './Detalle'
+import { getEtiquetaTipo } from '../utils/tiposVivienda'
 import { api } from '../services/api'
 
 vi.mock('../services/api', () => ({ api: { get: vi.fn(), post: vi.fn() } }))
@@ -212,11 +213,11 @@ describe('Detalle 004 distancias honestas', () => {
 })
 
 describe('Detalle ramas sin cubrir (contacto, errores, fallbacks)', () => {
-  it('humanizarTipo: conocido traduce, desconocido conserva, vacío informa', () => {
-    expect(humanizarTipo('COMPARTIDO')).toBe('Compartido')
-    expect(humanizarTipo('LOFT')).toBe('LOFT')
-    expect(humanizarTipo(null)).toBe('No informado')
-    expect(humanizarTipo(undefined)).toBe('No informado')
+  it('getEtiquetaTipo: conocido traduce, desconocido conserva, vacío informa', () => {
+    expect(getEtiquetaTipo('COMPARTIDO')).toBe('Compartido')
+    expect(getEtiquetaTipo('LOFT')).toBe('LOFT')
+    expect(getEtiquetaTipo(null)).toBe('No informado')
+    expect(getEtiquetaTipo(undefined)).toBe('No informado')
   })
 
   it('PENDIENTE muestra aviso ámbar y oculta el WhatsApp', async () => {

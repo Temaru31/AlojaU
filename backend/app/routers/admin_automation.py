@@ -59,8 +59,6 @@ class SettingPatch(BaseModel):
     valor: str
 
 
-
-
 @router.get("/settings", response_model=list[SettingOut], summary="Admin: listar ajustes del sistema")
 async def listar_settings(
     db: AsyncSession = Depends(get_session), admin: dict = Depends(require_admin)
@@ -159,7 +157,7 @@ async def editar_setting(
         raise
     except Exception as e:
         # Fix false-200 (V14.0 M1): un fallo de persistencia NUNCA se
-        # reporta como éxito. Rollback + 503 ruidoso (sin mock: admin es prod).
+        # reporta como éxito. Rollback + 503 ruidoso.
         import logging as _logging
         _logging.getLogger("alojau.admin").error("[settings] persistencia falló: %s", exc_resumen(e))
         await rollback_seguro(db, "editar_setting")

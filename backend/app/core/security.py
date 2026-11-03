@@ -1,11 +1,10 @@
-"""JWT HS256 + bcrypt con fail-closed en prod (mock solo dev).
+"""JWT HS256 + bcrypt con fail-closed (sin BD -> 503).
 Uso: Depends(get_current_user/require_arrendador/require_admin) en routers. Ej: headers {"Authorization": "Bearer <jwt>"} -> {"id":1,"rol":"ARRENDADOR"}.
 v13: los tokens nuevos incluyen `jti` (revocación) y `scopes` (RBAC granular).
 Los tokens legacy sin scopes se enriquecen por rol (compat total).
 v14.1: get_current_user es async y verifica revocación JTI en TODOS los
 endpoints autenticados (centralizado). Exenciones: mock-tokens (solo dev),
-tokens sin jti (legacy, máx 8h de vida). Prod + error DB -> 503 fail-closed;
-dev/mock + error DB -> permite con warning (resiliencia local)."""
+tokens sin jti (legacy, máx 8h de vida). Error de BD -> 503 fail-closed."""
 from datetime import datetime, timezone, timedelta
 import logging
 import time
@@ -59,7 +58,7 @@ def decode_token(token: str):
     except Exception:
         raise HTTPException(status_code=401, detail="Token inválido o expirado")
 
-# Mock para demo sin BD (desactivado en prod)
+# Tokens fijos de prueba (dev/test, USE_MOCK_FALLBACK; nunca en prod).
 # Incluye ESTUDIANTE base (rol por defecto de registro nuevo).
 MOCK_TOKENS = {
     "mock-token-arrendador": {"sub": "arrendador@alojau.com", "rol": Rol.ARRENDADOR, "id": 1, "telefono_whatsapp": "573001234567", "telefono_verificado": True, "email_verificado": True},
@@ -72,8 +71,7 @@ async def _verificar_sesion_activa(claims: dict, db=None) -> None:
     """401 si el jti está revocado en `sesiones`.
 
     Exento (sin consulta): tokens sin jti (legacy y mock-tokens dev, que no
-    lo traen). Error DB: prod -> 503 fail-closed con log; dev/mock ->
-    warning + permite (resiliencia local sin PG).
+    lo traen). Error de BD -> 503 fail-closed con log.
     """
     jti = (claims or {}).get("jti")
     if not jti:
@@ -95,9 +93,6 @@ async def _verificar_sesion_activa(claims: dict, db=None) -> None:
         raise
     except Exception as e:
         logger.error("[security] verificación de sesión falló (fail-closed): %s", exc_resumen(e))
-        if mock_enabled():
-            logger.warning("[security] sin PG en dev: revocación no verificable (se permite)")
-            return
         raise HTTPException(status_code=503, detail="Servicio de autenticación no disponible")
 
 
@@ -109,7 +104,7 @@ async def get_current_user(authorization: str = Header(None), db=None):
     if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
         raise HTTPException(status_code=401, detail="Formato Bearer token inválido")
     token = parts[1].strip()
-    # Fail-closed: mock solo si mock_enabled (flag True + ENV!=prod).
+    # Tokens de prueba solo si están habilitados (flag True + ENV!=prod).
     if mock_enabled() and token in MOCK_TOKENS:
         return MOCK_TOKENS[token]
     # Cablea AuthService agnóstico (Supabase RS256/ES256 si
@@ -171,37 +166,26 @@ async def require_admin(authorization: str = Header(None)):
 
     El claim ADMIN se REVALIDA contra BD en cada llamada (vigencia del JWT 2h):
     un ADMIN democionado pierde el panel de inmediato. Un claim no-ADMIN da 403
-    sin consultar (nadie se promueve solo). Sin PG en dev, manda el claim mock.
+    sin consultar (nadie se promueve solo). Sin rol verificable en BD -> 403.
     """
     u = await get_current_user(authorization)
     if u.get("rol") != Rol.ADMIN:
         raise HTTPException(status_code=403, detail="Solo ADMIN")
     uid = u.get("id")
     if not isinstance(uid, int):
-        return _claim_admin_solo_en_mock(u)
+        raise HTTPException(status_code=403, detail="Solo ADMIN")
     try:
         rol = await _rol_en_bd(uid)
     except Exception as e:
-        if mock_enabled():
-            return u
         logger.warning("[security] verificación de rol ADMIN falló: %s", exc_resumen(e))
         raise HTTPException(status_code=403, detail="Solo ADMIN")
-    if rol == Rol.ADMIN:
-        return {**u, "rol": Rol.ADMIN}
-    if rol is not None:
+    if rol != Rol.ADMIN:
         raise HTTPException(status_code=403, detail="Solo ADMIN")
-    return _claim_admin_solo_en_mock(u)
-
-
-def _claim_admin_solo_en_mock(u: dict) -> dict:
-    """Sin usuario verificable en BD, el claim ADMIN solo vale en dev/mock."""
-    if mock_enabled():
-        return u
-    raise HTTPException(status_code=403, detail="Solo ADMIN")
+    return {**u, "rol": Rol.ADMIN}
 
 
 async def _es_arrendador_real(uid: int) -> bool:
-    """Caché positiva -> BD -> MOCK_USERS (solo si la BD cae en dev)."""
+    """Caché positiva (60s) o rol actual en BD; si la BD falla, se deniega."""
     ahora = time.monotonic()
     hit = _ROL_CACHE.get(uid)
     if hit and hit[0] == Rol.ARRENDADOR and (ahora - hit[1]) < _ROL_CACHE_TTL_S:
@@ -209,9 +193,8 @@ async def _es_arrendador_real(uid: int) -> bool:
     try:
         rol = await _rol_en_bd(uid)
     except Exception as e:
-        rol = _rol_mock(uid) if mock_enabled() else None
-        if rol != Rol.ARRENDADOR:
-            logger.warning("[security] verificación de rol ARRENDADOR falló: %s", exc_resumen(e))
+        logger.warning("[security] verificación de rol ARRENDADOR falló: %s", exc_resumen(e))
+        return False
     if rol != Rol.ARRENDADOR:
         return False
     _ROL_CACHE[uid] = (Rol.ARRENDADOR, ahora)
@@ -229,11 +212,6 @@ async def _rol_en_bd(uid: int) -> str | None:
         return usuario.rol if usuario is not None else None
 
 
-def _rol_mock(uid: int) -> str | None:
-    from app.fixtures.usuarios_demo import MOCK_USERS
-    return next((m.get("rol") for m in MOCK_USERS.values() if m.get("id") == uid), None)
-
-
 # Revalidación ADMIN para editar avisos ajenos (caché 10s; el negativo no se cachea).
 _ADMIN_REVALID_MEM: dict[int, tuple[float, bool]] = {}
 _ADMIN_REVALID_TTL_S = 10.0
@@ -247,7 +225,7 @@ async def es_dueno_o_admin(user: dict | None, owner_id: int | None) -> bool:
     """Dueño por id, o ADMIN revalidado contra BD (anti-stale, caché 10s).
 
     El claim ADMIN del JWT (2h) no basta: un admin democionado no debe seguir
-    viendo/editando avisos ajenos. Sin PG en dev con mocks, manda el claim.
+    viendo/editando avisos ajenos.
     """
     if not user:
         return False
@@ -266,8 +244,6 @@ async def es_dueno_o_admin(user: dict | None, owner_id: int | None) -> bool:
     try:
         es_admin = await _rol_en_bd(uid) == Rol.ADMIN
     except Exception as e:
-        if mock_enabled():
-            return True
         logger.warning("[security] revalidación ADMIN falló (se deniega): %s", exc_resumen(e))
         return False
     if es_admin:

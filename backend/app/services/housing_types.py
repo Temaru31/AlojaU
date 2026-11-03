@@ -5,12 +5,16 @@ Uso: schemas (Pydantic), routers (Query), trust/search (allowlist/sinónimos).
   solo esta_activo=true, ordenados por slug. 1 query, caché 5min.
 - `slugs_activos(db)`: set de slugs para validación rápida.
 - `clear_cache()`: invalida tras CRUD admin (y en tests).
-- Sin PG (mock/dev): fallback estático con los 6 slugs del seed (nunca rompe).
+- Sin PG o tabla vacía: catálogo estático con los 6 slugs del seed (nunca rompe).
 """
+import logging
 import time
 
 from sqlalchemy import select
 from app.core.db_utils import rollback_seguro
+from app.core.logseguro import exc_resumen
+
+logger = logging.getLogger("alojau.housing_types")
 
 # Fallback estático (seed canónico). Nunca se elimina ni renombra un slug.
 FALLBACK_TIPOS = [
@@ -37,9 +41,6 @@ FALLBACK_TIPOS = [
 _TTL_S = 300.0
 _cache: dict = {"ts": 0.0, "payload": None}
 
-# Mock dev: permite a tests/mocks añadir tipos sin PG (misma forma que FALLBACK).
-MOCK_TIPOS: list[dict] = [dict(t) for t in FALLBACK_TIPOS]
-
 
 def clear_cache() -> None:
     _cache["ts"] = 0.0
@@ -58,7 +59,7 @@ def _cache_set(payload) -> None:
 
 
 async def get_activos(db) -> list[dict]:
-    """Catálogo activo (caché 5min). Sin PG -> MOCK_TIPOS activos."""
+    """Catálogo activo (caché 5min). Sin PG o tabla vacía -> catálogo estático."""
     hit = _cache_get()
     if hit is not None:
         return hit
@@ -75,20 +76,16 @@ async def get_activos(db) -> list[dict]:
         if payload:
             _cache_set(payload)
             return payload
-    except Exception:
+    except Exception as e:
         await rollback_seguro(db, "get_activos")
-    # Fallback mock/dev (o tabla vacía): MOCK_TIPOS activos.
-    payload = [dict(t) for t in MOCK_TIPOS if t.get("esta_activo")]
+        logger.warning("[tipos] catálogo desde BD falló, se usa el estático: %s", exc_resumen(e))
+    payload = [dict(t) for t in FALLBACK_TIPOS if t.get("esta_activo")]
     _cache_set(payload)
     return payload
 
 
 async def slugs_activos(db) -> set[str]:
     return {t["slug"] for t in await get_activos(db)}
-
-
-def slugs_fallback() -> set[str]:
-    return {t["slug"] for t in FALLBACK_TIPOS if t.get("esta_activo")}
 
 
 async def validar_tipo(db, slug: str | None) -> str:

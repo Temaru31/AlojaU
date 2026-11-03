@@ -3,8 +3,7 @@
 - GET /api/notificaciones: lectura PURA (sin escrituras, sin purga).
 - PATCH .../leer y .../leer-todas: únicos escritores de `leida`.
 - /api/busquedas-guardadas: POST (mínimo 1 filtro, tope 10 activas), GET mías, DELETE propia.
-- Sin PG (mock/dev): 503 honesto (sin stores mock: es módulo nuevo con
-  fuente única en BD, igual que POST /api/reportes en dev sin PG).
+- Sin BD: 503 honesto (fuente única en BD).
 """
 from datetime import datetime, timezone
 from typing import Optional
@@ -21,7 +20,6 @@ from app.db.session import get_session
 
 import logging
 from app.core.db_utils import rollback_seguro
-from app.core.flags import mock_enabled
 logger = logging.getLogger("alojau.notificaciones")
 
 router = APIRouter(prefix="/api/notificaciones", tags=["notificaciones"])
@@ -161,9 +159,7 @@ async def listar(
     except Exception as e:
         await rollback_seguro(db, "listar")
         logger.error(f"[notificaciones listar] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router.patch("/leer-todas", summary="Marcar toda la bandeja como leída")
@@ -189,9 +185,7 @@ async def leer_todas(
     except Exception as e:
         await rollback_seguro(db, "leer_todas")
         logger.error(f"[notificaciones leer-todas] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router.patch("/{nid}/leer", response_model=NotificacionOut, summary="Marcar una como leída")
@@ -220,9 +214,7 @@ async def leer_una(
     except Exception as e:
         await rollback_seguro(db, "leer_una")
         logger.error(f"[notificaciones leer] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 # ---------------------------------------------------------------------------
@@ -277,9 +269,7 @@ async def crear_busqueda(
     except Exception as e:
         await rollback_seguro(db, "crear_busqueda")
         logger.error(f"[busquedas crear] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router_busquedas.get("", summary="Listar mis alertas")
@@ -301,9 +291,7 @@ async def listar_busquedas(
     except Exception as e:
         await rollback_seguro(db, "listar_busquedas")
         logger.error(f"[busquedas listar] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router_busquedas.delete("/{bid}", summary="Eliminar una alerta propia")
@@ -331,6 +319,4 @@ async def eliminar_busqueda(
     except Exception as e:
         await rollback_seguro(db, "eliminar_busqueda")
         logger.error(f"[busquedas eliminar] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")

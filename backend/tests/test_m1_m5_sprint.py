@@ -6,7 +6,6 @@ import io
 
 from fastapi.testclient import TestClient
 from app.main import app
-from app.db.session import get_session
 
 client = TestClient(app)
 ADMIN = {"Authorization": "Bearer mock-token-admin"}

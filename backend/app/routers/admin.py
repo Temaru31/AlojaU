@@ -6,7 +6,7 @@ Endpoints (todos solo ADMIN via require_admin -> 401 sin token, 403 sin rol):
   PATCH  /api/admin/publicaciones/{id}          (cambiar estado: aprobar/rechazar/pausar + audit)
   DELETE /api/admin/publicaciones/{id}          (eliminar, 204; hijos por ON DELETE CASCADE)
 
-Sprint: mock en memoria si no hay PG (solo dev, mismo patrón que publicaciones).
+Sin BD responde 503 (no hay datos de respaldo).
 """
 from typing import Literal
 
@@ -24,10 +24,7 @@ from app.repositories import publicacion_repo as repo
 from app.services import publicacion_view as view
 from app.schemas.publicacion import PaginatedPublicaciones, PublicacionCardOut
 from app.core.db_utils import rollback_seguro
-from app.core.flags import mock_enabled
 from app.core.dominio import DIAS_GRACIA_CUENTA, EstadoPublicacion, EstadoReporte, Rol
-from app.fixtures.publicaciones_demo import MOCK_PUBS
-from app.fixtures.usuarios_demo import MOCK_USERS
 
 import logging
 logger = logging.getLogger("alojau.admin")
@@ -54,7 +51,6 @@ class CambioEstadoIn(BaseModel):
 
 
 ESTADO_A_EVENTO = {EstadoPublicacion.ACTIVO: "APPROVED", EstadoPublicacion.RECHAZADO: "REJECTED", EstadoPublicacion.PAUSADO: "PAUSED"}
-
 
 
 async def _evaluar_democion_dueno(db: AsyncSession, dueno_id: int | None) -> bool:
@@ -148,22 +144,7 @@ async def metricas(
     except Exception as e:
         logger.error(f"[DB fallback] metricas falló: {exc_resumen(e)}", exc_info=True)
         await rollback_seguro(db, "metricas")
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    # Mock dev: agrega desde MOCK_PUBS + MOCK_USERS de auth.
-
-    pubs = MOCK_PUBS
-    return MetricasOut(
-        total_publicaciones=len(pubs),
-        activas=sum(1 for p in pubs if p.get("estado") == EstadoPublicacion.ACTIVO),
-        pendientes=sum(1 for p in pubs if p.get("estado") == EstadoPublicacion.PENDIENTE),
-        reportes_activos=sum(int(p.get("reportes_activos", 0) or 0) for p in pubs),
-        reportes_pendientes=0,
-        # Mock dev sin tabla reportes: 0 inmuebles con pendientes (contrato aditivo).
-        inmuebles_con_reportes=0,
-        arrendadores_verificados=sum(1 for u in MOCK_USERS.values() if u.get("rol") == Rol.ARRENDADOR and u.get("telefono_verificado")),
-        total_usuarios=len(MOCK_USERS),
-    )
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router.get("/pendientes", response_model=PaginatedPublicaciones, summary="Admin bandeja PENDIENTE")
@@ -201,17 +182,7 @@ async def pendientes(
     except Exception as e:
         logger.error(f"[DB fallback] pendientes falló: {exc_resumen(e)}", exc_info=True)
         await rollback_seguro(db, "pendientes")
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-
-    filtradas = sorted(
-        (p for p in MOCK_PUBS if p.get("estado") == EstadoPublicacion.PENDIENTE),
-        key=lambda p: p["id"], reverse=True,
-    )
-    total = len(filtradas)
-    offset, size_norm = paginate_params(page, size)
-    items = [view.mock_to_out(p, None, True) for p in filtradas[offset:offset + size_norm]]
-    return build_paginated(items, total, page, size_norm)
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router.patch("/publicaciones/{pub_id}", response_model=PublicacionCardOut, summary="Admin cambiar estado (aprobar/rechazar/pausar)")
@@ -263,16 +234,7 @@ async def cambiar_estado(
         _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
         logger.error(f"[DB fallback] admin cambiar_estado {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
         await rollback_seguro(db, "cambiar_estado")
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-
-    if not mock_enabled():
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    pub = next((x for x in MOCK_PUBS if x["id"] == pub_id), None)
-    if not pub:
-        raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    pub["estado"] = payload.estado
-    return view.mock_to_out(pub, None, True)
 
 
 @router.delete("/publicaciones/{pub_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Admin eliminar aviso")
@@ -301,16 +263,7 @@ async def eliminar(
         _err_seguro = str(exc_resumen(e)).replace('\n', '').replace('\r', '')
         logger.error(f"[DB fallback] admin eliminar {_pub_id_seguro} falló: {_err_seguro}", exc_info=True)
         await rollback_seguro(db, "eliminar")
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-
-    if not mock_enabled():
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    for i, x in enumerate(MOCK_PUBS):
-        if x["id"] == pub_id:
-            MOCK_PUBS.pop(i)
-            return Response(status_code=status.HTTP_204_NO_CONTENT)
-    raise HTTPException(status_code=404, detail="Publicación no encontrada")
 
 
 @router.post("/cuentas/purgar", summary="Admin: purga física de cuentas con gracia vencida")
@@ -320,7 +273,7 @@ async def purgar_cuentas(
 ):
     """v13.1: borra físicamente cuentas con eliminado_en > 30 días.
 
-    Diseñado para cron (pg_cron o llamada diaria). En dev sin PG purga mocks.
+    Diseñado para cron (pg_cron o llamada diaria).
     """
     from datetime import datetime, timezone, timedelta
     corte = datetime.now(timezone.utc) - timedelta(days=DIAS_GRACIA_CUENTA)
@@ -341,13 +294,7 @@ async def purgar_cuentas(
     except Exception as e:
         logger.error(f"[DB fallback] purgar_cuentas falló: {exc_resumen(e)}", exc_info=True)
         await rollback_seguro(db, "purgar_cuentas")
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-
-    n = sum(1 for m in MOCK_USERS.values() if m.get("eliminado_en"))
-    for em in [em for em, m in MOCK_USERS.items() if m.get("eliminado_en")]:
-        MOCK_USERS.pop(em, None)
-    return {"purgadas": n, "gracia_dias": DIAS_GRACIA_CUENTA, "mock": True}
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 class BulkEstadoIn(BaseModel):

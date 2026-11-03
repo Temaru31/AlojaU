@@ -36,8 +36,6 @@ PUB = {
 def limpieza():
     creados = []
     yield creados
-    for e in list(creados):
-        auth_router.MOCK_USERS.pop(e, None)
     auth_router._LOGIN_ATTEMPTS.clear()
     auth_router._PW_ATTEMPTS.clear()
     try:
@@ -124,7 +122,6 @@ def test_T1_publicar_promueve_con_flag(limpieza):
 
 
 def test_T1b_publicar_verificado_promueve(limpieza):
-    from app.routers.auth import MOCK_USERS
     email = tmp_email("t1b")
     limpieza.append(email)
     assert _registrar(email).status_code == 200

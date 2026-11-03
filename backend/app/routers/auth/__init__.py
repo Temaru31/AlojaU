@@ -11,7 +11,6 @@ Paquete por caso de uso; este módulo solo compone los sub-routers bajo
 from fastapi import APIRouter
 
 from app.core.config import settings  # noqa: F401  (tests: auth_router.settings)
-from app.fixtures.usuarios_demo import MOCK_USERS  # noqa: F401
 from app.routers.auth.comun import (  # noqa: F401
     digitos_nacionales,
 )
@@ -42,8 +41,6 @@ from app.routers.auth.oauth import (  # noqa: F401
     oauth_google_callback,
 )
 from app.routers.auth.otp_recuperacion import (  # noqa: F401
-    _MOCK_OTPS,
-    _MOCK_RESETS,
     _OTP_SOLICITAR,
     _OTP_VERIFICAR,
     _crear_otp,

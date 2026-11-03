@@ -273,11 +273,10 @@ app.include_router(notificaciones.router)
 app.include_router(notificaciones.router_busquedas)
 app.include_router(chat.router)  # Chatbot MVP solo lectura (CHAT_ENABLED)
 app.include_router(preferencias.router)
-app.include_router(matching.router)  # Mockup 501 (contrato futuro, sin lógica)
+app.include_router(matching.router)  # Matching de roomies (HU-13)
 app.include_router(publicidad.router)
 app.include_router(publicidad.router_admin)
 
-# Legacy mock endpoints removidos: ahora en routers/publicaciones.py y routers/campus.py
 # - GET /api/publicaciones?campus_id=&precio_min=&precio_max=&tipo=&servicios=  (HU-001+002)
 # - GET /api/publicaciones/{id}  (HU-003+007+008)
 # - POST /api/publicaciones  (HU-005 PENDIENTE, solo ARRENDADOR)

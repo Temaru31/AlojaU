@@ -11,8 +11,7 @@ Diseño:
 
 Pre-mortem (Fase 0, documentado aquí para auditoría):
 1. Si Supabase/Render se interrumpe: AuthService cae a JWT local HS256
-   (fail-closed 503 solo si la BD es indispensable; lectura pública sigue
-   con mocks en dev, 503 explícito en prod). El cliente reintenta con
+   (sin BD: 503 explícito). El cliente reintenta con
    exponential backoff (ver frontend/src/services/api.js) y muestra
    "Iniciando servidores seguros de AlojaU...".
 2. Google con email ya registrado manual: identity linking por email

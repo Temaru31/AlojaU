@@ -15,7 +15,6 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.core.config import settings
-from app.core.security import MOCK_TOKENS
 from app.routers import auth as auth_router
 
 client = TestClient(app)
@@ -29,10 +28,6 @@ def tmp_email(tag="red"):
 def limpieza_red():
     creados: list[str] = []
     yield creados
-    for e in list(creados):
-        auth_router.MOCK_USERS.pop(e, None)
-        auth_router._MOCK_OTPS.pop(f"{e}:email_verify", None)
-        auth_router._MOCK_RESETS.pop(e, None)
     auth_router._LOGIN_ATTEMPTS.clear()
     auth_router._PW_ATTEMPTS.clear()
     try:
@@ -151,8 +146,6 @@ def test_RT06_inyeccion_registro_contenida():
         "telefono_whatsapp": "573001234567", "acepto_tratamiento_datos": True})
     # Pydantic lo guarda como string (React lo escapa); si pasa, no hay 500.
     assert r2.status_code in (200, 422), r2.text
-    if r2.status_code == 200:
-        auth_router.MOCK_USERS.pop(r2.json()["email"], None)
 
 
 # A07 — Token expirado en endpoint de escritura -> 401.

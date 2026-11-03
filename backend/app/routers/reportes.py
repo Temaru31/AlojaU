@@ -2,7 +2,6 @@
 POST público/anónimo con anti-spam; GET/PATCH solo ADMIN.
 Estados DB (chk_reporte_estado): PENDIENTE -> CONFIRMADO (revisado, procede) o DESCARTADO (revisado, no procede).
 Uso: POST /api/reportes (anónimo) + GET/PATCH /api/reportes (admin)."""
-import time
 from datetime import datetime
 from typing import List, Literal, Optional
 
@@ -17,9 +16,8 @@ from app.db.session import get_session
 
 import logging
 from app.core.db_utils import rollback_seguro
-from app.core.net import ip_de_conexion
+from app.core.net import ip_para_limites
 from app.core.rate_limit import registrar_intento
-from app.core.flags import mock_enabled
 from app.core.dominio import EstadoPublicacion, EstadoReporte
 logger = logging.getLogger("alojau.reportes")
 
@@ -81,7 +79,7 @@ def clear_report_rate_limit_for_tests() -> None:
 
 
 def _check_report_rate_limit(request: Request) -> None:
-    registrar_intento(_REPORT_ATTEMPTS, ip_de_conexion(request), REPORT_LIMIT, REPORT_WINDOW_S,
+    registrar_intento(_REPORT_ATTEMPTS, ip_para_limites(request), REPORT_LIMIT, REPORT_WINDOW_S,
                       "Demasiados reportes, espera 1 minuto (anti-spam)")
 
 
@@ -139,9 +137,7 @@ async def crear_reporte(
     except Exception as e:
         await rollback_seguro(db, "crear_reporte")
         logger.error(f"[reportes crear] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router.get("", response_model=List[ReporteOut], summary="HU-010B Bandeja reportes (solo ADMIN)")

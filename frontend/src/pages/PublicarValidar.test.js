@@ -1,7 +1,7 @@
 // Detalle #2: validate() usa LIMITES (fuente única, sin hardcode).
 // Detalle #8: el gate de teléfono enlaza a /perfil#datos (tab directo).
 import { describe, it, expect } from 'vitest'
-import { validarPublicar, esFotoEjemplo } from './Publicar'
+import { validarPublicar, esFotoEjemplo } from '../utils/publicar'
 import { LIMITES } from '../constants'
 import fs from 'node:fs'
 import path from 'node:path'

@@ -6,7 +6,6 @@ datos reales (seed + filas temporales que el reseed limpia).
 """
 import asyncio
 import uuid
-from datetime import datetime, timezone
 from io import BytesIO
 
 import pytest
@@ -56,7 +55,6 @@ def stores_limpios():
     _a._OTP_SOLICITAR.clear()
     _a._OTP_VERIFICAR.clear()
     _r._REPORT_ATTEMPTS.clear()
-    _p._VISTAS_MEM.clear()
     _s.clear_rol_cache_for_tests()
     for mod, fn in ((_auto, "clear_settings_cache"), (_campus, "clear_campus_cache"),
                     (_ciudades, "clear_ciudades_cache"), (_zonas, "clear_zonas_cache")):

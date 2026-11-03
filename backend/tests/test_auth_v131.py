@@ -1,5 +1,5 @@
 """v13.1 blindaje — IP real tras proxy, fallback de nombre, soft-delete.
-Auto-limpieza: prefijo test_user_tmp_* + purga PG/mocks en teardown.
+Auto-limpieza: prefijo test_user_tmp_* + purga PG en teardown.
 """
 import uuid
 from types import SimpleNamespace
@@ -24,10 +24,6 @@ def tmp_email(tag=""):
 def limpieza():
     creados = []
     yield creados
-    for e in list(creados):
-        auth_router.MOCK_USERS.pop(e, None)
-        auth_router._MOCK_OTPS.pop(f"{e}:email_verify", None)
-        auth_router._MOCK_RESETS.pop(e, None)
     auth_router._LOGIN_ATTEMPTS.clear()
     auth_router._PW_ATTEMPTS.clear()
     try:

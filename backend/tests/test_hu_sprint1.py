@@ -4,7 +4,6 @@ No dependen de IA: verifican criterios reales de SCRUM_Y_QA.md §4.2
 """
 from fastapi.testclient import TestClient
 from app.main import app
-from app.core.security import MOCK_TOKENS
 
 client = TestClient(app)
 

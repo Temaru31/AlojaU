@@ -23,8 +23,8 @@ logger = logging.getLogger("alojau.publicidad")
 async def vencer_destacados(db: AsyncSession) -> int:
     """Marca VENCIDO los destacados caducados. Retorna el conteo.
 
-    Lanza la excepción original si la BD falla (el router decide el
-    fallback mock); siempre hace rollback antes de propagar.
+    Lanza la excepción original si la BD falla; siempre hace rollback
+    antes de propagar.
     """
     from app.models import PublicacionDestacado
 

@@ -3,5 +3,5 @@ from app.core import config
 
 
 def mock_enabled() -> bool:
-    """Datos en memoria permitidos: solo dev/test con USE_MOCK_FALLBACK (nunca prod)."""
+    """Tokens de prueba y dev_token habilitados: solo dev/test con USE_MOCK_FALLBACK."""
     return bool(config.settings.mock_enabled)

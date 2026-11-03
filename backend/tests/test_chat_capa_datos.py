@@ -86,7 +86,7 @@ def _requiere_pg(coro_fn):
     """Envuelve una corrutina: sin PG omite; con PG sin 021, falla (drift)."""
     async def _w():
         if not await _pg_ok():
-            pytest.skip("sin PG local (modo mock)")
+            pytest.skip("sin PG local")
         if not await _rol_aplicado():
             pytest.fail("021 no aplicada en esta BD: aplica schema.sql + "
                         "migrations/*.sql en orden (ver scripts/verify_ci.sh)")

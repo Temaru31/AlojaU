@@ -1,7 +1,6 @@
 """
 db/session.py - Sesión async SQLAlchemy 2.0 + asyncpg -> PostgreSQL 16 (Sección 5.10)
 No tocar si no eres de BD. Lee DATABASE_URL del .env
-Sprint1: fallback mock si PG no disponible para que frontend no se bloquee.
 """
 import os
 import sys

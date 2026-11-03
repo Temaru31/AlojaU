@@ -11,14 +11,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db_utils import rollback_seguro
 from app.core.logseguro import exc_resumen
-from app.core.net import client_ip
+from app.core.net import client_ip, ip_para_limites
 from app.core.rate_limit import registrar_intento_persistente, verificar_intentos_fallidos
 from app.db.session import get_session
-from app.core.flags import mock_enabled
 from app.core.dominio import Rol
-from app.fixtures.usuarios_demo import MOCK_USERS
 from app.core.normalizacion import normalizar_email
-from app.routers.auth.comun import _emitir_token_con_sesion, _gracia_restante, _hash_password_async, _intentar_purgar_usuario, _issue_token, normalizar_telefono, validar_foto_url
+from app.routers.auth.comun import (
+    _emitir_token_con_sesion,
+    _gracia_restante,
+    _hash_password_async,
+    _intentar_purgar_usuario,
+    _respuesta_login,
+    normalizar_telefono,
+    validar_foto_url,
+)
 from app.routers.auth.esquemas import GoogleCallbackIn, LoginOut
 from app.routers.auth.limites import _check_oauth_rate_limit
 
@@ -101,6 +107,99 @@ async def oauth_google_url(redirect_to: str | None = None):
             "redirect_urls": permitidas}
 
 
+async def _supabase_id_confiable(db: AsyncSession, data: GoogleCallbackIn,
+                                 claves_intento: tuple[str, ...]) -> str | None:
+    """`supabase_id` de los claims verificados del JWT, nunca el que envía el cliente.
+
+    Si llega JWT y Supabase está configurado, se valida contra JWKS (fail-closed:
+    un JWT inválido cuenta como intento fallido). Sin JWT (dev/tests sin
+    Supabase) se conserva `data.supabase_id`.
+    """
+    if not (data.supabase_jwt and settings.supabase_configured):
+        return data.supabase_id
+    try:
+        claims = await _verificar_jwt_google(data)
+    except HTTPException:
+        for clave in claves_intento:
+            await registrar_intento_persistente(db, clave, False)
+        raise
+    return str(claims.get("sub") or "")[:64] or data.supabase_id
+
+
+async def _vincular_cuenta_existente(db: AsyncSession, email: str, supabase_id: str | None):
+    """Vincula Google a la cuenta del email (revive si estaba en gracia).
+
+    Retorna None si no hay cuenta o su gracia de borrado venció (se purga).
+    """
+    from app.models import Usuario
+    res = await db.execute(select(Usuario).where(Usuario.email == email))
+    usuario = res.scalars().first()
+    if usuario is None:
+        return None
+    restan = _gracia_restante(usuario)
+    if restan is not None and restan < 0:
+        await _intentar_purgar_usuario(db, usuario)
+        return None
+    if restan is not None:
+        usuario.eliminado_en = None  # el login con Google revive la cuenta
+    # Linking: conserva el password manual (login dual) y marca Google.
+    proveedor = getattr(usuario, "auth_provider", "password") or "password"
+    if "google" not in proveedor:
+        usuario.auth_provider = f"{proveedor}+google"
+    _marcar_identidad_google(usuario, supabase_id)
+    await db.commit()
+    await db.refresh(usuario)
+    return usuario
+
+
+async def _crear_cuenta_google(db: AsyncSession, data: GoogleCallbackIn, email: str,
+                               supabase_id: str | None, ip: str) -> tuple:
+    """Crea un ESTUDIANTE verificado. Si otra petición lo creó antes, lo vincula.
+
+    Retorna (usuario, es_nuevo).
+    """
+    from app.models import Usuario
+    usuario = Usuario(
+        nombre_completo=data.nombre_completo.strip()[:150],
+        email=email,
+        password_hash=await _hash_password_async(secrets.token_urlsafe(24)),
+        # Google no entrega teléfono -> NULL (nunca placeholder).
+        telefono_whatsapp=normalizar_telefono(data.telefono_whatsapp) if data.telefono_whatsapp else None,
+        foto_perfil_url=validar_foto_url(data.foto_perfil_url),
+        rol=Rol.ESTUDIANTE,
+        telefono_verificado=False,
+        email_verificado=True,
+        auth_provider="google",
+        supabase_id=supabase_id,
+        acepto_tratamiento_datos=True,
+        fecha_consentimiento=datetime.now(timezone.utc),
+        ip_consentimiento=ip,
+        version_politica=settings.POLITICA_VERSION,
+    )
+    db.add(usuario)
+    es_nuevo = True
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Perdió la carrera: otra petición creó la fila con el mismo email.
+        await db.rollback()
+        res = await db.execute(select(Usuario).where(Usuario.email == email))
+        usuario = res.scalars().first()
+        if usuario is None:
+            raise
+        _marcar_identidad_google(usuario, supabase_id)
+        await db.commit()
+        es_nuevo = False
+    await db.refresh(usuario)
+    return usuario, es_nuevo
+
+
+def _marcar_identidad_google(usuario, supabase_id: str | None) -> None:
+    if supabase_id:
+        usuario.supabase_id = supabase_id
+    usuario.email_verificado = True
+
+
 @router.post("/oauth/google/callback", response_model=LoginOut,
              summary="Callback Google: linking por email, sin duplicados")
 async def oauth_google_callback(data: GoogleCallbackIn, request: Request,
@@ -118,117 +217,23 @@ async def oauth_google_callback(data: GoogleCallbackIn, request: Request,
     # Anti-fuerza-bruta/DoS ANTES de la verificación JWKS (fetch de red) y la
     # BD: memoria (rápido) + persistente PG (sobrevive reinicios Render).
     _check_oauth_rate_limit(request)
-    ip = client_ip(request)
-    await verificar_intentos_fallidos(db, f"oauth:ip:{ip}", limite=20, ventana_s=900)
-    await verificar_intentos_fallidos(db, f"oauth:email:{email}", limite=10, ventana_s=900)
-    # Validación opcional del JWT Supabase contra JWKS (fail-closed si se envía).
-    # El supabase_id autoritativo sale de los claims verificados, nunca del
-    # valor que envía el cliente (un atacante podría fijar el de otro usuario).
-    # Sin JWT (dev/tests sin Supabase): se conserva data.supabase_id.
-    supabase_id_verificado: str | None = None
+    ip = client_ip(request)  # se registra con el consentimiento Ley 1581
+    claves_intento = (f"oauth:ip:{ip_para_limites(request)}", f"oauth:email:{email}")
+    await verificar_intentos_fallidos(db, claves_intento[0], limite=20, ventana_s=900)
+    await verificar_intentos_fallidos(db, claves_intento[1], limite=10, ventana_s=900)
+    supabase_id = await _supabase_id_confiable(db, data, claves_intento)
     try:
-        if data.supabase_jwt and settings.supabase_configured:
-            _claims = await _verificar_jwt_google(data)
-            supabase_id_verificado = str(_claims.get("sub") or "")[:64] or None
-    except HTTPException:
-        await registrar_intento_persistente(db, f"oauth:ip:{ip}", False)
-        await registrar_intento_persistente(db, f"oauth:email:{email}", False)
-        raise
-    supabase_id = supabase_id_verificado or data.supabase_id
-    es_nuevo = False
-    try:
-        from app.models import Usuario
-        res = await db.execute(select(Usuario).where(Usuario.email == email))
-        u = res.scalars().first()
-        if u:
-            # Si estaba en período de gracia, el login con Google la revive.
-            restan = _gracia_restante(u)
-            if restan is not None and restan < 0:
-                await _intentar_purgar_usuario(db, u)
-                u = None
-            else:
-                if restan is not None:
-                    u.eliminado_en = None
-                # Linking: conserva password manual (login dual) y marca Google.
-                prov = getattr(u, "auth_provider", "password") or "password"
-                if "google" not in prov:
-                    u.auth_provider = f"{prov}+google" if prov else "google"
-                if supabase_id:
-                    u.supabase_id = supabase_id
-                u.email_verificado = True
-                await db.commit()
-                await db.refresh(u)
-        if not u:
-            # Google no entrega teléfono -> NULL (nunca placeholder).
-            tel_g = normalizar_telefono(data.telefono_whatsapp) if data.telefono_whatsapp else None
-            u = Usuario(                nombre_completo=data.nombre_completo.strip()[:150],
-                email=email,
-                password_hash=await _hash_password_async(secrets.token_urlsafe(24)),
-                telefono_whatsapp=tel_g,
-                foto_perfil_url=validar_foto_url(data.foto_perfil_url),
-                rol=Rol.ESTUDIANTE,
-                telefono_verificado=False,
-                email_verificado=True,
-                auth_provider="google",
-                supabase_id=supabase_id,
-                acepto_tratamiento_datos=True,
-                fecha_consentimiento=datetime.now(timezone.utc),
-                ip_consentimiento=ip,
-                version_politica=settings.POLITICA_VERSION,
-            )
-            db.add(u)
-            try:
-                await db.commit()
-                es_nuevo = True  # creado en esta petición (mensaje "¡Cuenta creada!")
-            except IntegrityError:
-                # Perdió la carrera: otro request creó la fila -> vincular.
-                await db.rollback()
-                res2 = await db.execute(select(Usuario).where(Usuario.email == email))
-                u = res2.scalars().first()
-                if not u:
-                    raise
-                if supabase_id:
-                    u.supabase_id = supabase_id
-                u.email_verificado = True
-                await db.commit()
-            await db.refresh(u)
-        token = await _emitir_token_con_sesion(db, u, request, email_verificado=True)
-        await registrar_intento_persistente(db, f"oauth:ip:{ip}", True)
-        await registrar_intento_persistente(db, f"oauth:email:{email}", True)
-        return {"access_token": token, "token_type": "bearer",
-                "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": u.rol, "mock": False,
-                "es_nuevo": es_nuevo}
+        usuario = await _vincular_cuenta_existente(db, email, supabase_id)
+        es_nuevo = usuario is None
+        if es_nuevo:
+            usuario, es_nuevo = await _crear_cuenta_google(db, data, email, supabase_id, ip)
+        token = await _emitir_token_con_sesion(db, usuario, request, email_verificado=True)
+        for clave in claves_intento:
+            await registrar_intento_persistente(db, clave, True)
+        return {**_respuesta_login(token, usuario.rol, mock=False), "es_nuevo": es_nuevo}
     except HTTPException:
         raise
     except Exception as e:
         await rollback_seguro(db, "oauth_google_callback")
         logger.error(f"[oauth google] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        m = MOCK_USERS.get(email)
-        es_nuevo_mock = False
-        if not m:
-            es_nuevo_mock = True
-            m = {
-                "password": await _hash_password_async(secrets.token_urlsafe(16)),
-                "rol": Rol.ESTUDIANTE,
-                "id": 90 + len(MOCK_USERS),
-                "nombre_completo": data.nombre_completo,
-                "telefono_whatsapp": (normalizar_telefono(data.telefono_whatsapp)
-                                      if data.telefono_whatsapp else None),
-                "telefono_verificado": False,
-                "email_verificado": True,
-                "auth_provider": "google",
-            }
-            try:
-                m["foto_perfil_url"] = validar_foto_url(data.foto_perfil_url)
-            except HTTPException:
-                m["foto_perfil_url"] = None
-            MOCK_USERS[email] = m
-        else:
-            m["email_verificado"] = True
-            m["auth_provider"] = "google" if m.get("auth_provider") == "password" else f"{m.get('auth_provider','')}+google"
-        token = _issue_token(m["id"], email, m["rol"], False, True)
-        return {"access_token": token, "token_type": "bearer",
-                "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": m["rol"], "mock": True,
-                "es_nuevo": es_nuevo_mock}
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")

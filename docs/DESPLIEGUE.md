@@ -145,6 +145,7 @@ Si necesitas enseñar la plataforma con más contenido (las 13 del home + 3 paus
 | Render | `CORS_ORIGINS` | `https://aloja-u.vercel.app,http://localhost:5173` | Render | No |
 | Render | `ENV` | `prod` | Render | No |
 | Render | `USE_MOCK_FALLBACK` | `False` | Render | No |
+| Render | `TRUSTED_PROXY_HOPS` | `1` (tras verificarlo, ver §8) | Render | No |
 | Vercel | `VITE_API_URL` | `https://alojau-api.onrender.com` | Vercel → Settings → Env | No |
 | Render | `CHAT_ENABLED` | `false` (default apagado) | Render | No |
 | Render | `CHAT_DATABASE_URL` | `postgresql+asyncpg://chatbot_ro.<ref>:<secreto>@...pooler.supabase.com:5432/postgres` | Render (Sensitive) | **Sí** |
@@ -177,6 +178,16 @@ curl -s -I -H "Origin: https://aloja-u.vercel.app" https://alojau-api.onrender.c
 ```
 
 **Esperado:** health 200, `total:6`, CORS `allow-origin: https://aloja-u.vercel.app`, frontend sin 500.
+
+**Límite de intentos detrás del proxy (`TRUSTED_PROXY_HOPS`).** Los límites de login, OAuth y
+reportes cuentan por IP (`backend/app/core/net.py::ip_para_limites`). Con `0` (default) usan la
+IP de la conexión: detrás del balanceador de Render esa es la del proxy y **todos los usuarios
+compartirían el mismo cupo**. Para comprobarlo: Render → Logs, haz login desde dos redes distintas
+(p. ej. Wi-Fi y datos móviles) y mira la IP de las líneas de acceso de uvicorn. Si es la misma IP
+privada (10.x / 172.16-31.x) en ambas, hay un proxy delante: fija `TRUSTED_PROXY_HOPS=1`. Con `1` se
+toma la última IP de `X-Forwarded-For` (la que añade el proxy); las que escribe el cliente a la
+izquierda se ignoran, así que no se puede falsificar. Nunca pongas un valor mayor que el número real
+de proxies: el cliente podría elegir su IP.
 
 ---
 

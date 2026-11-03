@@ -11,12 +11,16 @@ from app.core.config import settings
 from app.core.db_utils import rollback_seguro
 from app.core.logseguro import exc_resumen
 from app.db.session import get_session
-from app.core.flags import mock_enabled
 from app.core.dominio import Rol
-from app.fixtures.usuarios_demo import MOCK_USERS
 from app.core.normalizacion import normalizar_email
 from app.core.dominio import DIAS_GRACIA_CUENTA
-from app.routers.auth.comun import _emitir_token_con_sesion, _gracia_restante, _intentar_purgar_usuario, _issue_token, _revocar_sesiones_usuario, _verify_password_async
+from app.routers.auth.comun import (
+    _emitir_token_con_sesion,
+    _gracia_restante,
+    _intentar_purgar_usuario,
+    _revocar_sesiones_usuario,
+    _verify_password_async,
+)
 from app.routers.auth.esquemas import CuentaEliminarIn, CuentaRestaurarIn, LoginOut, SesionOut
 
 logger = logging.getLogger("alojau.auth")
@@ -54,14 +58,7 @@ async def promoverme(user: dict = Depends(get_current_user),
             logger.error("[auth promover] commit falló: %s", exc_resumen(e), exc_info=True)
             raise HTTPException(status_code=503, detail="No se pudo actualizar tu rol, intenta de nuevo")
     if rol is None:
-        if not mock_enabled():
-            raise HTTPException(status_code=404, detail="Usuario no encontrado")
-        for em, m in MOCK_USERS.items():
-            if m.get("id") == uid and m.get("rol") == Rol.ESTUDIANTE:
-                m["rol"] = Rol.ARRENDADOR
-                rol = Rol.ARRENDADOR
-                break
-        rol = rol or user.get("rol")
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return {"rol": rol, "mensaje": "Cuenta promovida a ARRENDADOR." if rol == Rol.ARRENDADOR else "Sin cambios."}
 
 
@@ -89,10 +86,7 @@ async def listar_sesiones(user: dict = Depends(get_current_user),
         return out
     except Exception:
         await rollback_seguro(db, "listar_sesiones")
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        return [SesionOut(jti=str(actual_jti or "mock"), ip="127.0.0.1", actual=True,
-                          user_agent="mock")]
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router.post("/sesiones/revocar-todas", summary="Cerrar sesión en todos los dispositivos")
@@ -106,9 +100,7 @@ async def revocar_sesiones(user: dict = Depends(get_current_user),
     except Exception as e:
         await rollback_seguro(db, "revocar_sesiones")
         logger.error(f"[sesiones revocar] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        return {"mensaje": "Sesiones revocadas (mock).", "revocadas": 1}
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 def _claims_sin_verificar_revocacion(authorization: str | None) -> dict | None:
@@ -137,8 +129,7 @@ async def logout_actual(
     """M1 efecto fantasma: revoca el jti del token actual en BD.
 
     Idempotente: sin token, token legacy sin jti o ya revocado responden 200
-    igual (el frontend limpia el estado local de todas formas). Sin PG en
-    dev responde ok mock.
+    igual (el frontend limpia el estado local de todas formas).
     """
     claims = _claims_sin_verificar_revocacion(authorization)
     if not claims:
@@ -154,9 +145,7 @@ async def logout_actual(
     except Exception as e:
         await rollback_seguro(db, "logout_actual")
         logger.error(f"[logout] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        return {"mensaje": "Sesión cerrada (mock).", "revocadas": 1, "mock": True}
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router.post("/logout-all", summary="Cerrar sesión en todos los dispositivos")
@@ -178,9 +167,7 @@ async def logout_todas(
     except Exception as e:
         await rollback_seguro(db, "logout_todas")
         logger.error(f"[logout-all] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        return {"mensaje": "Sesiones revocadas (mock).", "revocadas": 1, "mock": True}
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 # ---------------------------------------------------------------------------
@@ -229,17 +216,7 @@ async def eliminar_cuenta(data: CuentaEliminarIn,
     except Exception as e:
         await rollback_seguro(db, "eliminar_cuenta")
         logger.error(f"[cuenta eliminar] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        for em, m in MOCK_USERS.items():
-            if m.get("id") == uid:
-                if (m.get("auth_provider", "password") == "password"
-                        and (not data.password or not await _verify_password_async(data.password, m["password"]))):
-                    raise HTTPException(status_code=403, detail="Contraseña incorrecta")
-                m["eliminado_en"] = datetime.now(timezone.utc).isoformat()
-                break
-        return {"mensaje": "Cuenta marcada para eliminación (mock).",
-                "gracia_dias": DIAS_GRACIA_CUENTA}
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router.post("/cuenta/restaurar", response_model=LoginOut, summary="Restaurar cuenta en gracia")
@@ -272,14 +249,4 @@ async def restaurar_cuenta(data: CuentaRestaurarIn, request: Request,
     except Exception as e:
         await rollback_seguro(db, "restaurar_cuenta")
         logger.error(f"[cuenta restaurar] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        m = MOCK_USERS.get(email)
-        if not m or not m.get("eliminado_en"):
-            raise HTTPException(status_code=404, detail="Cuenta no encontrada")
-        if not await _verify_password_async(data.password, m["password"]):
-            raise HTTPException(status_code=401, detail="Credenciales inválidas")
-        m.pop("eliminado_en", None)
-        token = _issue_token(m["id"], email, m["rol"], False, True)
-        return {"access_token": token, "token_type": "bearer",
-                "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": m["rol"], "mock": True}
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")

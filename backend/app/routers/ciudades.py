@@ -1,7 +1,7 @@
 """GET /api/ciudades — catálogo multiciudad (Fase 4).
 
 Lista ciudades activas con slug URL-safe. Sin auth. Cache-Control 1h
-(mismo patrón que /api/campus). En prod sin DB -> 503, en dev -> mock Popayán.
+(mismo patrón que /api/campus). Sin DB -> 503.
 """
 
 import time
@@ -16,7 +16,6 @@ from app.services.ciudades import ciudad_to_out
 
 import logging
 from app.core.db_utils import rollback_seguro
-from app.core.flags import mock_enabled
 
 logger = logging.getLogger("alojau.ciudades")
 
@@ -52,11 +51,7 @@ async def list_ciudades(response: Response, db: AsyncSession = Depends(get_sessi
     except Exception as e:
         logger.error(f"[ciudades] DB falló: {exc_resumen(e)}", exc_info=True)
         await rollback_seguro(db, "list_ciudades")
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        payload = [
-            {"id": 1, "nombre": "Popayán", "departamento": "Cauca", "slug": "popayan", "activo": True}
-        ]
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
     _cache["ts"] = ahora
     _cache["payload"] = payload
     response.headers["Cache-Control"] = "public, max-age=3600"

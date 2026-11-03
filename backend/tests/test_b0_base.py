@@ -47,7 +47,7 @@ def test_b0_lat_lng_both_or_none_422():
     assert r3.status_code in (201, 404)
 
 def test_b0_fk_zona_404():
-    # Requiere DB viva; si cae a mock dev (201) se acepta pero se documenta.
+    # Requiere DB viva: la FK inexistente responde 404.
     p = {**BASE_PAYLOAD, "zona_barrio_id": 999999}
     r = client.post("/api/publicaciones", json=p, headers=auth_header())
     assert r.status_code in (404, 201)

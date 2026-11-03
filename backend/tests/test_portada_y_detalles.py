@@ -1,7 +1,6 @@
 """BUG#1 portada + detalles 1,3-6,9-10 (foco anti-placebo end-to-end).
 
 Cubre:
-- mock_to_out simula imagenes con ids/orden (antes [] siempre).
 - build_card/build_detail ordenan fotos por orden (portada primero).
 - Reordenar vía API -> GET detalle trae imagenes[0].id == portada_id y
   fotos[0] == portada url (ciclo completo UI->API->BD->lectura).
@@ -14,16 +13,12 @@ Cubre:
 - bcrypt directo verifica seeds legacy (detalle #10) y AuthService cableado.
 - CORS sin PUT (detalle #10).
 """
-import copy
 import uuid
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.routers import auth as auth_router
-from app.routers import publicaciones as pubs_router
-from app.routers import uploads as uploads_router
 from app.services import publicacion_view as view
 
 client = TestClient(app)
@@ -54,25 +49,6 @@ PUB = {
 def limpieza():
     creados = []
     yield creados
-    for e in list(creados):
-        auth_router.MOCK_USERS.pop(e, None)
-    # Restaura MOCK_PUBS mutados por tests mock (orden/delete/vincular).
-    try:
-        from app.routers.publicaciones import MOCK_PUBS as _MP
-        for p in _MP:
-            if p.get("id") in (1, 2, 3) and "fotos" in p:
-                # Longitudes canónicas del seed mock (1:4, 2:3, 3:3).
-                want = 4 if p["id"] == 1 else 3
-                if len(p["fotos"]) != want:
-                    pass  # se repara abajo por URL base conocida
-        # Reparo determinista solo si el test dejó huellas tmp (http://tmp).
-        for p in _MP:
-            p["fotos"] = [u for u in p.get("fotos", []) if "tmp-portada" not in str(u)]
-            # Si se reordenó, no podemos saber el orden original: lo re-ordena
-            # por URL para dejar el seed estable (las URLs demo son únicas).
-            p["fotos"] = sorted(p.get("fotos", []))
-    except Exception:
-        pass
     try:
         from app.core.security import clear_rol_cache_for_tests as _clr
         _clr()
@@ -155,20 +131,6 @@ def _usuario_verificado(limpieza, tag, pw="Portada1!x"):
         pytest.skip("sin PG real")
     tok = client.post("/api/auth/login", json={"email": email, "password": pw}).json()["access_token"]
     return email, {"Authorization": f"Bearer {tok}"}
-
-
-# --- BUG#1: mock_to_out simula imagenes ---------------------------------------
-def test_mock_imagenes_con_ids_y_orden():
-    pub = {"id": 7, "titulo": "t", "tipo_inmueble": "HABITACION_INDEPENDIENTE",
-           "canon_mensual": 100, "zona_barrio_id": 1, "direccion_referencial": "x",
-           "estado": "ACTIVO", "fotos": ["https://a/1.jpg", "https://a/2.jpg"],
-           "servicios_ids": [], "usuario_id": 1}
-    out = view.mock_to_out(pub, None, True)
-    assert out["imagenes"] == [
-        {"id": 7001, "url": "https://a/1.jpg", "orden": 1},
-        {"id": 7002, "url": "https://a/2.jpg", "orden": 2},
-    ]
-    assert out["fotos"][0] == out["imagenes"][0]["url"]
 
 
 # --- BUG#1: build_card/build_detail ordenan aunque el ORM venga desordenado --
@@ -255,68 +217,6 @@ def test_reordenar_detalle_portada_primera(limpieza):
     mias = [p for p in client.get("/api/publicaciones/mias", headers=h).json()["items"]
             if p["id"] == pid]
     assert mias and mias[0]["fotos"][0] == det2["imagenes"][0]["url"]
-
-
-# --- BUG#1 mock: gestor multimedia sin PG -------------------------------------
-def test_mock_gestor_orden_delete_vincular():
-    from app.db.session import get_session
-    from app.routers.publicaciones import MOCK_PUBS
-    backup = copy.deepcopy([p for p in MOCK_PUBS if p["id"] == 1])
-    assert backup, "seed mock id=1 ausente"
-
-    class _Dead:
-        async def execute(self, *a, **k):
-            raise RuntimeError("PG caído (test mock)")
-        async def get(self, *a, **k):
-            raise RuntimeError("PG caído (test mock)")
-        async def commit(self):
-            raise RuntimeError("PG caído (test mock)")
-        async def rollback(self):
-            return None
-        async def flush(self):
-            raise RuntimeError("PG caído (test mock)")
-        async def delete(self, *a, **k):
-            raise RuntimeError("PG caído (test mock)")
-
-    async def _dead():
-        yield _Dead()
-
-    app.dependency_overrides[get_session] = _dead
-    try:
-        h = {"Authorization": "Bearer mock-token-arrendador"}
-        pub = next(p for p in MOCK_PUBS if p["id"] == 1)
-        n0 = len(pub["fotos"])
-        assert n0 >= 3
-        ids = uploads_router._mock_ids_para(pub)
-        # Reordenar: invierte; la portada pasa a ser la última url.
-        r = client.patch("/api/publicaciones/upload/orden",
-                         json={"publicacion_id": 1, "orden_ids": ids[::-1]}, headers=h)
-        assert r.status_code == 200, r.text
-        assert r.json()["portada_id"] == ids[-1]
-        assert r.json().get("mock") is True
-        d = client.get("/api/publicaciones/1", headers=h).json()
-        assert d["fotos"][0] == d["imagenes"][0]["url"]
-        # Vincular una tmp y borrarla (ciclo mock completo).
-        v = client.post("/api/publicaciones/upload/vincular",
-                        json={"publicacion_id": 1,
-                              "urls": ["https://tmp-portada-test.com/x.jpg"]}, headers=h)
-        assert v.status_code == 200, v.text
-        assert v.json()["total"] == n0 + 1
-        nuevo_id = v.json()["ids"][-1]
-        dele = client.delete(f"/api/publicaciones/upload/{nuevo_id}", headers=h)
-        assert dele.status_code == 200, dele.text
-        assert dele.json()["fotos_restantes"] == n0
-        # orden_ids incompleto -> 422 también en mock.
-        assert client.patch("/api/publicaciones/upload/orden",
-                            json={"publicacion_id": 1, "orden_ids": ids[:1]},
-                            headers=h).status_code == 422
-    finally:
-        app.dependency_overrides.pop(get_session, None)
-        for b in backup:
-            cur = next((x for x in MOCK_PUBS if x["id"] == b["id"]), None)
-            if cur is not None:
-                cur.clear()
-                cur.update(copy.deepcopy(b))
 
 
 # --- Detalle #1: bulk-reject total demociona ----------------------------------
@@ -406,7 +306,7 @@ def test_require_arrendador_cachea_rol():
     from app.core import security as sec
     sec.clear_rol_cache_for_tests()
     assert sec._ROL_CACHE == {}
-    # Simula un token ESTUDIANTE cuyo rol real es ARRENDADOR en MOCK_USERS.
+    # Token ESTUDIANTE cuyo rol real (BD, seed) es ARRENDADOR.
     tok = asyncio.run(_tok_estudiante_arrendador())
     u = asyncio.run(sec.require_arrendador(f"Bearer {tok}"))
     assert u["rol"] == "ARRENDADOR"

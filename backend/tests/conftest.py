@@ -15,7 +15,7 @@ El reseed es simple, determinista y rápido.
 
 SEGURIDAD: si DATABASE_URL apunta a prod (supabase.co o ENV=prod) la sesión
 se ABORTA con error explícito. JAMÁS truncar producción por accidente.
-Sin PG (modo mock), se omite con aviso y la suite corre como hoy.
+Sin PG se omite con aviso (la suite necesita PostgreSQL para pasar).
 """
 import asyncio
 import os
@@ -86,7 +86,7 @@ def _pg_disponible() -> bool:
         return True
     except Exception as e:
         if not _aviso_mostrado["mock"]:
-            print(f"\n[T5] PG no disponible ({type(e).__name__}): suite en modo mock, sin reseed.")
+            print(f"\n[T5] PG no disponible ({type(e).__name__}): suite sin reseed (las pruebas de BD fallarán).")
             _aviso_mostrado["mock"] = True
         return False
 
@@ -152,8 +152,7 @@ def _memoria_hermetica():
     TestClient comparte IP ("testclient") y los throttles/cachés viven en
     el proceso: sin esto, un archivo que llena un bucket deja 429 al
     siguiente (falso negativo intermitente, ej. reportes/oráculo).
-    La BD la resetea _t5_test_hermetico; aquí solo memoria. Los tests que
-    mutan MOCK_USERS/MOCK_PUBS a propósito conservan su propio cleanup.
+    La BD la resetea _t5_test_hermetico; aquí solo memoria.
     """
     _limpiar_memoria()
     yield
@@ -198,13 +197,12 @@ def _limpiar_memoria() -> None:
         pass
     for _mod, _nombres in (
         ("app.routers.auth", ("_TG_MEM", "_AVATAR_MEM", "_OTP_SOLICITAR",
-                              "_OTP_VERIFICAR", "_MOCK_OTPS", "_MOCK_RESETS",
+                              "_OTP_VERIFICAR",
                               "_TELEGRAM_VINCULOS", "_TELEGRAM_USADOS",
                               "_TELEGRAM_PENDIENTES",
                               "_LOGIN_ATTEMPTS", "_PW_ATTEMPTS",
                               "_OAUTH_ATTEMPTS")),
-        ("app.routers.publicaciones", ("_VISTAS_MEM", "_VISTAS_MOCK_SET",
-                                       "_PUB_ATTEMPTS")),
+        ("app.routers.publicaciones", ("_PUB_ATTEMPTS",)),
         ("app.routers.uploads", ("_UPLOAD_ATTEMPTS",)),
     ):
         try:

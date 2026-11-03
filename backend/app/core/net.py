@@ -7,8 +7,13 @@ Dos nociones distintas, a propósito:
   X-Forwarded-For, así que no debe ser la única barrera de un límite duro.
 - `ip_de_conexion`: el par TCP directo (`request.client.host`). No se puede
   falsificar con cabeceras, pero detrás de un proxy es la IP del proxy.
+- `ip_para_limites`: la que usan los límites duros (login, OAuth, reportes).
+  Con `TRUSTED_PROXY_HOPS` proxies de confianza toma la IP que añadió el
+  proxy más externo; sin proxies configurados, la de la conexión.
 """
 import ipaddress
+
+from app.core import config
 
 DESCONOCIDA = "unknown"
 _MAX_LARGO_IP = 45
@@ -39,6 +44,26 @@ def client_ip(request) -> str:
             return ip
     conexion = ip_de_conexion(request)
     return ip_valida(conexion) or conexion
+
+
+def ip_para_limites(request) -> str:
+    """IP del cliente que no se puede falsificar con cabeceras.
+
+    Cada proxy AÑADE al final de X-Forwarded-For la IP que lo contactó; lo de
+    la izquierda lo escribe el cliente. Con N proxies de confianza delante de
+    la app, el cliente real es la entrada N-ésima contando desde la derecha.
+    Sin proxies configurados, o si la cabecera no tiene esas entradas, se usa
+    la IP de la conexión.
+    """
+    saltos = max(0, int(config.settings.TRUSTED_PROXY_HOPS or 0))
+    if saltos:
+        headers = getattr(request, "headers", None) if request else None
+        cadena = [p.strip() for p in str((headers or {}).get("x-forwarded-for") or "").split(",") if p.strip()]
+        if len(cadena) >= saltos:
+            ip = ip_valida(cadena[-saltos])
+            if ip:
+                return ip
+    return ip_de_conexion(request)
 
 
 def ip_de_conexion(request) -> str:

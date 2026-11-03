@@ -14,10 +14,6 @@ from app.core.logseguro import exc_resumen
 from app.core.rate_limit import registrar_intento, registrar_intento_persistente, verificar_intentos_fallidos
 from app.db.session import get_session
 from app.services.storage import borrar_local_si_huerfano
-from app.core.flags import mock_enabled
-from app.core.dominio import Rol
-from app.fixtures.publicaciones_demo import MOCK_PUBS
-from app.fixtures.usuarios_demo import MOCK_USERS
 from app.core.normalizacion import normalizar_email
 from app.routers.auth.comun import _hash_password_async, _verify_password_async, normalizar_telefono, validar_foto_url, validar_preferencias
 from app.routers.auth.esquemas import PasswordChangeIn, PerfilOut, PerfilUpdateIn
@@ -27,7 +23,7 @@ logger = logging.getLogger("alojau.auth")
 router = APIRouter()
 
 def _sanitizar_cambios_perfil(data: "PerfilUpdateIn") -> dict:
-    """Normaliza/valida un PATCH de perfil una sola vez (DB y mock la usan).
+    """Normaliza/valida un PATCH de perfil una sola vez.
 
     Returns:
         Dict solo con claves enviadas (`model_fields_set`): `nombre`,
@@ -78,25 +74,6 @@ def _perfil_out_db(u) -> "PerfilOut":
     )
 
 
-def _perfil_out_mock(m: dict, email, user_id, user: dict | None = None) -> "PerfilOut":
-    """PerfilOut desde MOCK_USERS (incluye campos flexibles v13.2 + M5 telegram)."""
-    user = user or {}
-    return PerfilOut(
-        id=m.get("id", user_id or 1),
-        email=email,
-        nombre_completo=m.get("nombre_completo", "Arrendador Demo"),
-        telefono_whatsapp=m.get("telefono_whatsapp"),
-        telefono_verificado=bool(m.get("telefono_verificado", False)),
-        rol=m.get("rol", Rol.ARRENDADOR),
-        email_verificado=bool(m.get("email_verificado", True)),
-        auth_provider=m.get("auth_provider", "password"),
-        bio=m.get("bio"),
-        foto_perfil_url=m.get("foto_perfil_url"),
-        preferencias=m.get("preferencias") or {},
-        telegram_vinculado=bool(m.get("telegram_chat_id")),
-    )
-
-
 # ---------------------------------------------------------------------------
 # Perfil (extiende contrato previo con email_verificado/auth_provider)
 # ---------------------------------------------------------------------------
@@ -118,34 +95,12 @@ async def get_perfil(
         if u:
             # La revocación JTI ya la aplica get_current_user (central).
             return _perfil_out_db(u)
-        if not mock_enabled():
-            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"[auth get_perfil] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-
-    m = MOCK_USERS.get(email) or MOCK_USERS.get(normalizar_email(email or ""))
-    if not m:
-        for em, udata in MOCK_USERS.items():
-            if udata.get("id") == user_id:
-                m = udata
-                email = em
-                break
-    if not m:
-        return PerfilOut(
-            id=user_id or 1,
-            email=email or "arrendador@alojau.com",
-            nombre_completo="Arrendador Demo",
-            telefono_whatsapp="573001234567",
-            telefono_verificado=bool(user.get("telefono_verificado", False)),
-            rol=user.get("rol", Rol.ARRENDADOR),
-            email_verificado=bool(user.get("email_verificado", False)),
-            auth_provider="password",
-        )
-    return _perfil_out_mock(m, email, user_id, user)
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router.patch("/perfil/password", summary="Cambiar contraseña (requiere la actual)")
@@ -185,29 +140,13 @@ async def cambiar_password(
             u.password_hash = await _hash_password_async(data.nueva)
             await db.commit()
             return {"mensaje": "Contraseña actualizada con éxito."}
-        if not mock_enabled():
-            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
     except HTTPException:
         raise
     except Exception as e:
         await rollback_seguro(db, "cambiar_password")
         logger.error(f"[auth password] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-
-    m = MOCK_USERS.get(email)
-    if not m:
-        for em, udata in MOCK_USERS.items():
-            if udata.get("id") == user_id:
-                m = udata
-                email = em
-                break
-    if not m:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    if not await _verify_password_async(data.actual, m["password"]):
-        raise HTTPException(status_code=403, detail="La contraseña actual no coincide")
-    m["password"] = await _hash_password_async(data.nueva)
-    return {"mensaje": "Contraseña actualizada con éxito."}
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router.post("/perfil/solicitud-verificacion", status_code=202, summary="Solicitar verificación de teléfono")
@@ -321,11 +260,8 @@ async def _avatar_guardar(
         from app.models import Usuario
         u = await db.get(Usuario, uid)
         if not u:
-            if not mock_enabled():
-                # Sin usuario no hay dueño para el archivo recién guardado:
-                # se borra para no dejar huérfanos en disco.
-                borrar_local_si_huerfano(url)
-                raise HTTPException(status_code=404, detail="Usuario no encontrado")
+            borrar_local_si_huerfano(url)
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
         else:
             anterior = u.foto_perfil_url
             u.foto_perfil_url = url[:500]
@@ -342,19 +278,8 @@ async def _avatar_guardar(
     except Exception as e:
         await rollback_seguro(db, "_avatar_guardar")
         logger.error(f"[avatar db] falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            # El archivo ya se guardó pero la BD falló: quedaría huérfano.
-            borrar_local_si_huerfano(url)
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    # Mock dev: actualiza MOCK_USERS.
-    for _em, _m in MOCK_USERS.items():
-        if _m.get("id") == uid:
-            anterior = _m.get("foto_perfil_url")
-            _m["foto_perfil_url"] = url[:500]
-            if anterior and anterior != url[:500]:
-                borrar_local_si_huerfano(anterior)
-            break
-    return {"foto_perfil_url": url[:500], "mensaje": "Foto de perfil actualizada (mock).", "mock": True}
+        borrar_local_si_huerfano(url)
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router.delete("/avatar", summary="M3: quitar foto (muestra iniciales)")
@@ -379,22 +304,13 @@ async def quitar_avatar(
             await db.commit()
             borrar_local_si_huerfano(anterior)
             return {"foto_perfil_url": None, "mensaje": "Foto eliminada."}
-        if not mock_enabled():
-            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
     except HTTPException:
         raise
     except Exception as e:
         await rollback_seguro(db, "quitar_avatar")
         logger.error(f"[avatar quitar] falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    for _em, _m in MOCK_USERS.items():
-        if _m.get("id") == uid:
-            anterior = _m.get("foto_perfil_url")
-            _m["foto_perfil_url"] = None
-            borrar_local_si_huerfano(anterior)
-            break
-    return {"foto_perfil_url": None, "mensaje": "Foto eliminada (mock).", "mock": True}
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router.patch("/perfil", response_model=PerfilOut, summary="Actualizar nombre y teléfono (verificación solo-lectura)")
@@ -437,57 +353,11 @@ async def update_perfil(
             await db.commit()
             await db.refresh(u)
             return _perfil_out_db(u)
-        if not mock_enabled():
-            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
     except HTTPException:
         raise
     except Exception as e:
         await rollback_seguro(db, "update_perfil")
         logger.error(f"[auth update_perfil] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
-    m = MOCK_USERS.get(email)
-    if not m:
-        for em, udata in MOCK_USERS.items():
-            if udata.get("id") == user_id:
-                m = udata
-                email = em
-                break
-    if not m:
-        m = {
-            "password": await _hash_password_async("AlojaU123"),
-            "rol": user.get("rol", Rol.ARRENDADOR),
-            "id": user_id or 1,
-            "nombre_completo": "Arrendador Demo",
-            "telefono_whatsapp": "573001234567",
-            "telefono_verificado": False,
-            "email_verificado": False,
-        }
-        MOCK_USERS[email or "arrendador@alojau.com"] = m
-
-    if data.nombre_completo is not None:
-        m["nombre_completo"] = data.nombre_completo
-    # Espejo del comportamiento DB en mocks (vía sanitizador común).
-    cambios = _sanitizar_cambios_perfil(data)
-    if "telefono" in cambios:
-        if (cambios["telefono"] or "") != (m.get("telefono_whatsapp") or ""):
-            m["telefono_whatsapp"] = cambios["telefono"]
-            m["telefono_verificado"] = False
-    if "bio" in cambios:
-        m["bio"] = cambios["bio"]
-    if "foto" in cambios:
-        m["foto_perfil_url"] = cambios["foto"]
-    if "preferencias" in cambios:
-        actual = m.get("preferencias") or {}
-        if not isinstance(actual, dict):
-            actual = {}
-        actual.update(cambios["preferencias"])
-        m["preferencias"] = dict(actual)
-
-    for pub in MOCK_PUBS:
-        if pub.get("usuario_id") == m.get("id"):
-            if "telefono_whatsapp" in data.model_fields_set:
-                pub["telefono_whatsapp"] = m.get("telefono_whatsapp")
-
-    return _perfil_out_mock(m, email, user_id, user)

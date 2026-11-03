@@ -21,8 +21,13 @@ class Settings(BaseSettings):
     # en localStorage. Sin refresh/revocación por alcance.
     ACCESS_TOKEN_EXPIRE_HOURS: int = 2
 
-    # Permite funcionar sin PG (mock en memoria) si no hay DB
+    # Habilita los tokens fijos de prueba (MOCK_TOKENS) y el dev_token de
+    # recuperación. Nunca en prod (lo valida el arranque). No hay datos en memoria.
     USE_MOCK_FALLBACK: bool = True
+
+    # Proxies de confianza delante de la app (Render = 1). Con 0 los límites de
+    # intentos usan la IP de la conexión; ver core/net.py::ip_para_limites.
+    TRUSTED_PROXY_HOPS: int = 0
 
     # CORS restringido por env (DoD-5) - prod solo Vercel
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
@@ -161,7 +166,7 @@ class Settings(BaseSettings):
 
     @property
     def mock_enabled(self) -> bool:
-        # Mock solo si flag True Y ENV!=prod (doble check settings + entorno).
+        # Credenciales de prueba solo si flag True Y ENV!=prod (doble check).
         return bool(self.USE_MOCK_FALLBACK) and self.ENV != "prod" and os.getenv("ENV", "dev") != "prod"
 
     @property

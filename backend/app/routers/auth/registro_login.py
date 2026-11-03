@@ -10,14 +10,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db_utils import rollback_seguro
 from app.core.logseguro import exc_resumen
-from app.core.net import client_ip
+from app.core.net import client_ip, ip_para_limites
 from app.core.rate_limit import registrar_intento_persistente, verificar_intentos_fallidos
 from app.db.session import get_session
-from app.core.flags import mock_enabled
 from app.core.dominio import Rol
-from app.fixtures.usuarios_demo import MOCK_USERS
 from app.core.normalizacion import normalizar_email
-from app.routers.auth.comun import _emitir_token_con_sesion, _gracia_restante, _hash_password_async, _intentar_purgar_usuario, _issue_token, _password_fuerte_v13, _respuesta_login, _verify_password_async, normalizar_telefono
+from app.routers.auth.comun import (
+    _emitir_token_con_sesion,
+    _gracia_restante,
+    _hash_password_async,
+    _intentar_purgar_usuario,
+    _password_fuerte_v13,
+    _respuesta_login,
+    _verify_password_async,
+    normalizar_telefono,
+)
 from app.routers.auth.esquemas import LoginIn, LoginOut, RegisterIn, RegisterOut
 from app.routers.auth.limites import _check_login_rate_limit
 from app.routers.auth.otp_recuperacion import _crear_otp
@@ -48,9 +55,7 @@ async def register(data: RegisterIn, request: Request, db: AsyncSession = Depend
             if existente is not None:
                 return _registro_out(existente)
         logger.error(f"[auth register] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        return await _registrar_mock(data, email, telefono)
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
     await _enviar_otp_inicial(db, email)
     return _registro_out(nuevo)
 
@@ -153,23 +158,6 @@ def _registro_out(usuario) -> dict:
             "mock": False, "email_verificado": bool(usuario.email_verificado)}
 
 
-async def _registrar_mock(data: RegisterIn, email: str, telefono: str | None) -> dict:
-    """Registro en MOCK_USERS (solo dev/test sin PG)."""
-    if email in MOCK_USERS or data.email in MOCK_USERS:
-        raise HTTPException(status_code=400, detail="Email ya registrado (mock)")
-    MOCK_USERS[email] = {
-        "password": await _hash_password_async(data.password),
-        "rol": Rol.ESTUDIANTE,
-        "id": 90 + len(MOCK_USERS),
-        "nombre_completo": data.nombre_completo,
-        "telefono_whatsapp": telefono,
-        "telefono_verificado": False,
-        "email_verificado": False,
-    }
-    return {"id": MOCK_USERS[email]["id"], "email": email, "rol": Rol.ESTUDIANTE,
-            "mock": True, "email_verificado": False}
-
-
 # ---------------------------------------------------------------------------
 # Login (rate-limit memoria + persistente, sesiones registradas)
 # ---------------------------------------------------------------------------
@@ -177,7 +165,7 @@ async def _registrar_mock(data: RegisterIn, email: str, telefono: str | None) ->
 async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_session)):
     _check_login_rate_limit(request)
     email = normalizar_email(data.email)
-    claves_intento = (f"login:ip:{client_ip(request)}", f"login:user:{email}")
+    claves_intento = (f"login:ip:{ip_para_limites(request)}", f"login:user:{email}")
     for clave in claves_intento:
         await verificar_intentos_fallidos(db, clave)
     try:
@@ -189,13 +177,9 @@ async def login(data: LoginIn, request: Request, db: AsyncSession = Depends(get_
     except Exception as e:
         await rollback_seguro(db, "login")
         logger.error(f"[auth login] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        return await _login_mock(email, data)
-    if not mock_enabled():
-        await registrar_intento_persistente(db, claves_intento[0], False)
-        raise HTTPException(status_code=401, detail="Credenciales inválidas")
-    return await _login_mock(email, data)
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
+    await registrar_intento_persistente(db, claves_intento[0], False)
+    raise HTTPException(status_code=401, detail="Credenciales inválidas")
 
 
 async def _usuario_vigente_por_email(db: AsyncSession, email: str):
@@ -238,10 +222,3 @@ async def _login_con_usuario(db: AsyncSession, usuario, password: str, request: 
     return _respuesta_login(token, usuario.rol, mock=False)
 
 
-async def _login_mock(email: str, data: LoginIn) -> dict:
-    """Login contra MOCK_USERS (solo dev/test sin PG)."""
-    u = MOCK_USERS.get(email) or MOCK_USERS.get(data.email)
-    if not u or not await _verify_password_async(data.password, u["password"]):
-        raise HTTPException(status_code=401, detail="Credenciales inválidas")
-    token = _issue_token(u["id"], email, u["rol"], True, bool(u.get("email_verificado", True)))
-    return _respuesta_login(token, u["rol"], mock=True)

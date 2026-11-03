@@ -13,11 +13,9 @@ from app.core.security import get_current_user
 from app.core.config import settings
 from app.core.db_utils import rollback_seguro
 from app.core.logseguro import exc_resumen
-from app.core.net import ip_de_conexion
+from app.core.net import ip_para_limites
 from app.core.rate_limit import registrar_intento, registrar_intento_persistente, verificar_intentos_fallidos
 from app.db.session import get_session
-from app.core.flags import mock_enabled
-from app.fixtures.usuarios_demo import MOCK_USERS
 from app.routers.auth.comun import digitos_nacionales
 from app.routers.auth.telegram_envio import _telegram_send_message_async
 
@@ -161,19 +159,7 @@ async def validar_token_vinculo_db(db: AsyncSession, token: str,
     except Exception as e:
         await rollback_seguro(db, "validar_token_vinculo_db")
         logger.warning(f"[telegram validar] PG no disponible, fallback memoria: {exc_resumen(e)}")
-        if not mock_enabled():
-            return None
-        if commit:
-            return validar_token_vinculo(token)
-        # Sin consumir: verifica contra memoria (el caller quema al resolver).
-        if nonce in _TELEGRAM_USADOS:
-            return None
-        rec = _TELEGRAM_VINCULOS.get(nonce)
-        if not rec or rec.get("user_id") != uid or rec.get("exp") != exp:
-            return None
-        if rec.get("usado"):
-            return None
-        return uid
+        return None
 
 
 async def _acuñar_vinculo(db: AsyncSession, uid: int) -> tuple[str, int]:
@@ -194,7 +180,6 @@ async def _acuñar_vinculo(db: AsyncSession, uid: int) -> tuple[str, int]:
             _v["usado"] = True
             _TELEGRAM_USADOS.add(_k)
     # Espejo persistente (fuente de verdad ante redeploys).
-    # Best-effort en dev sin PG: la memoria sigue cubriendo.
     try:
         from app.models import TelegramVinculo
         db.add(TelegramVinculo(
@@ -224,7 +209,6 @@ async def _enlace_vigente(db: AsyncSession, uid: int, username: str) -> tuple[st
     invalida nada ni se ensucia la tabla en cada lectura del perfil.
     """
     ahora = datetime.now(timezone.utc)
-    bd_ok = True
     try:
         from app.models import TelegramVinculo
         res = await db.execute(
@@ -243,18 +227,9 @@ async def _enlace_vigente(db: AsyncSession, uid: int, username: str) -> tuple[st
             segundos = max(1, int((exp_dt - ahora).total_seconds()))
             return (f"https://t.me/{username}?start={_firmar_vinculo(uid, exp, row.nonce)}",
                     segundos)
-    except Exception:
-        bd_ok = False
+    except Exception as e:
         await rollback_seguro(db, "_enlace_vigente")
-    # Espejo en memoria solo sin PG (dev): con BD la tabla manda (si no, se
-    # podría entregar un enlace ya quemado en PG pero vivo en memoria).
-    if not bd_ok and mock_enabled():
-        for _k, _v in _TELEGRAM_VINCULOS.items():
-            if (_v.get("user_id") == uid and not _v.get("usado")
-                    and _v.get("exp", 0) > time.time()):
-                segundos = max(1, int(_v["exp"] - time.time()))
-                return (f"https://t.me/{username}?start={_firmar_vinculo(uid, int(_v['exp']), _k)}",
-                        segundos)
+        logger.warning("[telegram] lectura del enlace vigente falló: %s", exc_resumen(e))
     return None
 
 
@@ -326,11 +301,6 @@ async def telegram_enlace(
             tiene_fono = bool((u.telefono_whatsapp or "").strip())
     except Exception:
         await rollback_seguro(db, "telegram_enlace")
-    if not tiene_fono and mock_enabled():
-        for _m in MOCK_USERS.values():
-            if _m.get("id") == uid and (_m.get("telefono_whatsapp") or "").strip():
-                tiene_fono = True
-                break
     if not tiene_fono:
         raise HTTPException(
             status_code=422,
@@ -367,7 +337,7 @@ async def telegram_desvincular(
     uid = user.get("id")
     if not isinstance(uid, int):
         raise HTTPException(status_code=401, detail="Token sin propietario válido")
-    # Espejo en memoria (vale en ambos caminos: real y mock).
+    # Caché L1 en memoria: invalida los vínculos previos del usuario.
     for _k, _v in list(_TELEGRAM_VINCULOS.items()):
         if _v.get("user_id") == uid and not _v.get("usado"):
             _v["usado"] = True
@@ -393,25 +363,13 @@ async def telegram_desvincular(
             await db.refresh(u)
             return {"desvinculado": True,
                     "mensaje": "Telegram desvinculado y número liberado."}
-        if not mock_enabled():
-            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
     except HTTPException:
         raise
     except Exception as e:
         await rollback_seguro(db, "telegram_desvincular")
         logger.error(f"[telegram desvincular] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    # Mock dev sin PG: libera sobre MOCK_USERS.
-    for _m in MOCK_USERS.values():
-        if _m.get("id") == uid:
-            _m["telegram_chat_id"] = None
-            _m["telefono_whatsapp"] = None
-            _m["telefono_verificado"] = False
-            break
-    return {"desvinculado": True,
-            "mensaje": "Telegram desvinculado y número liberado (mock).",
-            "mock": True}
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 def webhook_secret_obligatorio() -> bool:
@@ -458,14 +416,222 @@ def _extraer_start_payload(texto: str | None) -> str | None:
 _TELEGRAM_PENDIENTES: dict[str, str] = {}  # chat_id -> nonce (espejo memoria/dev)
 
 
-def _telefono_verificado_de(usuario) -> tuple:
-    """(whatsapp, verificado) soportando fila ORM y dict mock."""
+# Respuestas del bot cuando el contacto compartido no permite verificar.
+_RECHAZOS_CONTACTO = {
+    "contacto-ajeno": ("No pudimos confirmar que ese contacto sea tuyo. Usa el botón "
+                       "«Compartir mi número de teléfono para verificar» y vuelve "
+                       "a intentarlo."),
+    "sin-solicitud": ("Primero abre el enlace desde AlojaU → Mi Perfil → Telegram, "
+                      "pulsa /start y luego comparte tu número aquí."),
+    "token-invalido": ("Ese enlace expiró (10 min, un solo uso). Genera uno nuevo en "
+                       "AlojaU → Mi Perfil → Telegram."),
+    "sin-telefono": ("Aún no tienes número guardado en AlojaU. Entra a Mi Perfil → "
+                     "Datos y contacto, guarda tu WhatsApp y genera un enlace nuevo."),
+    "duplicado": ("Este número o cuenta de Telegram ya está en uso en otra "
+                  "cuenta de AlojaU."),
+    "numero-distinto": ("El número de esta cuenta de Telegram (terminado en {ultimos}) "
+                        "no coincide con el número guardado en tu perfil de AlojaU. "
+                        "Modifícalo en la web e inténtalo de nuevo."),
+    "sin-usuario": None,
+}
+
+
+async def _procesar_contacto(db: AsyncSession, chat_id: str, from_id, contacto: dict) -> dict:
+    if not _contacto_es_del_remitente(contacto, from_id, chat_id):
+        return await _rechazar_contacto(db, chat_id, "contacto-ajeno")
+    pend = await _buscar_pendiente(db, str(chat_id))
+    if pend is None:
+        return await _rechazar_contacto(db, chat_id, "sin-solicitud")
+    if time.time() > float(pend.get("exp", 0)):
+        return await _rechazar_contacto(db, chat_id, "token-invalido", pend)
+    uid = int(pend["user_id"])
+    usuario = await _usuario_por_id(db, uid)
+    if usuario is None:
+        return await _rechazar_contacto(db, chat_id, "sin-usuario", pend)
+    whatsapp, _ = _telefono_verificado_de(usuario)
+    if not whatsapp:
+        return await _rechazar_contacto(db, chat_id, "sin-telefono", pend)
+    digitos10 = digitos_nacionales(contacto.get("phone_number"))
+    if await _telefono_o_chat_en_uso(db, digitos10, str(chat_id), uid) is not None:
+        return await _rechazar_contacto(db, chat_id, "duplicado", pend)
+    if not _contacto_coincide(contacto.get("phone_number"), whatsapp):
+        ultimos = (digitos10 or "")[-4:] or "????"
+        return await _rechazar_contacto(db, chat_id, "numero-distinto", pend, ultimos=ultimos)
+    if not await _vincular_telefono(db, usuario, pend, chat_id):
+        return {"ok": True, "vinculado": False, "motivo": "persistencia"}
+    from app.services import telegram as servicio_telegram
+    await _telegram_send_message_async(
+        chat_id,
+        "¡Número verificado con éxito en AlojaU! Puedes volver a la aplicación web.",
+        reply_markup=servicio_telegram.teclado_quitar(),
+    )
+    return {"ok": True, "vinculado": True, "user_id": uid}
+
+
+def _contacto_es_del_remitente(contacto: dict, from_id, chat_id) -> bool:
+    """Telegram solo adjunta `contact.user_id` propio: debe coincidir con remitente y chat."""
     try:
-        if isinstance(usuario, dict):
-            return usuario.get("telefono_whatsapp"), bool(usuario.get("telefono_verificado"))
-        return getattr(usuario, "telefono_whatsapp", None), bool(getattr(usuario, "telefono_verificado", False))
-    except Exception:
-        return None, False
+        contact_uid = int(contacto.get("user_id"))
+        return contact_uid == int(from_id) == int(str(chat_id).strip())
+    except (TypeError, ValueError):
+        return False
+
+
+async def _rechazar_contacto(db: AsyncSession, chat_id: str, motivo: str,
+                             pend: dict | None = None, **datos) -> dict:
+    """Quema el pendiente (si hay) y explica el motivo al usuario."""
+    if pend is not None:
+        await _quemar_pendiente(db, pend)
+    plantilla = _RECHAZOS_CONTACTO[motivo]
+    if plantilla:
+        from app.services import telegram as servicio_telegram
+        await _telegram_send_message_async(chat_id, plantilla.format(**datos),
+                                           reply_markup=servicio_telegram.teclado_quitar())
+    return {"ok": True, "vinculado": False, "motivo": motivo}
+
+
+async def _vincular_telefono(db: AsyncSession, usuario, pend: dict, chat_id: str) -> bool:
+    """Verifica el teléfono, vincula el chat y quema el vínculo en una transacción."""
+    try:
+        usuario.telegram_chat_id = str(chat_id)
+        usuario.telefono_verificado = True
+        try:
+            from app.services import notifications_matcher
+            await notifications_matcher.notificar_telegram_vinculado(db, usuario_id=int(pend["user_id"]))
+        except Exception as e:
+            logger.warning("[telegram webhook] aviso de vinculación no enviado: %s", exc_resumen(e))
+        if pend.get("row") is not None:
+            pend["row"].usado = True
+        await db.commit()
+    except Exception as e:
+        logger.warning(f"[telegram contacto] no se pudo vincular: {exc_resumen(e)}")
+        await rollback_seguro(db, "_vincular_telefono")
+        return False
+    _marcar_usado_en_memoria(pend.get("nonce"), str(chat_id))
+    return True
+
+
+def _marcar_usado_en_memoria(nonce: str | None, chat_id: str | None) -> None:
+    """Refleja en la caché L1 que el vínculo ya se consumió."""
+    if nonce:
+        rec = _TELEGRAM_VINCULOS.get(nonce)
+        if rec:
+            rec["usado"] = True
+        _TELEGRAM_USADOS.add(nonce)
+    _TELEGRAM_PENDIENTES.pop(chat_id, None)
+
+
+def _autorizar_webhook(request: Request) -> None:
+    """503 si falta el secret obligatorio, 401 si no coincide, 429 por throttle."""
+    if webhook_secret_obligatorio():
+        raise HTTPException(
+            status_code=503,
+            detail="Telegram mal configurado en el servidor (falta TELEGRAM_WEBHOOK_SECRET)",
+        )
+    secreto_cfg = (getattr(settings, "TELEGRAM_WEBHOOK_SECRET", "") or "").strip()
+    if secreto_cfg:
+        enviado = (request.headers.get("X-Telegram-Bot-Api-Secret-Token") or "").strip()
+        if not secrets.compare_digest(enviado, secreto_cfg):
+            raise HTTPException(status_code=401, detail="Secret de webhook inválido")
+    from app.services import telegram as servicio_telegram
+    servicio_telegram.check_throttle(f"tg_wh:{ip_para_limites(request)}", 60, 60.0,
+                                     "Demasiadas peticiones al webhook, espera 1 minuto")
+
+
+def _parece_numero_escrito(texto: str) -> bool:
+    """Texto que parece un teléfono (7-15 dígitos) y no es un comando."""
+    digitos = re.sub(r"\D", "", texto or "")
+    return bool(texto) and not str(texto).strip().startswith("/") and 7 <= len(digitos) <= 15
+
+
+async def _rechazar_numero_escrito(chat_id: str) -> dict:
+    """Un número escrito a mano no prueba nada: se guía al botón nativo."""
+    from app.services import telegram as servicio_telegram
+    await _telegram_send_message_async(
+        chat_id,
+        "Por seguridad no acepto números escritos a mano: cualquiera "
+        "podría escribir el de otra persona. Usa el botón «Compartir "
+        "mi número de teléfono para verificar» para probar que la "
+        "cuenta es tuya.",
+        reply_markup=servicio_telegram.teclado_quitar(),
+    )
+    return {"ok": True, "vinculado": False, "motivo": "texto-ignorado"}
+
+
+async def _atender_start(db: AsyncSession, chat_id: str, payload: str) -> dict:
+    """Paso 1: valida el token, exige teléfono guardado y deja el chat pendiente.
+
+    El /start NO vincula: el vínculo se completa con el contacto compartido.
+    Sin teléfono guardado el token se conserva (10 min) para dar tiempo a
+    guardarlo en la web.
+    """
+    from app.services import telegram as servicio_telegram
+    try:
+        uid = await validar_token_vinculo_db(db, payload, commit=False)
+    except Exception as e:
+        logger.warning(f"[telegram webhook] validación falló: {exc_resumen(e)}")
+        uid = None
+    if uid is None:
+        await rollback_seguro(db, "_atender_start")
+        await _telegram_send_message_async(
+            chat_id,
+            "Este enlace de vinculación ha expirado o es inválido. Genera "
+            "uno nuevo desde tu perfil en AlojaU.",
+        )
+        return {"ok": True, "vinculado": False, "motivo": "token-invalido"}
+    usuario = await _usuario_por_id(db, uid)
+    if usuario is None:
+        await rollback_seguro(db, "_atender_start")
+        return {"ok": True, "vinculado": False, "motivo": "sin-usuario"}
+    whatsapp, _ = _telefono_verificado_de(usuario)
+    if not whatsapp:
+        await rollback_seguro(db, "_atender_start")
+        await _telegram_send_message_async(
+            chat_id,
+            "Aún no tienes número guardado en AlojaU. Entra a Mi Perfil → "
+            "Datos y contacto, guarda tu WhatsApp y luego comparte tu "
+            "contacto aquí con el botón.",
+            reply_markup=servicio_telegram.teclado_pedir_contacto(),
+        )
+        return {"ok": True, "vinculado": False, "motivo": "sin-telefono"}
+    if not await _registrar_chat_pendiente(db, chat_id, payload):
+        await _telegram_send_message_async(
+            chat_id,
+            "Hubo un problema guardando la solicitud. Genera un enlace nuevo "
+            "en AlojaU → Mi Perfil → Telegram e inténtalo de nuevo.",
+        )
+        return {"ok": True, "vinculado": False, "motivo": "persistencia"}
+    await _telegram_send_message_async(
+        chat_id,
+        servicio_telegram.TEXTO_PEDIR_CONTACTO,
+        reply_markup=servicio_telegram.teclado_pedir_contacto(),
+    )
+    return {"ok": True, "vinculado": False, "contacto_requerido": True, "user_id": uid}
+
+
+async def _registrar_chat_pendiente(db: AsyncSession, chat_id: str, payload: str) -> bool:
+    """Asocia el chat al vínculo del token (PG + caché L1) y confirma la transacción."""
+    from app.models import TelegramVinculo
+    try:
+        parsed = _desarmar_token_vinculo(payload)
+        nonce = parsed[2] if parsed else None
+        if nonce:
+            _TELEGRAM_PENDIENTES[str(chat_id)] = nonce
+            res = await db.execute(select(TelegramVinculo).where(TelegramVinculo.nonce == nonce))
+            row = res.scalars().first()
+            if row is not None:
+                row.chat_id_pendiente = str(chat_id)
+        await db.commit()
+        return True
+    except Exception as e:
+        await rollback_seguro(db, "_registrar_chat_pendiente")
+        logger.warning(f"[telegram webhook] no se pudo registrar pendiente: {exc_resumen(e)}")
+        return False
+
+
+def _telefono_verificado_de(usuario) -> tuple:
+    """(whatsapp, verificado) del usuario."""
+    return getattr(usuario, "telefono_whatsapp", None), bool(getattr(usuario, "telefono_verificado", False))
 
 
 def _contacto_coincide(contact_phone, whatsapp) -> bool:
@@ -488,14 +654,12 @@ async def _telefono_o_chat_en_uso(db: AsyncSession, digitos10: str | None,
     """Detecta reuso por OTRA cuenta activa. Retorna "telefono", "telegram" o None.
 
     - Teléfono: otro usuario activo cuyo número termine en los mismos 10
-      dígitos (cubre variantes con/sin 57). Vía SQL RIGHT() en PG; en
-      mock/dev se compara en memoria.
+      dígitos (cubre variantes con/sin 57) vía SQL RIGHT().
     - Telegram: otro usuario con el mismo `telegram_chat_id`.
     Cuentas en soft-delete (`eliminado_en`) no cuentan (su número se libera).
-    Los MOCK_USERS solo se consultan sin PG (dev): con BD disponible son
-    la fuente única (si no, sus teléfonos semilla darían falsos duplicados).
+    Si la BD falla, propaga el error (fail-closed: nunca se vincula sin
+    comprobar unicidad).
     """
-    bd_ok = True
     try:
         from app.models import Usuario
         if digitos10:
@@ -518,34 +682,21 @@ async def _telefono_o_chat_en_uso(db: AsyncSession, digitos10: str | None,
         )
         if res.scalars().first() is not None:
             return "telegram"
-    except Exception:
-        bd_ok = False
-    if not bd_ok and mock_enabled():
-        for em, m in MOCK_USERS.items():
-            if not isinstance(m, dict) or m.get("id") == excluir_uid:
-                continue
-            tel = m.get("telefono_whatsapp")
-            if digitos10 and tel and digitos_nacionales(tel) == digitos10:
-                return "telefono"
-            if m.get("telegram_chat_id") and str(m.get("telegram_chat_id")) == str(chat_id):
-                return "telegram"
+    except Exception as e:
+        logger.error("[telegram] comprobación de unicidad falló: %s", exc_resumen(e))
+        raise
     return None
 
 
 async def _usuario_por_id(db: AsyncSession, uid: int):
-    """Fila ORM o dict mock por id; (None, False) si no existe."""
+    """Fila ORM del usuario, o None si no existe o la BD no responde."""
+    from app.models import Usuario
     try:
-        from app.models import Usuario
         res = await db.execute(select(Usuario).where(Usuario.id == uid))
-        u = res.scalars().first()
-        if u is not None:
-            return u, False
+        return res.scalars().first()
     except Exception as e:
         logger.warning("[telegram] lectura del usuario falló: %s", exc_resumen(e))
-    for _m in MOCK_USERS.values():
-        if _m.get("id") == uid:
-            return _m, True
-    return None, False
+        return None
 
 
 async def _buscar_pendiente(db: AsyncSession, chat_id: str):
@@ -595,120 +746,8 @@ async def _webhook_contacto(db: AsyncSession, chat_id: str, from_id, contacto: d
     5. Los últimos 10 dígitos coinciden con el guardado.
     En éxito: `telefono_verificado=True` + `telegram_chat_id`. Nunca lanza.
     """
-    from app.services import telegram as _tg
-    quitar = _tg.teclado_quitar()
     try:
-        try:
-            contact_uid = int(contacto.get("user_id"))
-            from_n = int(from_id)
-            chat_n = int(str(chat_id).strip())
-        except Exception:
-            contact_uid = from_n = chat_n = None
-        if not contact_uid or contact_uid != from_n or contact_uid != chat_n:
-            await _telegram_send_message_async(
-                chat_id,
-                "No pudimos confirmar que ese contacto sea tuyo. Usa el botón "
-                "«Compartir mi número de teléfono para verificar» y vuelve "
-                "a intentarlo.",
-                reply_markup=quitar,
-            )
-            return {"ok": True, "vinculado": False, "motivo": "contacto-ajeno"}
-        pend = await _buscar_pendiente(db, str(chat_id))
-        if pend is None:
-            await _telegram_send_message_async(
-                chat_id,
-                "Primero abre el enlace desde AlojaU → Mi Perfil → Telegram, "
-                "pulsa /start y luego comparte tu número aquí.",
-                reply_markup=quitar,
-            )
-            return {"ok": True, "vinculado": False, "motivo": "sin-solicitud"}
-        if time.time() > float(pend.get("exp", 0)):
-            await _quemar_pendiente(db, pend)
-            await _telegram_send_message_async(
-                chat_id,
-                "Ese enlace expiró (10 min, un solo uso). Genera uno nuevo en "
-                "AlojaU → Mi Perfil → Telegram.",
-                reply_markup=quitar,
-            )
-            return {"ok": True, "vinculado": False, "motivo": "token-invalido"}
-        usuario, _es_mock = await _usuario_por_id(db, int(pend["user_id"]))
-        if usuario is None:
-            await _quemar_pendiente(db, pend)
-            return {"ok": True, "vinculado": False, "motivo": "sin-usuario"}
-        whatsapp, _verificado = _telefono_verificado_de(usuario)
-        if not whatsapp:
-            await _quemar_pendiente(db, pend)
-            await _telegram_send_message_async(
-                chat_id,
-                "Aún no tienes número guardado en AlojaU. Entra a Mi Perfil → "
-                "Datos y contacto, guarda tu WhatsApp y genera un enlace nuevo.",
-                reply_markup=quitar,
-            )
-            return {"ok": True, "vinculado": False, "motivo": "sin-telefono"}
-        dig10 = digitos_nacionales(contacto.get("phone_number"))
-        dupe = await _telefono_o_chat_en_uso(db, dig10, str(chat_id), int(pend["user_id"]))
-        if dupe is not None:
-            await _quemar_pendiente(db, pend)
-            await _telegram_send_message_async(
-                chat_id,
-                "Este número o cuenta de Telegram ya está en uso en otra "
-                "cuenta de AlojaU.",
-                reply_markup=quitar,
-            )
-            return {"ok": True, "vinculado": False, "motivo": "duplicado"}
-        if not _contacto_coincide(contacto.get("phone_number"), whatsapp):
-            await _quemar_pendiente(db, pend)
-            ultimos = (dig10 or "")[-4:] or "????"
-            await _telegram_send_message_async(
-                chat_id,
-                f"El número de esta cuenta de Telegram (terminado en {ultimos}) "
-                "no coincide con el número guardado en tu perfil de AlojaU. "
-                "Modifícalo en la web e inténtalo de nuevo.",
-                reply_markup=quitar,
-            )
-            return {"ok": True, "vinculado": False, "motivo": "numero-distinto"}
-        # Todo coincide: VERIFICA el teléfono + vincula + quema en transacción.
-        # Más fila de bienvenida in-app (misma TX, savepoint propio).
-        try:
-            if isinstance(usuario, dict):
-                usuario["telegram_chat_id"] = str(chat_id)
-                usuario["telefono_verificado"] = True
-            else:
-                usuario.telegram_chat_id = str(chat_id)
-                usuario.telefono_verificado = True
-            try:
-                from app.services import notifications_matcher as _nm
-                await _nm.notificar_telegram_vinculado(db, usuario_id=int(pend["user_id"]))
-            except Exception as e:
-                logger.warning("[telegram webhook] aviso de vinculación no enviado: %s", exc_resumen(e))
-            row, nonce = pend.get("row"), pend.get("nonce")
-            if row is not None:
-                row.usado = True
-            try:
-                await db.commit()
-            except Exception:
-                await rollback_seguro(db, "_webhook_contacto")
-                if _es_mock and isinstance(usuario, dict):
-                    pass  # mock ya actualizado arriba
-                else:
-                    raise
-            if nonce:
-                rec = _TELEGRAM_VINCULOS.get(nonce)
-                if rec:
-                    rec["usado"] = True
-                _TELEGRAM_USADOS.add(nonce)
-            _TELEGRAM_PENDIENTES.pop(str(chat_id), None)
-        except Exception as e:
-            logger.warning(f"[telegram contacto] no se pudo vincular: {exc_resumen(e)}")
-            await rollback_seguro(db, "_webhook_contacto")
-            return {"ok": True, "vinculado": False, "motivo": "persistencia"}
-        await _telegram_send_message_async(
-            chat_id,
-                "¡Número verificado con éxito en AlojaU! Puedes volver a la "
-            "aplicación web.",
-            reply_markup=quitar,
-        )
-        return {"ok": True, "vinculado": True, "user_id": int(pend["user_id"])}
+        return await _procesar_contacto(db, chat_id, from_id, contacto)
     except Exception as e:
         logger.warning(f"[telegram contacto] fallo inesperado: {exc_resumen(e)}")
         await rollback_seguro(db, "_webhook_contacto")
@@ -717,22 +756,15 @@ async def _webhook_contacto(db: AsyncSession, chat_id: str, from_id, contacto: d
 
 async def _quemar_pendiente(db: AsyncSession, pend: dict) -> None:
     """Consume el vínculo (un solo uso) en PG + memoria. Nunca lanza."""
-    try:
-        row, nonce = pend.get("row"), pend.get("nonce")
-        if row is not None:
-            try:
-                row.usado = True
-                await db.commit()
-            except Exception:
-                await rollback_seguro(db, "_quemar_pendiente")
-        if nonce:
-            rec = _TELEGRAM_VINCULOS.get(nonce)
-            if rec:
-                rec["usado"] = True
-            _TELEGRAM_USADOS.add(nonce)
-        _TELEGRAM_PENDIENTES.pop(pend.get("chat_id"), None)
-    except Exception as e:
-        logger.warning("[telegram] no se pudo marcar el vínculo como usado: %s", exc_resumen(e))
+    row = pend.get("row")
+    if row is not None:
+        try:
+            row.usado = True
+            await db.commit()
+        except Exception as e:
+            await rollback_seguro(db, "_quemar_pendiente")
+            logger.warning("[telegram] no se pudo marcar el vínculo como usado: %s", exc_resumen(e))
+    _marcar_usado_en_memoria(pend.get("nonce"), pend.get("chat_id"))
 
 
 @router.post("/telegram/webhook", summary="Verificación gratis: /start + contacto nativo")
@@ -744,147 +776,41 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_sess
     chat como pendiente y pide el contacto (teclado request_contact nativo).
     NO vincula todavía. Sin teléfono guardado se conserva el token y se
     guía a guardarlo (el contacto posterior es lo que verifica).
-    Paso 2 contacto compartido: verifica user_id==from==chat (prueba de
-    titularidad del servidor Telegram), pendiente vigente, unicidad del
-    número/chat en otras cuentas y coincidencia de últimos 10 dígitos;
-    entonces fija `telefono_verificado=True` + `telegram_chat_id`.
+    Paso 2 contacto compartido: ver `_webhook_contacto`.
 
     Seguridad: exige `X-Telegram-Bot-Api-Secret-Token` si hay secret
     configurado; en prod con bot configurado el secret es OBLIGATORIO
     (fail-closed 503 si falta). Throttle 60/min por IP (anti-enumeración).
-    Ignora grupos/canales. Transacción ÚNICA por paso.
-    Tipo de datos: `telegram_chat_id` es VARCHAR(32) (no INTEGER) para
-    soportar IDs de 64 bits sin overflow; se guarda normalizado como
-    texto sin espacios.
+    Ignora grupos/canales. Transacción ÚNICA por paso. `telegram_chat_id`
+    se guarda como texto (VARCHAR(32)) para IDs de 64 bits.
     """
-    if webhook_secret_obligatorio():
-        raise HTTPException(
-            status_code=503,
-            detail="Telegram mal configurado en el servidor (falta TELEGRAM_WEBHOOK_SECRET)",
-        )
-    secreto_cfg = (getattr(settings, "TELEGRAM_WEBHOOK_SECRET", "") or "").strip()
-    if secreto_cfg:
-        enviado = (request.headers.get("X-Telegram-Bot-Api-Secret-Token") or "").strip()
-        if not secrets.compare_digest(enviado, secreto_cfg):
-            raise HTTPException(status_code=401, detail="Secret de webhook inválido")
-    from app.services import telegram as servicio_telegram
-    servicio_telegram.check_throttle(f"tg_wh:{ip_de_conexion(request)}", 60, 60.0,
-                                     "Demasiadas peticiones al webhook, espera 1 minuto")
+    _autorizar_webhook(request)
     try:
         cuerpo = await request.json()
     except Exception:
         return {"ok": True, "ignorado": "sin-json"}
     msg = (cuerpo or {}).get("message") or (cuerpo or {}).get("edited_message") or {}
     chat = msg.get("chat") or {}
-    chat_id_raw = chat.get("id")
-    chat_tipo = str(chat.get("type") or "private")
-    texto = msg.get("text") or ""
-    # Solo DMs privados (M5 privacidad: nunca grupos/canales).
-    if chat_tipo != "private":
-        return {"ok": True, "ignorado": "no-privado"}
-    # Normaliza chat_id como texto (BIGINT de Telegram -> VARCHAR sin espacios).
+    if str(chat.get("type") or "private") != "private":
+        return {"ok": True, "ignorado": "no-privado"}  # nunca grupos/canales
     try:
-        chat_id = str(int(str(chat_id_raw).strip()))
-    except Exception:
+        chat_id = str(int(str(chat.get("id")).strip()))  # BIGINT -> texto sin espacios
+    except (TypeError, ValueError):
         return {"ok": True, "ignorado": "chat-id-invalido"}
-    # Opción A: contacto compartido (paso 2) — se atiende antes que texto.
     contacto = msg.get("contact")
     if isinstance(contacto, dict) and contacto:
-        from_id = (msg.get("from") or {}).get("id")
-        return await _webhook_contacto(db, chat_id, from_id, contacto)
-    # Anti-trampas 1.1: el número escrito a mano NO prueba nada (cualquiera
-    # escribe cualquier dígito). Solo se responde si parece un teléfono
-    # (7-15 dígitos, sin "/") para guiar al botón nativo; el resto se ignora
-    # en silencio (los comandos los atiende el flujo /start de abajo).
-    _solo_digitos = re.sub(r"\D", "", texto or "")
-    if texto and not str(texto).strip().startswith("/") and 7 <= len(_solo_digitos) <= 15:
-        from app.services import telegram as _tg_txt
-        await _telegram_send_message_async(
-            chat_id,
-            "Por seguridad no acepto números escritos a mano: cualquiera "
-            "podría escribir el de otra persona. Usa el botón «Compartir "
-            "mi número de teléfono para verificar» para probar que la "
-            "cuenta es tuya.",
-            reply_markup=_tg_txt.teclado_quitar(),
-        )
-        return {"ok": True, "vinculado": False, "motivo": "texto-ignorado"}
+        return await _webhook_contacto(db, chat_id, (msg.get("from") or {}).get("id"), contacto)
+    texto = msg.get("text") or ""
+    if _parece_numero_escrito(texto):
+        return await _rechazar_numero_escrito(chat_id)
     payload = _extraer_start_payload(texto)
     if payload is None:
         return {"ok": True, "ignorado": "no-start"}
     if not payload:
-        # /start pelado: guía al usuario a iniciar desde la web.
-        if chat_id_raw is not None:
-            await _telegram_send_message_async(
-                str(chat_id_raw),
-                "Hola, soy AlojaU. Para vincular tu cuenta, entra a AlojaU → Mi Perfil → "
-                "Telegram → «Abrir Bot en Telegram» y pulsa el botón /start que te abre.",
-            )
+        await _telegram_send_message_async(
+            chat_id,
+            "Hola, soy AlojaU. Para vincular tu cuenta, entra a AlojaU → Mi Perfil → "
+            "Telegram → «Abrir Bot en Telegram» y pulsa el botón /start que te abre.",
+        )
         return {"ok": True, "ignorado": "start-sin-payload"}
-    # Transacción única: valida (flush, sin commit) + vincula + commit.
-    try:
-        uid = await validar_token_vinculo_db(db, payload.strip(), commit=False)
-    except Exception as e:
-        await rollback_seguro(db, "telegram_webhook")
-        logger.warning(f"[telegram webhook] validación falló: {exc_resumen(e)}")
-        uid = None
-    if uid is None:
-        await rollback_seguro(db, "telegram_webhook")
-        await _telegram_send_message_async(
-            chat_id,
-            "Este enlace de vinculación ha expirado o es inválido. Genera "
-            "uno nuevo desde tu perfil en AlojaU.",
-        )
-        return {"ok": True, "vinculado": False, "motivo": "token-invalido"}
-    # El /start NO vincula todavía: exige teléfono GUARDADO (no verificado:
-    # este flujo ES la verificación gratuita) y registra el chat como
-    # pendiente; el vínculo se completa al recibir el contacto compartido
-    # cuyo número coincida (ver _webhook_contacto). Sin teléfono guardado
-    # el token se conserva (10 min) para dar tiempo a guardarlo en la web.
-    usuario, _es_mock = await _usuario_por_id(db, uid)
-    if usuario is None:
-        await rollback_seguro(db, "telegram_webhook")
-        return {"ok": True, "vinculado": False, "motivo": "sin-usuario"}
-    _whatsapp, _verificado = _telefono_verificado_de(usuario)
-    if not _whatsapp:
-        await rollback_seguro(db, "telegram_webhook")
-        from app.services import telegram as _tg_sp
-        await _telegram_send_message_async(
-            chat_id,
-            "Aún no tienes número guardado en AlojaU. Entra a Mi Perfil → "
-            "Datos y contacto, guarda tu WhatsApp y luego comparte tu "
-            "contacto aquí con el botón.",
-            reply_markup=_tg_sp.teclado_pedir_contacto(),
-        )
-        return {"ok": True, "vinculado": False, "motivo": "sin-telefono"}
-    # Registra el pendiente (PG + memoria) y pide el contacto.
-    try:
-        from app.models import TelegramVinculo
-        parsed = _desarmar_token_vinculo(payload.strip())
-        nonce = parsed[2] if parsed else None
-        if nonce:
-            _TELEGRAM_PENDIENTES[str(chat_id)] = nonce
-            try:
-                res = await db.execute(
-                    select(TelegramVinculo).where(TelegramVinculo.nonce == nonce))
-                row = res.scalars().first()
-                if row is not None:
-                    row.chat_id_pendiente = str(chat_id)
-            except Exception as e:
-                logger.warning("[telegram webhook] no se pudo marcar el chat pendiente en BD: %s", exc_resumen(e))
-        await db.commit()
-    except Exception as e:
-        await rollback_seguro(db, "telegram_webhook")
-        logger.warning(f"[telegram webhook] no se pudo registrar pendiente: {exc_resumen(e)}")
-        await _telegram_send_message_async(
-            chat_id,
-            "Hubo un problema guardando la solicitud. Genera un enlace nuevo "
-            "en AlojaU → Mi Perfil → Telegram e inténtalo de nuevo.",
-        )
-        return {"ok": True, "vinculado": False, "motivo": "persistencia"}
-    from app.services import telegram as _tg
-    await _telegram_send_message_async(
-        chat_id,
-        _tg.TEXTO_PEDIR_CONTACTO,
-        reply_markup=_tg.teclado_pedir_contacto(),
-    )
-    return {"ok": True, "vinculado": False, "contacto_requerido": True, "user_id": uid}
+    return await _atender_start(db, chat_id, payload.strip())

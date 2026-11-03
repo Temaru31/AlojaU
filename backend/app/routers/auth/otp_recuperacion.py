@@ -4,7 +4,6 @@ from fastapi import APIRouter
 import asyncio
 import hashlib
 import secrets
-import time
 from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException, Depends, Request
 from sqlalchemy import select
@@ -15,7 +14,6 @@ from app.core.logseguro import exc_resumen, una_linea
 from app.core.rate_limit import registrar_intento, registrar_intento_persistente, verificar_intentos_fallidos
 from app.db.session import get_session
 from app.core.flags import mock_enabled
-from app.fixtures.usuarios_demo import MOCK_USERS
 from app.core.normalizacion import normalizar_email
 from app.routers.auth.comun import _hash_password_async, _password_fuerte_v13
 from app.routers.auth.esquemas import OtpSolicitarIn, OtpVerificarIn, RecoveryConfirmarIn, RecoverySolicitarIn
@@ -26,13 +24,12 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 # OTP ligero (6 dígitos, 10 min) vía Email o Telegram webhook gratuito
 # ---------------------------------------------------------------------------
-_MOCK_OTPS: dict[str, dict] = {}
 
 
 async def _telegram_chat_para_email(db: AsyncSession, email: str) -> str | None:
     """Retorna el telegram_chat_id vinculado del usuario (o None si no hay).
 
-    Busca en BD y en MOCK_USERS (dev). Nunca retorna el TELEGRAM_CHAT_ID
+    Nunca retorna el TELEGRAM_CHAT_ID
     global (ese es un canal/grupo de desarrollo, prohibido para OTP).
     """
     email_n = normalizar_email(email)
@@ -45,9 +42,6 @@ async def _telegram_chat_para_email(db: AsyncSession, email: str) -> str | None:
             return str(chat)
     except Exception as e:
         logger.warning("[otp] lectura del chat de Telegram falló: %s", exc_resumen(e))
-    m = MOCK_USERS.get(email_n)
-    if m and m.get("telegram_chat_id"):
-        return str(m["telegram_chat_id"])
     return None
 
 
@@ -68,12 +62,10 @@ async def _crear_otp(db: AsyncSession, email: str, proposito: str) -> tuple[str,
             proposito=proposito, expira_en=expira,
         ))
         await db.commit()
-    except Exception:
+    except Exception as e:
         await rollback_seguro(db, "_crear_otp")
-        _MOCK_OTPS[f"{email}:{proposito}"] = {
-            "hash": hashlib.sha256(codigo.encode()).hexdigest(),
-            "expira": time.monotonic() + 600,
-        }
+        logger.error("[otp] no se pudo guardar el código: %s", exc_resumen(e))
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
     chat_id = await _telegram_chat_para_email(db, email)
     # I/O de red (Bot API ≤8s) fuera del event loop: el request responde sin
     # bloquear a otros usuarios concurrentes del worker.
@@ -116,7 +108,7 @@ def _enviar_codigo(email: str, codigo: str, proposito: str, chat_id: str | None 
     return "email"
 
 
-# Throttle OTP en memoria (cubre mock/dev) + persistente (prod).
+# Throttle OTP en memoria (por proceso) + persistente en PG.
 _OTP_SOLICITAR: dict[str, list[float]] = {}
 _OTP_VERIFICAR: dict[str, list[float]] = {}
 OTP_SOL_LIMIT = 5
@@ -165,17 +157,10 @@ async def otp_verificar(data: OtpVerificarIn, db: AsyncSession = Depends(get_ses
                 if u:
                     u.email_verificado = True
             await db.commit()
-    except Exception:
+    except Exception as e:
         await rollback_seguro(db, "otp_verificar")
-    if not ok:
-        # Fallback memoria (sin PG): valida contra _MOCK_OTPS.
-        entry = _MOCK_OTPS.get(f"{email}:{data.proposito}")
-        if entry and time.monotonic() < entry["expira"] and secrets.compare_digest(entry["hash"], digest):
-            ok = True
-            _MOCK_OTPS.pop(f"{email}:{data.proposito}", None)
-            m = MOCK_USERS.get(email)
-            if m and data.proposito == "email_verify":
-                m["email_verificado"] = True
+        logger.error("[otp] verificación falló: %s", exc_resumen(e))
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
     if not ok:
         await registrar_intento_persistente(db, f"otp_ver:{email}", False)
         raise HTTPException(status_code=401, detail="Código inválido o expirado")
@@ -185,9 +170,6 @@ async def otp_verificar(data: OtpVerificarIn, db: AsyncSession = Depends(get_ses
 # ---------------------------------------------------------------------------
 # Recovery un solo uso (15 min) + fortaleza v13
 # ---------------------------------------------------------------------------
-_MOCK_RESETS: dict[str, dict] = {}
-
-
 @router.post("/recovery/solicitar", status_code=202, summary="Solicitar enlace de recuperación (15 min)")
 async def recovery_solicitar(data: RecoverySolicitarIn, request: Request,
                              db: AsyncSession = Depends(get_session)):
@@ -200,9 +182,10 @@ async def recovery_solicitar(data: RecoverySolicitarIn, request: Request,
         from app.models import PasswordReset
         db.add(PasswordReset(email=email, token_hash=digest, expira_en=expira))
         await db.commit()
-    except Exception:
+    except Exception as e:
         await rollback_seguro(db, "recovery_solicitar")
-        _MOCK_RESETS[email] = {"hash": digest, "expira": time.monotonic() + 900}
+        logger.error("[recovery] no se pudo guardar el enlace: %s", exc_resumen(e))
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
     # Respuesta genérica anti-enumeración; en dev se loguea el token.
     # CodeQL: desinfección directa (una_linea sola no corta taint).
     _email_seguro = str(una_linea(email)).replace('\n', '').replace('\r', '')
@@ -247,19 +230,14 @@ async def recovery_confirmar(data: RecoveryConfirmarIn, db: AsyncSession = Depen
                         s.revocado = True
                         s.revocado_en = datetime.now(timezone.utc)
                     await db.commit()
-                except Exception:
+                except Exception as e:
                     await rollback_seguro(db, "recovery_confirmar")
+                    logger.warning("[recovery] no se pudieron revocar las sesiones previas: %s", exc_resumen(e))
                 ok = True
-    except Exception:
+    except Exception as e:
         await rollback_seguro(db, "recovery_confirmar")
-    if not ok:
-        entry = _MOCK_RESETS.get(email)
-        if entry and time.monotonic() < entry["expira"] and secrets.compare_digest(entry["hash"], digest):
-            ok = True
-            _MOCK_RESETS.pop(email, None)
-            m = MOCK_USERS.get(email)
-            if m:
-                m["password"] = await _hash_password_async(data.nueva_password)
+        logger.error("[recovery] confirmación falló: %s", exc_resumen(e))
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
     if not ok:
         raise HTTPException(status_code=401, detail="Enlace inválido, expirado o ya usado")
     return {"mensaje": "Contraseña restablecida. Sesiones anteriores revocadas."}

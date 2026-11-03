@@ -10,7 +10,6 @@ publicacion_destacados + store mock antes/después; ids descubiertos).
 """
 import asyncio
 import os
-from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -44,7 +43,6 @@ def _limpiar_destacados():
         pass
     try:
         from app.routers import publicidad as _pub
-        _pub.clear_publicidad_mock_for_tests()
     except Exception:
         pass
 
@@ -83,20 +81,8 @@ def _forzar_vence_pasado(destacado_id: int) -> bool:
             )
         finally:
             await conn.close()
-    try:
-        asyncio.run(_run())
-        return True
-    except Exception:
-        # Sin PG: mutar el store mock.
-        try:
-            from app.routers import publicidad as _pub
-            d = next(x for x in _pub.MOCK_DESTACADOS if x["id"] == destacado_id)
-            pasado = datetime.now(timezone.utc) - timedelta(hours=1)
-            d["inicia"] = pasado - timedelta(days=1)
-            d["vence"] = pasado
-            return False
-        except Exception:
-            raise AssertionError("no se pudo forzar vence pasado (ni PG ni mock)")
+    asyncio.run(_run())
+    return True
 
 
 def test_vencer_marca_vencido():
