@@ -298,8 +298,9 @@ def _enlace(h):
 def _contar_vinculos(email):
     async def _go():
         import asyncpg
-        conn = await asyncpg.connect(
-            "postgresql://alojau:alojau123@localhost:5432/alojau")
+        # Misma BD que la app (DATABASE_URL), no un DSN fijo: con PG en otro
+        # puerto se contaba en otra instancia (o fallaba la conexión).
+        conn = await asyncpg.connect(_dsn())
         try:
             return await conn.fetchval(
                 """SELECT count(*) FROM telegram_vinculos v
