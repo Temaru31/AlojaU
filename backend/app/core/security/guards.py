@@ -1,129 +1,18 @@
-"""JWT HS256 + bcrypt con fail-closed (sin BD -> 503).
-Uso: Depends(get_current_user/require_arrendador/require_admin) en routers.
-Ej: headers {"Authorization": "Bearer <jwt>"} -> {"id":1,"rol":"ARRENDADOR"}.
-v13: los tokens nuevos incluyen `jti` (revocación) y `scopes` (RBAC granular).
-Los tokens legacy sin scopes se enriquecen por rol (compat total).
-v14.1: get_current_user es async y verifica revocación JTI en TODOS los
-endpoints autenticados (centralizado). Exenciones: mock-tokens (solo dev),
-tokens sin jti (legacy, máx 8h de vida). Error de BD -> 503 fail-closed."""
-
-from datetime import datetime, timezone, timedelta
+"""Dependencias FastAPI de autenticación y autorización: revocación, roles y dueño."""
 import logging
 import time
-import uuid
-from typing import Mapping, TypedDict
-
-import jwt  # OLA1: PyJWT (reemplaza python-jose abandonado); HS256 + require exp/sub
-import bcrypt as _bcrypt
 from app.core.logseguro import exc_resumen
 from contextlib import asynccontextmanager
-
 from fastapi import Depends, HTTPException, Header
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.db.session import get_session
-from .config import settings
 from app.core.flags import mock_enabled
 from app.core.dominio import Rol
+from app.core.security.claims import ClaimsUsuario
+from app.core.security.tokens import MOCK_TOKENS, decode_token
+
 logger = logging.getLogger("alojau.security")
 
-
-class ClaimsUsuario(TypedDict, total=False):
-    """Claims del JWT verificado que reciben los endpoints autenticados."""
-    sub: str  # email
-    id: int
-    rol: str
-    scopes: list[str]
-    jti: str
-    exp: int
-    telefono_whatsapp: str
-    telefono_verificado: bool
-    email_verificado: bool
-
-
-def id_propietario(user: Mapping) -> int:
-    """Id entero del token; 401 si falta (nunca operar sobre un dueño ajeno)."""
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
-    return uid
-
-# Passlib está abandonado (último release 2020) y rompía con
-# bcrypt 4.1+ (ValueError 72 bytes). Se usa bcrypt directo (ya pineado a
-# 4.0.1): mismos hashes $2b$ verificables con los seeds existentes.
-def _pw_bytes(p) -> bytes:
-    return str(p or "").encode("utf-8")[:72]
-
-
-def hash_password(p) -> str:
-    return _bcrypt.hashpw(_pw_bytes(p), _bcrypt.gensalt()).decode("utf-8")
-
-
-def verify_password(p, h) -> bool:
-    try:
-        return _bcrypt.checkpw(_pw_bytes(p), str(h or "").encode("utf-8"))
-    except Exception:
-        return False
-def create_token(data: dict):
-    exp = datetime.now(timezone.utc) + timedelta(hours=settings.ACCESS_TOKEN_EXPIRE_HOURS)
-    payload = {**data, "exp": exp}
-    payload.setdefault("jti", uuid.uuid4().hex)
-    # Inyecta scopes derivados del rol si el caller no los fijó.
-    if "scopes" not in payload and payload.get("rol"):
-        from app.core.permissions import scopes_for_role
-        payload["scopes"] = sorted(scopes_for_role(payload.get("rol")))
-    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-def decode_token(token: str):
-    try:
-        return jwt.decode(
-            token,
-            settings.SECRET_KEY,
-            algorithms=[settings.ALGORITHM],
-            options={"require": ["exp", "sub"]},  # OLA1: rechaza tokens sin expiración ni sujeto
-        )
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token inválido o expirado")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Token inválido o expirado")
-    except Exception:
-        raise HTTPException(status_code=401, detail="Token inválido o expirado")
-
-# Tokens fijos de prueba (dev/test, USE_MOCK_FALLBACK; nunca en prod).
-# Incluye ESTUDIANTE base (rol por defecto de registro nuevo).
-MOCK_TOKENS = {
-    "mock-token-arrendador": {
-        "sub": "arrendador@alojau.com",
-        "rol": Rol.ARRENDADOR,
-        "id": 1,
-        "telefono_whatsapp": "573001234567",
-        "telefono_verificado": True,
-        "email_verificado": True,
-    },
-    "mock-token-admin": {
-        "sub": "admin@alojau.com",
-        "rol": Rol.ADMIN,
-        "id": 2,
-        "telefono_whatsapp": "573009998877",
-        "telefono_verificado": True,
-        "email_verificado": True,
-    },
-    "mock-token-estudiante": {
-        "sub": "estudiante@alojau.com",
-        "rol": Rol.ESTUDIANTE,
-        "id": 3,
-        "telefono_whatsapp": "573001112233",
-        "telefono_verificado": False,
-        "email_verificado": False,
-    },
-    "mock-token-auditor": {
-        "sub": "auditor@alojau.com",
-        "rol": Rol.AUDITOR_LEGAL,
-        "id": 4,
-        "telefono_whatsapp": "573001112244",
-        "telefono_verificado": False,
-        "email_verificado": True,
-    },
-}
 
 @asynccontextmanager
 async def _sesion(db):
