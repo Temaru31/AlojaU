@@ -11,7 +11,7 @@ import OtpForm from './OtpForm'
 import PasswordStrength, { passwordValidaV13 } from './PasswordStrength'
 import { CONSENTIMIENTO_TEXTO, TERMINOS_COMPLETOS, POLITICA_COMPLETA, LegalModal } from './Legal'
 import { signInWithGoogle } from '../services/supabaseClient'
-import { loginConPassword, registrarCuenta } from '../services/cuentaApi'
+import { iniciarSesionConCorreo, registrarCuenta } from '../services/cuentaApi'
 
 export default function RegistroForm({ onRegistrado }) {
   const [form, setForm] = useState({ email: '', password: '', nombre: '', telefono: '' })
@@ -45,7 +45,7 @@ export default function RegistroForm({ onRegistrado }) {
       setEmailCreado(creado.email)
       // Auto-login tras registro para UX continua (rol ESTUDIANTE).
       try {
-        const sesion = await loginConPassword(form.email.trim(), form.password)
+        const sesion = await iniciarSesionConCorreo(form.email.trim(), form.password)
         onRegistrado?.(sesion.access_token, creado.email)
       } catch {
         onRegistrado?.('', creado.email)

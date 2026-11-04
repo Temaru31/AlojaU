@@ -48,8 +48,8 @@ export function cerrarSesion(token) {
   return api.post('/api/auth/logout', {}, authHead(token))
 }
 
-/** Login con correo y contraseña: `{ access_token, ... }`. */
-export async function loginConPassword(email, password) {
+/** Login con correo y contraseña; devuelve la sesión: `{ access_token, ... }`. */
+export async function iniciarSesionConCorreo(email, password) {
   return (await api.post('/api/auth/login', { email, password })).data
 }
 
