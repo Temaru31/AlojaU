@@ -48,8 +48,6 @@ def limpieza():
     yield creados
     auth_router._LOGIN_ATTEMPTS.clear()
     reportes_mod.clear_report_rate_limit_for_tests()
-    for e in list(creados):
-        auth_router.MOCK_USERS.pop(e, None)
     try:
         import asyncio
         import os

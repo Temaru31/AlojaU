@@ -9,7 +9,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.routers import auth as auth_router
 
 client = TestClient(app)
 TMP_PREFIX = "test_user_tmp_"
@@ -38,8 +37,6 @@ PUB_BASE = {
 def limpieza():
     creados = []
     yield creados
-    for e in list(creados):
-        auth_router.MOCK_USERS.pop(e, None)
     try:
         import asyncio
         import os

@@ -3,10 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from ..db.session import get_session
-from ..core.config import settings
 from ..core.logseguro import exc_resumen
 from app.schemas.publicacion import CampusOut
-from app.fixtures.demo import MOCK_CAMPUS_LIST as MOCK_CAMPUS
 from typing import List
 import logging
 logger = logging.getLogger("alojau.campus")
@@ -45,7 +43,7 @@ def _row_to_out(r) -> dict:
 
 @router.get("", response_model=List[CampusOut], summary="HU-001 - Listar lugares activos (+004 POIs por categoría)")
 async def list_campus(response: Response, db: AsyncSession = Depends(get_session)):
-    """Lista lugares activos ordenados por categoría. En prod sin DB -> 503, en dev -> mock. DB vacía -> [].
+    """Lista lugares activos ordenados por categoría. Sin DB -> 503. DB vacía -> [].
 
     004: incluye `categoria` para el filtro "Cercano a..." agrupado. Cache-Control
     público 1h para que Vercel/CDN no repitan el fetch por cada visita.
@@ -67,18 +65,7 @@ async def list_campus(response: Response, db: AsyncSession = Depends(get_session
         payload = [_row_to_out(r) for r in rows]
     except Exception as e:
         logger.error(f"[campus] DB falló: {exc_resumen(e)}", exc_info=True)
-        mock_ok = bool(getattr(settings, "mock_enabled", False))
-        if not mock_ok:
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        payload = [
-            {
-                "id": c["id"], "institucion": c["institucion"], "nombre_sede": c["nombre_sede"],
-                "latitud": float(c["latitud"]), "longitud": float(c["longitud"]),
-                "categoria": c.get("categoria", "UNIVERSIDAD"),
-                "direccion": c.get("direccion"), "ciudad_id": c.get("ciudad_id"),
-            }
-            for c in MOCK_CAMPUS
-        ]
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
     _cache["ts"] = ahora
     _cache["payload"] = payload
     response.headers["Cache-Control"] = "public, max-age=3600"

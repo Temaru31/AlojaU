@@ -33,6 +33,7 @@ from app.models import (
     TipoHorarioSueno,
     Usuario,
 )
+from app.core.dominio import Rol
 
 logger = logging.getLogger("alojau.matching")
 
@@ -194,7 +195,7 @@ async def candidatos(db: AsyncSession, yo: Usuario, limite: int = 20) -> list[di
     duros), ordena por score desc y corta en `limite`."""
     try:
         stmt = select(Usuario).where(
-            Usuario.rol == "ESTUDIANTE",
+            Usuario.rol == Rol.ESTUDIANTE,
             Usuario.eliminado_en.is_(None),
             Usuario.id != yo.id,
         )

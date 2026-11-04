@@ -131,7 +131,7 @@ describe('Buscar Fase 4 Hero + multiciudad', () => {
   })
 
   it('BloqueServicios colapsa solo con más de 6 ítems (escala futura)', async () => {
-    const { BloqueServicios } = await import('./Buscar')
+    const { BloqueServicios } = await import('./buscar/BloquesFiltro')
     const setFiltros = vi.fn()
     const ocho = Array.from({ length: 8 }, (_, i) => ({ id: 10 + i, label: `Extra ${i}` }))
     const { rerender, unmount } = render(<MemoryRouter><BloqueServicios items={ocho} filtros={{}} setFiltros={setFiltros} /></MemoryRouter>)

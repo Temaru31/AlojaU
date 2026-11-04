@@ -1,5 +1,5 @@
 """v13.1 blindaje — IP real tras proxy, fallback de nombre, soft-delete.
-Auto-limpieza: prefijo test_user_tmp_* + purga PG/mocks en teardown.
+Auto-limpieza: prefijo test_user_tmp_* + purga PG en teardown.
 """
 import uuid
 from types import SimpleNamespace
@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.routers import auth as auth_router
-from app.routers.auth import _client_ip, GoogleCallbackIn
+from app.core.net import client_ip
+from app.routers.auth import GoogleCallbackIn
 
 client = TestClient(app)
 TMP_PREFIX = "test_user_tmp_"
@@ -23,10 +24,6 @@ def tmp_email(tag=""):
 def limpieza():
     creados = []
     yield creados
-    for e in list(creados):
-        auth_router.MOCK_USERS.pop(e, None)
-        auth_router._MOCK_OTPS.pop(f"{e}:email_verify", None)
-        auth_router._MOCK_RESETS.pop(e, None)
     auth_router._LOGIN_ATTEMPTS.clear()
     auth_router._PW_ATTEMPTS.clear()
     try:
@@ -66,27 +63,27 @@ def _req(headers=None, host="10.0.0.5"):
 # --- IP real tras proxy ------------------------------------------------------
 def test_ip_x_forwarded_for_primera():
     r = _req({"x-forwarded-for": "203.0.113.7, 10.0.0.1, 172.16.0.1"})
-    assert _client_ip(r) == "203.0.113.7"
+    assert client_ip(r) == "203.0.113.7"
 
 
 def test_ip_headers_aunque_client_none():
     r = SimpleNamespace(headers={"x-forwarded-for": "198.51.100.9"}, client=None)
-    assert _client_ip(r) == "198.51.100.9"
+    assert client_ip(r) == "198.51.100.9"
 
 
 def test_ip_x_real_ip_fallback():
-    assert _client_ip(_req({"x-real-ip": "192.0.2.44"})) == "192.0.2.44"
+    assert client_ip(_req({"x-real-ip": "192.0.2.44"})) == "192.0.2.44"
 
 
 def test_ip_invalida_se_descarta():
     r = _req({"x-forwarded-for": "no-es-ip, 203.0.113.8"})
     # La primera inválida se salta, gana la primera válida.
-    assert _client_ip(r) == "203.0.113.8"
+    assert client_ip(r) == "203.0.113.8"
 
 
 def test_ip_sin_nada_unknown():
-    assert _client_ip(None) == "unknown"
-    assert _client_ip(SimpleNamespace(headers={}, client=None)) == "unknown"
+    assert client_ip(None) == "unknown"
+    assert client_ip(SimpleNamespace(headers={}, client=None)) == "unknown"
 
 
 # --- Fallback nombre Google --------------------------------------------------

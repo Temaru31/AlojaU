@@ -16,13 +16,20 @@ from __future__ import annotations
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.dominio import EstadoPublicacion, Rol
 
-ESTADOS_VIGENTES = frozenset({
-    "PENDIENTE", "ACTIVO", "PAUSADO", "PAUSADO_POR_REPORTE", "REVISION_REQUERIDA",
-})
+ESTADOS_VIGENTES = frozenset(
+    {
+        EstadoPublicacion.PENDIENTE,
+        EstadoPublicacion.ACTIVO,
+        EstadoPublicacion.PAUSADO,
+        EstadoPublicacion.PAUSADO_POR_REPORTE,
+        EstadoPublicacion.REVISION_REQUERIDA,
+    }
+)
 
 # Roles que la democión puede degradar. Fuera de aquí: intocables.
-ROLES_DEMOTABLES = frozenset({"ARRENDADOR"})
+ROLES_DEMOTABLES = frozenset({Rol.ARRENDADOR})
 
 
 async def contar_vigentes(db: AsyncSession, usuario_id: int) -> int:
@@ -52,8 +59,8 @@ async def promover_si_estudiante(db: AsyncSession, usuario_id: int) -> str | Non
         return None
     if getattr(u, "eliminado_en", None) is not None:
         return u.rol
-    if u.rol == "ESTUDIANTE":
-        u.rol = "ARRENDADOR"
+    if u.rol == Rol.ESTUDIANTE:
+        u.rol = Rol.ARRENDADOR
         await db.flush()
     return u.rol
 
@@ -73,7 +80,7 @@ async def evaluar_democion(db: AsyncSession, usuario_id: int) -> tuple[str | Non
     if u.rol not in ROLES_DEMOTABLES:
         return u.rol, False
     if await contar_vigentes(db, usuario_id) == 0:
-        u.rol = "ESTUDIANTE"
+        u.rol = Rol.ESTUDIANTE
         await db.flush()
         return u.rol, True
     return u.rol, False

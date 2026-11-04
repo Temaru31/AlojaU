@@ -1,7 +1,6 @@
 """Throttles del chatbot (memoria del proceso + tope diario + circuit breaker).
 
-Mismo molde que `services/telegram.py::check_throttle` (no se importa ese
-módulo: el test AST prohíbe servicios ajenos en services/chat/).
+La ventana deslizante por clave es la común de `core/rate_limit.py`.
 - `limite_por_clave(clave, limite, ventana_s)`: 429 si excede. Claves:
   `chat:ip:{ip}` y `chat:user:{id}`.
 - Tope diario global (`chat:dia:YYYY-MM-DD`, configurable): al superarlo se
@@ -16,6 +15,8 @@ import time
 from datetime import date
 
 from fastapi import HTTPException
+
+from app.core.rate_limit import registrar_intento
 
 _THROTTLE: dict[str, list[float]] = {}
 _USO_DIARIO: dict[str, int] = {}
@@ -32,12 +33,6 @@ def clear_chat_throttle_for_tests() -> None:
     _BREAKER_HASTA["hasta"] = 0.0
 
 
-def _podar(clave: str, ventana_s: float, ahora: float) -> list[float]:
-    hist = [t for t in _THROTTLE.get(clave, []) if ahora - t < ventana_s]
-    _THROTTLE[clave] = hist
-    return hist
-
-
 def breaker_abierto() -> bool:
     return time.monotonic() < _BREAKER_HASTA["hasta"]
 
@@ -48,12 +43,7 @@ def _abrir_breaker(segundos: float) -> None:
 
 def limite_por_clave(clave: str, limite: int, ventana_s: float) -> None:
     """429 si la clave supera `limite` eventos en `ventana_s`."""
-    ahora = time.monotonic()
-    hist = _podar(clave, ventana_s, ahora)
-    if len(hist) >= max(1, int(limite)):
-        raise HTTPException(status_code=429, detail=MENSAJE_LIMITE)
-    hist.append(ahora)
-    _THROTTLE[clave] = hist
+    registrar_intento(_THROTTLE, clave, max(1, int(limite)), ventana_s, MENSAJE_LIMITE)
 
 
 def tope_diario(limite_dia: int, breaker_s: float = 3600.0) -> None:

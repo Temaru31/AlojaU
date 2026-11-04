@@ -16,9 +16,12 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import require_admin
+from app.core.security import require_admin, ClaimsUsuario
 from app.core.logseguro import exc_resumen
 from app.db.session import get_session
+from app.core.db_utils import rollback_seguro
+from app.core.dominio import EstadoPublicacion, EstadoReporte
+from app.services.config_sistema import DEFAULTS
 
 router = APIRouter(prefix="/api/admin/automation", tags=["admin-automation"])
 
@@ -56,30 +59,9 @@ class SettingPatch(BaseModel):
     valor: str
 
 
-DEFAULTS = {
-    # (valor, tipo, descripcion, seccion). Secciones UI: publicaciones,
-    # moderacion, visibilidad. Añadir clave = aparece sola en el panel.
-    "dias_vigencia_publicacion": ("30", "int", "Días de vigencia al publicar/renovar", "publicaciones"),
-    "max_reportes_para_pausa_automatica": ("3", "int", "Reportes que pausan el aviso", "moderacion"),
-    "auto_aprobar_arrendadores_verificados": ("false", "bool", "Auto-aprobar verificados", "moderacion"),
-    # v15.2 auto-moderación + UX (ver services/auto_moderation.py).
-    "moderacion_automatica": ("false", "bool", "Switch global de moderación automática", "moderacion"),
-    "umbral_aprobacion_ia": ("0.85", "float", "Score mínimo (0-1) para auto-aprobar", "moderacion"),
-    "dias_desactualizada": ("30", "int", "Días para badge 'Desactualizada'", "publicaciones"),
-    "titulo_min": ("10", "int", "Mínimo de caracteres del título", "publicaciones"),
-    "titulo_max": ("150", "int", "Máximo de caracteres del título", "publicaciones"),
-    "descripcion_min": ("20", "int", "Mínimo de caracteres de la descripción", "publicaciones"),
-    "descripcion_max": ("2000", "int", "Máximo de caracteres de la descripción", "publicaciones"),
-    "fotos_min_publicar": ("3", "int", "Mínimo de fotos al publicar", "publicaciones"),
-    "palabras_prohibidas": ("viagra,casino,cripto,x1000", "str", "Spam separado por comas", "moderacion"),
-    # v15.x visibilidad de vistas (False = solo dueño/admin, prudente).
-    "vistas_visibles_publico": ("false", "bool", "Mostrar vistas a todo visitante", "visibilidad"),
-}
-
-
 @router.get("/settings", response_model=list[SettingOut], summary="Admin: listar ajustes del sistema")
 async def listar_settings(
-    db: AsyncSession = Depends(get_session), admin: dict = Depends(require_admin)
+    db: AsyncSession = Depends(get_session), admin: ClaimsUsuario = Depends(require_admin)
 ):
     """Lista system_settings (ADMIN). TTL 5min en memoria.
 
@@ -107,45 +89,48 @@ async def listar_settings(
     return payload
 
 
+# Rango permitido por ajuste numérico: clave -> (mínimo, máximo, mensaje del 422).
+_RANGOS_SETTINGS = {
+    "dias_vigencia_publicacion": (1, 365, "vigencia 1..365 días"),
+    "max_reportes_para_pausa_automatica": (1, 20, "umbral 1..20"),
+    "dias_desactualizada": (1, 365, "rango 1..365 días"),
+    "titulo_min": (1, 100, "rango 1..100"),
+    "descripcion_min": (1, 100, "rango 1..100"),
+    "titulo_max": (10, 150, "rango 10..150"),
+    "descripcion_max": (100, 5000, "rango 100..5000"),
+    "fotos_min_publicar": (1, 10, "rango 1..10"),
+    "umbral_aprobacion_ia": (0.0, 1.0, "rango 0..1"),
+}
+_CONVERSORES = {"int": (int, "valor debe ser entero"), "float": (float, "valor debe ser decimal")}
+
+
+def _validar_valor_setting(clave: str, tipo: str, valor: str) -> None:
+    """422 si el valor no corresponde al tipo del ajuste o sale de su rango."""
+    if tipo in _CONVERSORES:
+        convertir, error_tipo = _CONVERSORES[tipo]
+        try:
+            numero = convertir(valor)
+        except ValueError:
+            raise HTTPException(status_code=422, detail=error_tipo)
+        rango = _RANGOS_SETTINGS.get(clave)
+        if rango and not rango[0] <= numero <= rango[1]:
+            raise HTTPException(status_code=422, detail=rango[2])
+    if tipo == "bool" and valor.lower() not in ("true", "false"):
+        raise HTTPException(status_code=422, detail="valor debe ser true|false")
+    if tipo == "str" and len(valor) > 2000:
+        raise HTTPException(status_code=422, detail="máximo 2000 caracteres")
+
+
 @router.patch("/settings/{clave}", response_model=SettingOut, summary="Admin: editar ajuste del sistema")
 async def editar_setting(
     clave: str, payload: SettingPatch,
-    db: AsyncSession = Depends(get_session), admin: dict = Depends(require_admin)
+    db: AsyncSession = Depends(get_session), admin: ClaimsUsuario = Depends(require_admin)
 ):
     """Edita un setting con validación de tipo/rango (ADMIN). Invalida el caché."""
     if clave not in DEFAULTS:
         raise HTTPException(status_code=404, detail=f"setting '{clave}' desconocido")
     _, tipo, desc, _sec = DEFAULTS[clave]
-    if tipo == "int":
-        try:
-            iv = int(payload.valor)
-        except ValueError:
-            raise HTTPException(status_code=422, detail="valor debe ser entero")
-        if clave == "dias_vigencia_publicacion" and not 1 <= iv <= 365:
-            raise HTTPException(status_code=422, detail="vigencia 1..365 días")
-        if clave == "max_reportes_para_pausa_automatica" and not 1 <= iv <= 20:
-            raise HTTPException(status_code=422, detail="umbral 1..20")
-        if clave == "dias_desactualizada" and not 1 <= iv <= 365:
-            raise HTTPException(status_code=422, detail="rango 1..365 días")
-        if clave in ("titulo_min", "descripcion_min") and not 1 <= iv <= 100:
-            raise HTTPException(status_code=422, detail="rango 1..100")
-        if clave == "titulo_max" and not 10 <= iv <= 150:
-            raise HTTPException(status_code=422, detail="rango 10..150")
-        if clave == "descripcion_max" and not 100 <= iv <= 5000:
-            raise HTTPException(status_code=422, detail="rango 100..5000")
-        if clave == "fotos_min_publicar" and not 1 <= iv <= 10:
-            raise HTTPException(status_code=422, detail="rango 1..10")
-    if tipo == "float":
-        try:
-            fv = float(payload.valor)
-        except ValueError:
-            raise HTTPException(status_code=422, detail="valor debe ser decimal")
-        if clave == "umbral_aprobacion_ia" and not 0.0 <= fv <= 1.0:
-            raise HTTPException(status_code=422, detail="rango 0..1")
-    if tipo == "bool" and payload.valor.lower() not in ("true", "false"):
-        raise HTTPException(status_code=422, detail="valor debe ser true|false")
-    if tipo == "str" and len(payload.valor) > 2000:
-        raise HTTPException(status_code=422, detail="máximo 2000 caracteres")
+    _validar_valor_setting(clave, tipo, payload.valor)
     try:
         from datetime import datetime, timezone
 
@@ -159,7 +144,7 @@ async def editar_setting(
         else:
             # Upsert: si la fila no existe (migración sin defaults), créala.
             db.add(SystemSetting(clave=clave, valor=payload.valor, tipo=tipo, descripcion=desc))
-        # M4 historial: el cambio de ajustes queda auditado (misma transacción).
+        # Historial: el cambio de ajustes queda auditado (misma transacción).
         from app.models import PublicacionesAudit
         db.add(PublicacionesAudit(
             publicacion_id=None,
@@ -174,20 +159,17 @@ async def editar_setting(
     except HTTPException:
         raise
     except Exception as e:
-        # v15.2 fix false-200 (V14.0 M1): un fallo de persistencia NUNCA se
-        # reporta como éxito. Rollback + 503 ruidoso (sin mock: admin es prod).
+        # Fix false-200 (V14.0 M1): un fallo de persistencia NUNCA se
+        # reporta como éxito. Rollback + 503 ruidoso.
         import logging as _logging
         _logging.getLogger("alojau.admin").error("[settings] persistencia falló: %s", exc_resumen(e))
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "editar_setting")
         raise HTTPException(status_code=503, detail="No se pudo guardar el ajuste")
 
 
 @router.post("/evaluar/{pub_id}", summary="Admin: evaluar pausa automática por reportes")
 async def evaluar_pub(
-    pub_id: int, db: AsyncSession = Depends(get_session), admin: dict = Depends(require_admin)
+    pub_id: int, db: AsyncSession = Depends(get_session), admin: ClaimsUsuario = Depends(require_admin)
 ):
     """Si reportes PENDIENTE/CONFIRMADO >= umbral -> PAUSADO_POR_REPORTE + audit PAUSED.
 
@@ -200,7 +182,11 @@ async def evaluar_pub(
 
     try:
         umbral = 3
-        row = (await db.execute(select(SystemSetting).where(SystemSetting.clave == "max_reportes_para_pausa_automatica"))).scalars().first()
+        row = (
+            (await db.execute(select(SystemSetting).where(SystemSetting.clave == "max_reportes_para_pausa_automatica")))
+            .scalars()
+            .first()
+        )
         if row:
             try:
                 umbral = int(row.valor)
@@ -212,11 +198,11 @@ async def evaluar_pub(
         n = (await db.execute(
             select(func.count()).select_from(ReportePublicacion).where(
                 ReportePublicacion.publicacion_id == pub_id,
-                ReportePublicacion.estado.in_(["PENDIENTE", "CONFIRMADO"]),
+                ReportePublicacion.estado.in_([EstadoReporte.PENDIENTE, EstadoReporte.CONFIRMADO]),
             )
         )).scalar() or 0
-        if n >= umbral and p.estado == "ACTIVO":
-            p.estado = "PAUSADO_POR_REPORTE"
+        if n >= umbral and p.estado == EstadoPublicacion.ACTIVO:
+            p.estado = EstadoPublicacion.PAUSADO_POR_REPORTE
             db.add(PublicacionesAudit(
                 publicacion_id=pub_id,
                 usuario_id=admin.get("id") if isinstance(admin.get("id"), int) else None,
@@ -229,8 +215,5 @@ async def evaluar_pub(
     except HTTPException:
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "evaluar_pub")
         raise HTTPException(status_code=503, detail="Base de datos no disponible")

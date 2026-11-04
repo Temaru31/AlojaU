@@ -30,9 +30,6 @@ def limpieza():
     auth_router._LOGIN_ATTEMPTS.clear()
     yield creados
     auth_router._LOGIN_ATTEMPTS.clear()
-    for e in list(creados):
-        auth_router.MOCK_USERS.pop(e, None)
-    auth_router._MOCK_OTPS.clear()
 
     async def _del():
         import asyncpg

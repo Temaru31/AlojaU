@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.core.rate_limit import verificar_intentos_fallidos
 from app.routers import auth as auth_router
 
 client = TestClient(app)
@@ -37,10 +38,6 @@ PUB = {
 def limpieza():
     creados = []
     yield creados
-    for e in list(creados):
-        auth_router.MOCK_USERS.pop(e, None)
-        auth_router._MOCK_OTPS.pop(f"{e}:email_verify", None)
-        auth_router._MOCK_RESETS.pop(e, None)
     auth_router._LOGIN_ATTEMPTS.clear()
     auth_router._PW_ATTEMPTS.clear()
     auth_router._OTP_SOLICITAR.clear()
@@ -144,14 +141,14 @@ def test_fail_closed_rate_check_503(limpieza, monkeypatch):
         async def rollback(self):
             return None
 
-    # Dev/mock: permite con warning.
-    asyncio.run(auth_router._db_rate_check(_Dead(), "k:test", limite=5, ventana_s=60))
-    # Prod simulado: 503.
+    # Dev y prod igual: el anti-fuerza-bruta nunca se desactiva en silencio.
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(verificar_intentos_fallidos(_Dead(), "k:test", limite=5, ventana_s=60))
+    assert exc.value.status_code == 503
     monkeypatch.setattr(cfg_mod.settings, "ENV", "prod", raising=False)
-    monkeypatch.setattr(cfg_mod.settings, "USE_MOCK_FALLBACK", False, raising=False)
     monkeypatch.setenv("ENV", "prod")
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(auth_router._db_rate_check(_Dead(), "k:test", limite=5, ventana_s=60))
+        asyncio.run(verificar_intentos_fallidos(_Dead(), "k:test", limite=5, ventana_s=60))
     assert exc.value.status_code == 503
 
 

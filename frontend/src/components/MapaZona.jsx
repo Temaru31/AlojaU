@@ -6,7 +6,7 @@ import { Footprints, Car, Bus, MapPin, Map, Check } from 'lucide-react'
 import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
 import { obtenerRutaPie } from '../utils/osrm'
 // Fix icon
-// OLA4: iconos servidos en local (public/leaflet/) en vez de CDN unpkg (SPOF + integridad).
+// Iconos servidos en local (public/leaflet/) en vez de CDN unpkg (SPOF + integridad).
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: '/leaflet/marker-icon-2x.png',

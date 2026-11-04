@@ -3,8 +3,7 @@
 - GET /api/notificaciones: lectura PURA (sin escrituras, sin purga).
 - PATCH .../leer y .../leer-todas: únicos escritores de `leida`.
 - /api/busquedas-guardadas: POST (mínimo 1 filtro, tope 10 activas), GET mías, DELETE propia.
-- Sin PG (mock/dev): 503 honesto (sin stores mock: es módulo nuevo con
-  fuente única en BD, igual que POST /api/reportes en dev sin PG).
+- Sin BD: 503 honesto (fuente única en BD).
 """
 from datetime import datetime, timezone
 from typing import Optional
@@ -14,13 +13,13 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import get_current_user
+from app.core.security import get_current_user, id_propietario, ClaimsUsuario
 from app.core.logseguro import exc_resumen
-from app.core.config import settings
 from app.core.pagination import paginate_params
 from app.db.session import get_session
 
 import logging
+from app.core.db_utils import rollback_seguro
 logger = logging.getLogger("alojau.notificaciones")
 
 router = APIRouter(prefix="/api/notificaciones", tags=["notificaciones"])
@@ -48,13 +47,7 @@ def _tiene_filtros(data: "BusquedaIn") -> bool:
     return bool(data.servicios_ids)
 
 
-def _mock_enabled() -> bool:
-    return bool(getattr(settings, "mock_enabled", False))
-
-
-# ---------------------------------------------------------------------------
 # Schemas
-# ---------------------------------------------------------------------------
 class NotificacionOut(BaseModel):
     id: int
     tipo: str
@@ -120,26 +113,17 @@ def _b_out(b) -> dict:
             "activa": bool(b.activa), "created_at": b.created_at}
 
 
-def _uid(user: dict) -> int:
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
-    return uid
-
-
-# ---------------------------------------------------------------------------
 # Bandeja
-# ---------------------------------------------------------------------------
 @router.get("", response_model=BandejaOut, summary="Bandeja in-app (lectura pura)")
 async def listar(
     page: int = Query(1, ge=1, le=1000),
     size: int = Query(9, ge=1, le=50),
     solo_no_leidas: bool = Query(False),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """Paginado ≤50 + conteo de no leídas. Sin escrituras (ni purga)."""
-    uid = _uid(user)
+    uid = id_propietario(user)
     try:
         from app.models import Notificacion
         offset, size = paginate_params(page, size)
@@ -162,23 +146,18 @@ async def listar(
     except HTTPException:
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "listar")
         logger.error(f"[notificaciones listar] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router.patch("/leer-todas", summary="Marcar toda la bandeja como leída")
 async def leer_todas(
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """Un UPDATE por usuario. Declarada ANTES de /{id}/leer (orden de rutas)."""
-    uid = _uid(user)
+    uid = id_propietario(user)
     try:
         from app.models import Notificacion
         ahora = datetime.now(timezone.utc)
@@ -193,24 +172,19 @@ async def leer_todas(
     except HTTPException:
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "leer_todas")
         logger.error(f"[notificaciones leer-todas] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router.patch("/{nid}/leer", response_model=NotificacionOut, summary="Marcar una como leída")
 async def leer_una(
     nid: int = Path(..., ge=1),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """404 si no existe, 403 si es ajena (IDOR)."""
-    uid = _uid(user)
+    uid = id_propietario(user)
     try:
         from app.models import Notificacion
         n = await db.get(Notificacion, nid)
@@ -224,34 +198,24 @@ async def leer_una(
         await db.refresh(n)
         return _a_out(n)
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "leer_una")
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "leer_una")
         logger.error(f"[notificaciones leer] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
-# ---------------------------------------------------------------------------
 # Búsquedas guardadas
-# ---------------------------------------------------------------------------
 @router_busquedas.post("", response_model=BusquedaOut, status_code=201,
                        summary="Guardar alerta (tope 10 activas)")
 async def crear_busqueda(
     data: BusquedaIn,
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """Valida tope anti-abuso + FKs de catálogo. 422 con guía si algo falla."""
-    uid = _uid(user)
+    uid = id_propietario(user)
     if not _tiene_filtros(data):
         raise HTTPException(status_code=422, detail=MENSAJE_SIN_FILTROS)
     try:
@@ -287,29 +251,21 @@ async def crear_busqueda(
         await db.refresh(b)
         return _b_out(b)
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "crear_busqueda")
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "crear_busqueda")
         logger.error(f"[busquedas crear] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router_busquedas.get("", summary="Listar mis alertas")
 async def listar_busquedas(
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """Todas las mías (≤10 activas + inactivas), recientes primero."""
-    uid = _uid(user)
+    uid = id_propietario(user)
     try:
         from app.models import BusquedaGuardada
         rows = (await db.execute(
@@ -320,25 +276,20 @@ async def listar_busquedas(
     except HTTPException:
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "listar_busquedas")
         logger.error(f"[busquedas listar] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router_busquedas.delete("/{bid}", summary="Eliminar una alerta propia")
 async def eliminar_busqueda(
     bid: int = Path(..., ge=1),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ):
     """Borrado físico (config propia, sin auditoría): 404/403. Las
     notificaciones ya creadas se conservan (busqueda_id pasa a NULL)."""
-    uid = _uid(user)
+    uid = id_propietario(user)
     try:
         from app.models import BusquedaGuardada
         b = await db.get(BusquedaGuardada, bid)
@@ -350,17 +301,9 @@ async def eliminar_busqueda(
         await db.commit()
         return {"eliminada": True, "id": bid}
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "eliminar_busqueda")
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "eliminar_busqueda")
         logger.error(f"[busquedas eliminar] DB falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        raise HTTPException(status_code=503, detail="Base de datos no disponible (dev sin PG)")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")

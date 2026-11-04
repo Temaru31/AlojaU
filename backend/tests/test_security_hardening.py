@@ -144,10 +144,7 @@ def test_oauth_supabase_id_sale_de_claims_no_del_cliente(monkeypatch):
         dsn = raw.replace("postgresql+asyncpg://", "postgresql://")
         if "supabase.co" in dsn.lower():
             return "sup-REAL-123"
-        try:
-            conn = await asyncio.wait_for(asyncpg.connect(dsn), timeout=5)
-        except Exception:
-            return auth_router.MOCK_USERS.get(email, {}).get("supabase_id")
+        conn = await asyncio.wait_for(asyncpg.connect(dsn), timeout=5)
         try:
             return await conn.fetchval(
                 "SELECT supabase_id FROM usuarios WHERE email=$1", email)

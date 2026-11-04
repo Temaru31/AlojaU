@@ -2,7 +2,7 @@
 
 Lista zonas con su ciudad para el combobox de Publicar. Sin auth.
 Cache-Control 1h (mismo patrón que /api/campus y /api/ciudades).
-En prod sin DB -> 503, en dev -> mock con las 6 zonas del seed.
+Sin DB -> 503.
 """
 
 import time
@@ -11,11 +11,11 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.logseguro import exc_resumen
 from app.db.session import get_session
 
 import logging
+from app.core.db_utils import rollback_seguro
 
 logger = logging.getLogger("alojau.zonas")
 
@@ -29,20 +29,6 @@ def clear_zonas_cache() -> None:
     """Invalida el caché (tests + ingesta manual)."""
     _cache["ts"] = 0.0
     _cache["payload"] = None
-
-
-def _mock_enabled() -> bool:
-    return bool(getattr(settings, "mock_enabled", False))
-
-
-MOCK_ZONAS = [
-    {"id": 1, "ciudad_id": 1, "nombre": "Centro", "estrato": 3},
-    {"id": 2, "ciudad_id": 1, "nombre": "Pandiguando", "estrato": 2},
-    {"id": 3, "ciudad_id": 1, "nombre": "Tulcán", "estrato": 3},
-    {"id": 4, "ciudad_id": 1, "nombre": "Torobajo", "estrato": 4},
-    {"id": 5, "ciudad_id": 1, "nombre": "Catay", "estrato": 2},
-    {"id": 6, "ciudad_id": 1, "nombre": "Alfonso López", "estrato": 2},
-]
 
 
 @router.get("", summary="Listar zonas/barrios del catálogo")
@@ -65,13 +51,8 @@ async def list_zonas(response: Response, db: AsyncSession = Depends(get_session)
         ]
     except Exception as e:
         logger.error(f"[zonas] DB falló: {exc_resumen(e)}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        payload = [dict(z) for z in MOCK_ZONAS]
+        await rollback_seguro(db, "list_zonas")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
     _cache["ts"] = ahora
     _cache["payload"] = payload
     response.headers["Cache-Control"] = "public, max-age=3600"

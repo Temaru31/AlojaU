@@ -11,8 +11,7 @@ Diseño:
 
 Pre-mortem (Fase 0, documentado aquí para auditoría):
 1. Si Supabase/Render se interrumpe: AuthService cae a JWT local HS256
-   (fail-closed 503 solo si la BD es indispensable; lectura pública sigue
-   con mocks en dev, 503 explícito en prod). El cliente reintenta con
+   (sin BD: 503 explícito). El cliente reintenta con
    exponential backoff (ver frontend/src/services/api.js) y muestra
    "Iniciando servidores seguros de AlojaU...".
 2. Google con email ya registrado manual: identity linking por email
@@ -29,10 +28,10 @@ Pre-mortem (Fase 0, documentado aquí para auditoría):
 from __future__ import annotations
 
 from fastapi import Depends, HTTPException
+from app.core.dominio import Rol
+from app.core.security import ClaimsUsuario
 
-# ---------------------------------------------------------------------------
 # Catálogo de scopes (estable; añadir nuevos es aditivo y no rompe nada)
-# ---------------------------------------------------------------------------
 SCOPE_CATALOG: tuple[str, ...] = (
     "publications:read",
     "favorites:manage",
@@ -72,11 +71,11 @@ _ADMIN_SCOPES = frozenset(set(_ARRENDADOR_SCOPES) | {
 
 # Roles futuros ya contemplados (extensibles sin tocar endpoints):
 _FUTURE_ROLE_SCOPES: dict[str, frozenset] = {
-    "MODERADOR_CAMPUS": frozenset(set(_ESTUDIANTE_SCOPES) | {
+    Rol.MODERADOR_CAMPUS: frozenset(set(_ESTUDIANTE_SCOPES) | {
         "admin:reports:moderate",
         "campus:moderate",
     }),
-    "AUDITOR_LEGAL": frozenset({
+    Rol.AUDITOR_LEGAL: frozenset({
         "publications:read",
         "legal:audit:view",
         "admin:dashboard:view",
@@ -84,15 +83,15 @@ _FUTURE_ROLE_SCOPES: dict[str, frozenset] = {
 }
 
 ROLE_SCOPES: dict[str, frozenset] = {
-    "ESTUDIANTE": _ESTUDIANTE_SCOPES,
-    "ARRENDADOR": _ARRENDADOR_SCOPES,
-    "ADMIN": _ADMIN_SCOPES,
+    Rol.ESTUDIANTE: _ESTUDIANTE_SCOPES,
+    Rol.ARRENDADOR: _ARRENDADOR_SCOPES,
+    Rol.ADMIN: _ADMIN_SCOPES,
     **_FUTURE_ROLE_SCOPES,
 }
 
 # Roles que la BD acepta (CHECK aditivo; el modelo lo refleja).
 VALID_ROLES: tuple[str, ...] = (
-    "ESTUDIANTE", "ARRENDADOR", "ADMIN", "MODERADOR_CAMPUS", "AUDITOR_LEGAL",
+    Rol.ESTUDIANTE, Rol.ARRENDADOR, Rol.ADMIN, Rol.MODERADOR_CAMPUS, Rol.AUDITOR_LEGAL,
 )
 
 
@@ -103,7 +102,7 @@ def scopes_for_role(rol: str | None) -> frozenset:
     return ROLE_SCOPES.get(str(rol).upper(), frozenset())
 
 
-def user_scopes(user: dict | None) -> frozenset:
+def user_scopes(user: ClaimsUsuario | None) -> frozenset:
     """Scopes efectivos de un payload JWT.
 
     Precedencia: 1) claim explícito "scopes" (tokens nuevos),
@@ -135,7 +134,7 @@ def require_scope(scope: str):
     """Dependencia FastAPI: exige un scope o 403 (401 sin token lo da security)."""
     from app.core.security import get_current_user  # import tardío: evita ciclo
 
-    async def _dep(user: dict = Depends(get_current_user)) -> dict:
+    async def _dep(user: ClaimsUsuario = Depends(get_current_user)) -> dict:
         if not has_scope(user, scope):
             raise HTTPException(
                 status_code=403,
@@ -150,7 +149,7 @@ def require_any_scope(*scopes: str):
     """Dependencia: exige al menos uno de los scopes."""
     from app.core.security import get_current_user
 
-    async def _dep(user: dict = Depends(get_current_user)) -> dict:
+    async def _dep(user: ClaimsUsuario = Depends(get_current_user)) -> dict:
         actual = user_scopes(user)
         if not any(s in actual for s in scopes):
             raise HTTPException(

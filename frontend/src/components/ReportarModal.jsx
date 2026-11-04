@@ -19,7 +19,7 @@ export default function ReportarModal({ publicacionId, titulo = '', onClose }) {
   const [error, setError] = useState('')
   const [done, setDone] = useState(false)
 
-  // UX-AUDIT P1: cerrar con Esc + un solo nombre accesible "Cerrar"
+  // Cerrar con Esc + un solo nombre accesible "Cerrar"
   // (antes: dos botones "Cerrar"/"Cerrar ventana" en el mismo dialog).
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose?.() }
@@ -53,7 +53,7 @@ export default function ReportarModal({ publicacionId, titulo = '', onClose }) {
     }
   }
 
-  // Bloque 3: Tab cicla dentro + foco vuelve al disparador al cerrar.
+  // Tab cicla dentro + foco vuelve al disparador al cerrar.
   const cajaRef = useRef(null)
   useFocusTrap(cajaRef, true)
 

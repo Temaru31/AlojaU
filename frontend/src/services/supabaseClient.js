@@ -91,7 +91,7 @@ export async function getSupabaseClient(env = import.meta.env) {
   return _sdkClient
 }
 
-// M5: destino post-login (ej. "/publicar"). Se guarda en sessionStorage
+// Destino post-login (ej. "/publicar"). Se guarda en sessionStorage
 // (no en la URL de redirect: Supabase solo acepta URLs registradas).
 export const POST_LOGIN_REDIRECT_KEY = 'alojau_post_login_redirect'
 
@@ -137,16 +137,12 @@ export function withTimeout(promesa, ms, mensaje = 'La operación tardó demasia
 
 export async function signInWithGoogle(env = import.meta.env, timeoutMs = OAUTH_CLIENT_TIMEOUT_MS) {
   const redirectTo = getOAuthRedirect(env)
-  let sb = null
-  try {
-    sb = await withTimeout(
-      getSupabaseClient(env),
-      timeoutMs,
-      'Conectar con Google está tardando demasiado. Revisa tu conexión e intenta de nuevo.',
-    )
-  } catch (e) {
-    throw e // OAUTH_NOT_CONFIGURED u OAUTH_TIMEOUT con guía (no botón muerto)
-  }
+  // Propaga OAUTH_NOT_CONFIGURED u OAUTH_TIMEOUT con guía (no botón muerto).
+  const sb = await withTimeout(
+    getSupabaseClient(env),
+    timeoutMs,
+    'Conectar con Google está tardando demasiado. Revisa tu conexión e intenta de nuevo.',
+  )
   try {
     // El SDK gestiona PKCE (code_challenge + verifier en storage) o
     // implícito según el proyecto; ambas respuestas las entiende el callback.
@@ -171,7 +167,7 @@ export async function signInWithGoogle(env = import.meta.env, timeoutMs = OAUTH_
   }
 }
 
-// v13.1: intercambia ?code= (PKCE) por sesión. Requiere que el login lo haya
+// Intercambia ?code= (PKCE) por sesión. Requiere que el login lo haya
 // iniciado el SDK (guarda el code_verifier); si no hay verifier, el SDK lanza
 // error descriptivo (nunca "No se recibió token" genérico en la UI).
 export async function exchangeCodeForSession(code, env = import.meta.env, timeoutMs = OAUTH_EXCHANGE_TIMEOUT_MS) {

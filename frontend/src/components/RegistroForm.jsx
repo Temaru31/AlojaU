@@ -38,7 +38,7 @@ export default function RegistroForm({ onRegistrado }) {
         email: form.email.trim(),
         password: form.password,
         nombre_completo: form.nombre.trim(),
-        // v13.2 progressive profiling: el teléfono es opcional (se exige al publicar).
+        // Progressive profiling: el teléfono es opcional (se exige al publicar).
         telefono_whatsapp: telDigitos === '' ? null : telDigitos,
         acepto_tratamiento_datos: true,
       })

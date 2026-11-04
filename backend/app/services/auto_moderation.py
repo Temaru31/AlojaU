@@ -17,6 +17,8 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
+from app.core.dominio import EstadoPublicacion
+from app.services.config_sistema import DEFAULTS
 
 # --- Resultado estándar (firma estable para proveedores futuros) ---
 APPROVE = "APPROVE"
@@ -48,7 +50,6 @@ PALABRAS_DEFECTO = ["viagra", "casino", "cripto", "x1000"]
 
 def _cfg_valores(db_rows: dict[str, str] | None = None) -> dict[str, str]:
     """Defaults + overrides de system_settings (testeable sin DB)."""
-    from app.routers.admin_automation import DEFAULTS
     base = {k: v for k, (v, _t, _d, _s) in DEFAULTS.items()}
     if db_rows:
         base.update({k: v for k, v in db_rows.items() if k in base})
@@ -218,7 +219,7 @@ async def evaluar_y_aplicar(db, publicacion, proveedor: BaseAIModerationProvider
     res = await proveedor.evaluate_publication(data, fotos)
     umbral = _num(cfg, "umbral_aprobacion_ia", 0.85)
     if res.decision != REJECT and res.confidence_score >= umbral:
-        publicacion.estado = "ACTIVO"
+        publicacion.estado = EstadoPublicacion.ACTIVO
         db.add(PublicacionesAudit(
             publicacion_id=publicacion.id, usuario_id=None, evento="APPROVED",
             detalle=f"auto:rules+heuristic score={res.confidence_score:.3f} umbral={umbral}",

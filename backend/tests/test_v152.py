@@ -36,8 +36,6 @@ PUB = {
 def limpieza():
     creados = []
     yield creados
-    for e in list(creados):
-        auth_router.MOCK_USERS.pop(e, None)
     auth_router._LOGIN_ATTEMPTS.clear()
     try:
         import asyncio

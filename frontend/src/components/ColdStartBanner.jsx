@@ -1,5 +1,5 @@
 // Banner discreto cold-start Render (15-45s por inactividad, free tier).
-// v13: copia exacta requerida + reintento visible. Uso: <ColdStartBanner />
+// Copia exacta requerida + reintento visible. Uso: <ColdStartBanner />
 // entre Nav y main. Visible solo si un request supera 4s (evento api.js).
 import { useEffect, useState } from 'react'
 

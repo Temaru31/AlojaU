@@ -184,7 +184,7 @@ def test_repo_validar_fks_y_persistir_y_renovar(stores_limpios):
 # ---------------------------------------------------------------------------
 # publicacion_view
 # ---------------------------------------------------------------------------
-def test_view_cards_detail_y_mocks(stores_limpios):
+def test_view_cards_y_detail(stores_limpios):
     async def main(db):
         from app.models import Publicacion
         from app.services import publicacion_view as view
@@ -205,23 +205,6 @@ def test_view_cards_detail_y_mocks(stores_limpios):
         items = view.cards_for_page([p], {1: 0}, {p.usuario_id: p.usuario}, {1: 111}, 1, True)
         assert len(items) == 1
         assert view._zona_display(p) in ("Tulcán", "Pandiguando", "Centro")
-        mock = {"id": 5, "titulo": "t", "tipo_inmueble": "X", "canon_mensual": 100,
-                "zona_barrio_id": 1, "direccion_referencial": "d", "estado": "ACTIVO",
-                "servicios": [], "servicios_ids": [1], "fotos": ["https://a/1.jpg"],
-                "latitud": 2.44, "longitud": -76.60, "campus_ids": [1, 99],
-                "usuario_id": 1, "telefono_verificado": False}
-        out = view.mock_to_out(mock, 1, False)
-        assert out["telefono_whatsapp"] is None and out["vistas"] is None
-        assert out["campus_distancias"] is not None
-        assert view.mock_to_out(mock, None, True)["vistas"] == 0
-        assert view.filter_mock_pubs(
-            [dict(mock, estado="ACTIVO", ciudad_id=2)], ciudad_id=1) == []
-        assert view.filter_mock_pubs(
-            [dict(mock, estado="ACTIVO")], ciudad_slug="bogota") == []
-        assert view.filter_mock_pubs(
-            [dict(mock, estado="ACTIVO")], q="con de la")
-        assert view.filter_mock_pubs(
-            [dict(mock, estado="ACTIVO")], tipo="APARTAESTUDIO") == []
         for malo in ("1,2,3' OR '1'='1", "x,y", "0", "1," * 30):
             with pytest.raises(HTTPException):
                 view.parse_servicios_param(malo)
@@ -316,7 +299,7 @@ def test_security_require_arrendador_caminos(stores_limpios):
         u3 = await sec.require_arrendador(f"Bearer {t}")
         assert u3["rol"] == "ARRENDADOR"
         sec.clear_rol_cache_for_tests()
-        # Sin BD (factoría rota) + mock: MOCK_USERS manda en dev.
+        # Sin BD (factoría rota): la sesión no es verificable -> 503 (fail-closed).
         from app.db import session as _sess
 
         real = _sess.AsyncSession
@@ -327,8 +310,9 @@ def test_security_require_arrendador_caminos(stores_limpios):
 
         _sess.AsyncSession = _Rota
         try:
-            u4 = await sec.require_arrendador(f"Bearer {t}")
-            assert u4["rol"] == "ARRENDADOR"
+            with pytest.raises(HTTPException) as sin_bd:
+                await sec.require_arrendador(f"Bearer {t}")
+            assert sin_bd.value.status_code == 503
         finally:
             _sess.AsyncSession = real
         with pytest.raises(HTTPException) as e:
@@ -338,7 +322,7 @@ def test_security_require_arrendador_caminos(stores_limpios):
     con_db(main)
 
 
-def test_verificar_sesion_resiliente_sin_pg(stores_limpios):
+def test_verificar_sesion_sin_pg_falla_cerrado(stores_limpios):
     async def main(db):
         from app.core import security as sec
 
@@ -346,8 +330,10 @@ def test_verificar_sesion_resiliente_sin_pg(stores_limpios):
             async def execute(self, *a, **k):
                 raise RuntimeError("caída")
 
-        # Dev sin PG: advierte y permite (resiliencia local).
-        await sec._verificar_sesion_activa({"jti": "x"}, _Mala())
+        # Sin PG la revocación no es verificable: 503, nunca se deja pasar.
+        with pytest.raises(HTTPException) as e:
+            await sec._verificar_sesion_activa({"jti": "x"}, _Mala())
+        assert e.value.status_code == 503
     con_db(main)
 
 

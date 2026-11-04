@@ -5,10 +5,9 @@ expiración de token, RBAC/scopes 403, rate-limit anti-fuerza bruta,
 OTP 6 dígitos, recovery un solo uso, promoción ESTUDIANTE->ARRENDADOR.
 
 Auto-borrado: todo dato temporal usa prefijo `test_user_tmp_*` y el
-fixture `limpieza_tmp` elimina (PG real) o purga (mocks en memoria) al
+fixture `limpieza_tmp` elimina las filas de PG al
 cierre de cada test. La BD queda totalmente limpia.
 """
-import time
 import uuid
 
 import pytest
@@ -31,12 +30,6 @@ def limpieza_tmp():
     """tearDown: borra todo rastro tmp (PG + mocks en memoria)."""
     creados: list[str] = []
     yield creados
-    for email in list(creados):
-        auth_router.MOCK_USERS.pop(email, None)
-        auth_router.MOCK_USERS.pop(email.lower(), None)
-        auth_router._MOCK_OTPS.pop(f"{email}:email_verify", None)
-        auth_router._MOCK_OTPS.pop(f"{email}:login", None)
-        auth_router._MOCK_RESETS.pop(email, None)
     auth_router._LOGIN_ATTEMPTS.clear()
     auth_router._PW_ATTEMPTS.clear()
     # PG real (si hay): borra filas tmp + sesiones huérfanas.
@@ -255,6 +248,25 @@ def test_oauth_google_redirect_allowlist():
 
 
 # --- OTP --------------------------------------------------------------------
+def _insertar_otp(email, proposito, codigo):
+    import asyncio
+    import hashlib
+    import os
+    import asyncpg
+
+    async def _run():
+        dsn = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
+        conn = await asyncpg.connect(dsn)
+        try:
+            await conn.execute(
+                "INSERT INTO otp_codes (email, codigo_hash, proposito, expira_en) "
+                "VALUES ($1, $2, $3, now() + interval '10 minutes')",
+                email, hashlib.sha256(codigo.encode()).hexdigest(), proposito)
+        finally:
+            await conn.close()
+    asyncio.run(_run())
+
+
 def test_otp_solicitar_y_verificar(limpieza_tmp):
     email = tmp_email("otp")
     limpieza_tmp.append(email)
@@ -262,19 +274,11 @@ def test_otp_solicitar_y_verificar(limpieza_tmp):
     s = client.post("/api/auth/otp/solicitar",
                     json={"email": email, "proposito": "email_verify"})
     assert s.status_code == 202
-    # Código correcto: se lee del store en memoria (solo mock/dev sin PG).
-    key = f"{email}:email_verify"
-    if key in auth_router._MOCK_OTPS:
-        import hashlib
-        # Fuerza un código conocido para el test.
-        code = "123456"
-        auth_router._MOCK_OTPS[key] = {
-            "hash": hashlib.sha256(code.encode()).hexdigest(),
-            "expira": time.monotonic() + 600,
-        }
-        v = client.post("/api/auth/otp/verificar",
-                        json={"email": email, "codigo": code, "proposito": "email_verify"})
-        assert v.status_code == 200, v.text
+    # Código correcto: se inserta uno conocido (el real viaja solo por correo/DM).
+    _insertar_otp(email, "email_verify", "123456")
+    v = client.post("/api/auth/otp/verificar",
+                    json={"email": email, "codigo": "123456", "proposito": "email_verify"})
+    assert v.status_code == 200, v.text
     # Código malo siempre 401.
     m = client.post("/api/auth/otp/verificar",
                     json={"email": email, "codigo": "000000", "proposito": "email_verify"})

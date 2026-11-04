@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import BreadcrumbsAdmin from '../components/BreadcrumbsAdmin'
+import { bearer } from '../services/authHeaders'
+import { leerToken } from '../services/tokenStorage'
 
 const MOTIVO_LABEL = {
   POSIBLE_ESTAFA: 'Posible estafa',
@@ -23,8 +25,8 @@ export default function AdminReportes() {
     setLoading(true)
     setError('')
     try {
-      const token = localStorage.getItem('alojau_token') || ''
-      const headers = token ? { Authorization: `Bearer ${token}` } : {}
+      const token = leerToken()
+      const headers = bearer(token)
       const r = await api.get('/api/reportes', { params: { estado: 'PENDIENTE' }, headers, signal })
       setItems(r.data)
     } catch (err) {
@@ -41,7 +43,7 @@ export default function AdminReportes() {
     }
   }
 
-  // OLA4: AbortController — desmontar aborta la carga en curso (sin setState tardío).
+  // AbortController — desmontar aborta la carga en curso (sin setState tardío).
   useEffect(() => {
     const controller = new AbortController()
     cargar(controller.signal)
@@ -52,9 +54,9 @@ export default function AdminReportes() {
     setActing(id)
     setError('')
     try {
-      const token = localStorage.getItem('alojau_token') || ''
+      const token = leerToken()
       await api.patch(`/api/reportes/${id}`, { accion }, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: bearer(token),
       })
       setItems((prev) => prev.filter((x) => x.id !== id))
     } catch (err) {

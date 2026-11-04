@@ -8,8 +8,8 @@ import { api } from '../services/api'
 import { House } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import BreadcrumbsAdmin from '../components/BreadcrumbsAdmin'
+import { authHead } from '../services/authHeaders'
 
-const authHead = (token) => ({ headers: { Authorization: `Bearer ${token}` } })
 
 export default function AdminTipos() {
   const { token } = useAuth()

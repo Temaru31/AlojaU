@@ -7,6 +7,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { Megaphone, Star } from 'lucide-react'
 import { api, getPlanesPublicidad, destacarPublicacion, getMisDestacados } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
+import { bearer } from '../services/authHeaders'
 
 const ESTADO_LABEL = {
   PENDIENTE: 'Pendiente de aprobación',
@@ -50,7 +51,7 @@ export default function Publicitar() {
       getPlanesPublicidad(),
       api.get('/api/publicaciones/mias', {
         params: { size: 50 },
-        headers: { Authorization: `Bearer ${token}` },
+        headers: bearer(token),
       }),
       getMisDestacados(token),
     ])

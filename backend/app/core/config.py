@@ -3,12 +3,12 @@ import os
 from pydantic_settings import BaseSettings
 from pydantic import field_validator, model_validator
 
-# OLA2-M3: dominio prod canónico confirmado en dashboard Vercel (con guion).
+# Dominio prod canónico confirmado en dashboard Vercel (con guion).
 # render.yaml y .env.example deben usar exactamente este valor.
 CANONICAL_PROD_ORIGIN = "https://aloja-u.vercel.app"
 TYPO_PROD_ORIGIN = "https://alojau.vercel.app"  # sin guion: typo histórico, rechazar en prod
 
-# v13: versión vigente de la política de tratamiento de datos (Ley 1581/2012).
+# Versión vigente de la política de tratamiento de datos (Ley 1581/2012).
 POLITICA_VERSION_VIGENTE = "v1.0-ley1581-2026"
 
 
@@ -21,8 +21,13 @@ class Settings(BaseSettings):
     # en localStorage. Sin refresh/revocación por alcance.
     ACCESS_TOKEN_EXPIRE_HOURS: int = 2
 
-    # Sprint1: permite funcionar sin PG (mock en memoria) si no hay DB
+    # Habilita los tokens fijos de prueba (MOCK_TOKENS) y el dev_token de
+    # recuperación. Nunca en prod (lo valida el arranque). No hay datos en memoria.
     USE_MOCK_FALLBACK: bool = True
+
+    # Proxies de confianza delante de la app (Render = 1). Con 0 los límites de
+    # intentos usan la IP de la conexión; ver core/net.py::ip_para_limites.
+    TRUSTED_PROXY_HOPS: int = 0
 
     # CORS restringido por env (DoD-5) - prod solo Vercel
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
@@ -34,14 +39,14 @@ class Settings(BaseSettings):
     TRUST_WEIGHT_VIGENCIA: int = 15
     TRUST_WEIGHT_REPORTES: int = 10
 
-    # F3 Cloudinary (persistencia prod). Si están vacíos -> storage local efímero (dev).
+    # Cloudinary (persistencia prod). Si están vacíos -> storage local efímero (dev).
     # En Render/Supabase prod: setear CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET.
     CLOUDINARY_CLOUD_NAME: str = ""
     CLOUDINARY_API_KEY: str = ""
     CLOUDINARY_API_SECRET: str = ""
     CLOUDINARY_FOLDER: str = "alojau"
 
-    # v13 Enterprise Auth (Supabase Auth / Google OAuth / JWKS).
+    # Enterprise Auth (Supabase Auth / Google OAuth / JWKS).
     # Vacío = proveedor local HS256 (dev sin configuración externa).
     # En prod con Supabase: SUPABASE_URL + SUPABASE_JWKS_URL (o se deriva
     # como {SUPABASE_URL}/auth/v1/.well-known/jwks.json) + SUPABASE_AUD.
@@ -50,20 +55,20 @@ class Settings(BaseSettings):
     SUPABASE_AUD: str = "authenticated"
     SUPABASE_ANON_KEY: str = ""
 
-    # v13: frontend canónico para redirecciones OAuth (dev + prod).
+    # Frontend canónico para redirecciones OAuth (dev + prod).
     FRONTEND_URL: str = "http://localhost:5173"
     FRONTEND_PROD_URL: str = CANONICAL_PROD_ORIGIN
 
-    # v13: OTP alternativo gratuito (Telegram Bot webhook opcional).
+    # OTP alternativo gratuito (Telegram Bot webhook opcional).
     # Vacío = solo Email-code (log en dev). Con token se intenta Telegram
     # SOLO por DM al telegram_chat_id vinculado del usuario (M5 privacidad:
     # NUNCA a canales/grupos globales).
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_CHAT_ID: str = ""
-    # M5 vinculación $0: username público del bot (sin @) para bot_url t.me.
+    # Vinculación $0: username público del bot (sin @) para bot_url t.me.
     # Ej. TELEGRAM_BOT_USERNAME=AlojaU_bot -> https://t.me/AlojaU_bot?start=TOKEN
     TELEGRAM_BOT_USERNAME: str = ""
-    # Bloque 1 fix: webhook productivo del bot.
+    # Fix: webhook productivo del bot.
     # TELEGRAM_WEBHOOK_SECRET se valida contra el header
     # X-Telegram-Bot-Api-Secret-Token que envía Telegram en cada update.
     # Vacío = se acepta sin verificar (solo dev); en prod configurarlo.
@@ -72,7 +77,7 @@ class Settings(BaseSettings):
     # Ej. https://alojau-api.onrender.com/api/auth/telegram/webhook
     TELEGRAM_WEBHOOK_URL: str = ""
 
-    # v13: versión de política de datos vigente (Ley 1581/2012).
+    # Versión de política de datos vigente (Ley 1581/2012).
     POLITICA_VERSION: str = POLITICA_VERSION_VIGENTE
 
     # Chatbot MVP (solo lectura, mig 021). Apagado por defecto.
@@ -161,7 +166,7 @@ class Settings(BaseSettings):
 
     @property
     def mock_enabled(self) -> bool:
-        # Mock solo si flag True Y ENV!=prod (doble check settings + entorno).
+        # Credenciales de prueba solo si flag True Y ENV!=prod (doble check).
         return bool(self.USE_MOCK_FALLBACK) and self.ENV != "prod" and os.getenv("ENV", "dev") != "prod"
 
     @property

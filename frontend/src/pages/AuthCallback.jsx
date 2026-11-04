@@ -15,6 +15,7 @@ import { CircleCheck, CircleAlert } from 'lucide-react'
 import { api } from '../services/api'
 import { parseAuthCallbackHash, getCallbackCode, exchangeCodeForSession, leerRedirectPostLogin } from '../services/supabaseClient'
 import { emitAuthChange } from '../contexts/AuthContext'
+import { guardarToken } from '../services/tokenStorage'
 
 function decodeJwtPayload(token) {
   try {
@@ -40,7 +41,7 @@ export default function AuthCallback() {
   const [detalle, setDetalle] = useState('')
   const [esNuevo, setEsNuevo] = useState(false)
 
-  // Bloque 3: el redirect diferido se cancela al desmontar (el flag `vivo`
+  // El redirect diferido se cancela al desmontar (el flag `vivo`
   // ya protege los setState, pero el navigate huérfano también se evita).
   const navTimer = useRef(null)
   const watchdogTimer = useRef(null)
@@ -75,7 +76,7 @@ export default function AuthCallback() {
         fallar(String(err))
         return
       }
-      // v13.1 dual: PKCE (?code=) o implícito (#access_token=).
+      // Dual: PKCE (?code=) o implícito (#access_token=).
       let supabaseJwt = frag.access_token || ''
       let claims = supabaseJwt ? decodeJwtPayload(supabaseJwt) : {}
       const code = getCallbackCode()
@@ -115,7 +116,7 @@ export default function AuthCallback() {
           supabase_jwt: supabaseJwt,
           foto_perfil_url: foto,
         })
-        try { localStorage.setItem('alojau_token', r.data.access_token) } catch { /* noop */ }
+        guardarToken(r.data.access_token)
         emitAuthChange()
         if (vivo && !resuelto) {
           resuelto = true
@@ -124,7 +125,7 @@ export default function AuthCallback() {
           // el backend dice si la cuenta nació ahora para el mensaje correcto.
           setEsNuevo(!!r.data?.es_nuevo)
           setEstado('ok')
-          // M5: vuelve a donde estaba (ej. /publicar) o al inicio.
+          // Vuelve a donde estaba (ej. /publicar) o al inicio.
           const destino = leerRedirectPostLogin()
           navTimer.current = window.setTimeout(() => { if (vivo) navigate(destino) }, 900)
         }

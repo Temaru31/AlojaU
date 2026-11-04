@@ -7,18 +7,24 @@ Persistencia (Strategy via services/storage.py):
 - Prod con CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET: Cloudinary `secure_url` persistente.
 """
 import asyncio
+import logging
 import os
-import time
 import uuid
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request, Path
 from pydantic import BaseModel
 
-from app.core.security import get_current_user, require_arrendador
+from app.core.security import get_current_user, require_arrendador, id_propietario, ClaimsUsuario
 from app.services.storage import get_storage_backend
 from app.db.session import get_session
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.db_utils import rollback_seguro
+from app.core.security import es_dueno_o_admin
+from app.core.rate_limit import registrar_intento
+from app.core.logseguro import exc_resumen
+
+logger = logging.getLogger("alojau.uploads")
 
 router = APIRouter(prefix="/api/publicaciones/upload", tags=["uploads"])
 
@@ -49,7 +55,9 @@ def _validate_mime_ext(file: UploadFile):
     # MIME exacto en lista blanca (sin startswith("image/"): colaba SVG).
     mime = (file.content_type or "").lower()
     if mime not in ALLOWED_MIME:
-        raise HTTPException(status_code=400, detail=f"Archivo {file.filename} no permitido (solo JPEG/PNG/WebP/GIF, SVG bloqueado)")
+        raise HTTPException(
+            status_code=400, detail=f"Archivo {file.filename} no permitido (solo JPEG/PNG/WebP/GIF, SVG bloqueado)"
+        )
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in ALLOWED_MIME[mime]:
         raise HTTPException(status_code=400, detail=f"Extensión {ext or '(sin extensión)'} no coincide con {mime}")
@@ -84,31 +92,24 @@ def clear_upload_rate_limit_for_tests() -> None:
 
 
 def _check_upload_rate_limit(uid: int) -> None:
-    ahora = time.monotonic()
-    clave = f"upload:{uid}"
-    hist = [t for t in _UPLOAD_ATTEMPTS.get(clave, []) if ahora - t < UPLOAD_WINDOW_S]
-    if len(hist) >= UPLOAD_LIMIT:
-        raise HTTPException(status_code=429, detail="Demasiadas subidas, espera 1 hora")
-    hist.append(ahora)
-    _UPLOAD_ATTEMPTS[clave] = hist
+    registrar_intento(_UPLOAD_ATTEMPTS, f"upload:{uid}", UPLOAD_LIMIT, UPLOAD_WINDOW_S,
+                      "Demasiadas subidas, espera 1 hora")
 
 
 @router.post("", response_model=UploadOut, summary="HU-005 Upload 3-10 imágenes (solo ARRENDADOR)")
 async def upload_fotos(
     request: Request,
     files: List[UploadFile] = File(..., description="3-10 imágenes, cada una max 5MB, image/*"),
-    user: dict = Depends(require_arrendador),
+    user: ClaimsUsuario = Depends(require_arrendador),
 ):
-    uid_t = user.get("id")
-    if not isinstance(uid_t, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid_t = id_propietario(user)
     _check_upload_rate_limit(uid_t)
     if len(files) < MIN_FILES:
         raise HTTPException(status_code=422, detail=f"Mínimo {MIN_FILES} fotos (HU-005 C2), recibidas {len(files)}")
     if len(files) > MAX_FILES:
         raise HTTPException(status_code=422, detail=f"Máximo {MAX_FILES} fotos, recibidas {len(files)}")
 
-    # F3: Factory elige Local (dev) o Cloudinary (prod con CLOUDINARY_*).
+    # Factory elige Local (dev) o Cloudinary (prod con CLOUDINARY_*).
     base = str(request.base_url).rstrip("/")
     backend = get_storage_backend(base_url=base)
 
@@ -150,15 +151,13 @@ async def upload_fotos(
 async def upload_una_foto(
     request: Request,
     file: UploadFile = File(..., description="1 imagen, max 5MB, image/*"),
-    user: dict = Depends(require_arrendador),
+    user: ClaimsUsuario = Depends(require_arrendador),
 ):
     """v15.2 paso 1 del gestor: UNA foto (el /upload grupal exige 3-10).
 
     Misma validación (MIME+magic+5MB+uuid). Respuesta compatible UploadOut.
     """
-    uid_1 = user.get("id")
-    if not isinstance(uid_1, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid_1 = id_propietario(user)
     _check_upload_rate_limit(uid_1)
     ext = _validate_mime_ext(file)
     mime = (file.content_type or "").lower()
@@ -185,67 +184,23 @@ async def upload_una_foto(
     return {"urls": [url], "count": 1}
 
 
-async def _es_dueno_o_admin(user: dict | None, owner_id: int | None) -> bool:
-    """Dueño por id, o ADMIN revalidado contra BD (anti-stale).
-
-    Delega en `publicaciones._is_owner_or_admin` (caché 10s, fail-closed):
-    un ADMIN democionado deja de operar fotos ajenas en ≤10s en vez de
-    conservar el acceso hasta que expire su JWT (~2h). Import lazy para
-    evitar ciclos entre routers (patrón del repo).
-    """
-    try:
-        from app.routers.publicaciones import _is_owner_or_admin as _check
-        return bool(await _check(user, owner_id))
-    except Exception:
-        return False
-
-
-def _mock_enabled() -> bool:
-    from app.core.config import settings as _s
-    return bool(getattr(_s, "mock_enabled", False))
-
-
-def _mock_ids_para(pub: dict) -> list[int]:
-    """Ids virtuales estables para fotos mock (pub_id*1000 + índice)."""
-    try:
-        base = int(pub.get("id", 0)) * 1000
-    except Exception:
-        base = 0
-    return [base + i for i, _ in enumerate(pub.get("fotos", []) or [], start=1)]
-
-
-def _mock_buscar_por_foto(foto_id: int):
-    """(pub, idx) mock que contiene el foto_id virtual, o (None, -1)."""
-    try:
-        from app.routers.publicaciones import MOCK_PUBS as _MP
-    except Exception:
-        return None, -1
-    for pub in _MP:
-        ids = _mock_ids_para(pub)
-        if foto_id in ids:
-            return pub, ids.index(foto_id)
-    return None, -1
-
-
 @router.delete("/{foto_id}", summary="Dueño: eliminar una foto del aviso")
 async def eliminar_foto(
     foto_id: int = Path(..., ge=1),
     db: AsyncSession = Depends(get_session),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
 ):
     """v15.2 gestión multimedia. Solo dueño o ADMIN. Reordena `orden`
     contiguamente tras borrar (misma transacción). 401/403/404."""
     from app.models import ImagenPublicacion, Publicacion
 
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     try:
         img = await db.get(ImagenPublicacion, foto_id)
         if not img:
             raise HTTPException(status_code=404, detail="Foto no encontrada")
         pub = await db.get(Publicacion, img.publicacion_id)
-        if not pub or not await _es_dueno_o_admin(user, pub.usuario_id):
+        if not pub or not await es_dueno_o_admin(user, pub.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede eliminar fotos")
         pid = img.publicacion_id
         await db.delete(img)
@@ -267,38 +222,15 @@ async def eliminar_foto(
                 local = os.path.join(UPLOAD_DIR, os.path.basename(path))
                 if os.path.isfile(local):
                     os.remove(local)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("[uploads] no se pudo borrar el archivo local: %s", exc_resumen(e))
         return {"id": foto_id, "eliminada": True, "fotos_restantes": len(restantes)}
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "eliminar_foto")
         raise
     except Exception:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    # Mock dev sin PG: el gestor multimedia opera sobre MOCK_PUBS.fotos.
-    # Id virtual = pub_id*1000 + posición (ver _mock_ids_para). Sin PG no hay
-    # borrado físico: solo se reordena la lista (la portada sigue en [0]).
-    if not _mock_enabled():
+        await rollback_seguro(db, "eliminar_foto")
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    try:
-        from app.routers.publicaciones import MOCK_PUBS as _MP
-    except Exception:
-        raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    pub, idx = _mock_buscar_por_foto(foto_id)
-    if not pub:
-        raise HTTPException(status_code=404, detail="Foto no encontrada")
-    if not await _es_dueno_o_admin(user, pub.get("usuario_id")):
-        raise HTTPException(status_code=403, detail="Solo el dueño puede eliminar fotos")
-    pub["fotos"].pop(idx)
-    return {"id": foto_id, "eliminada": True, "fotos_restantes": len(pub["fotos"]), "mock": True}
 
 
 class OrdenIn(BaseModel):
@@ -315,7 +247,7 @@ class VincularIn(BaseModel):
 async def reordenar_fotos(
     data: OrdenIn,
     db: AsyncSession = Depends(get_session),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
 ):
     """v15.2 portada = primer id de `orden_ids` (pasa a orden=1).
 
@@ -324,16 +256,14 @@ async def reordenar_fotos(
     """
     from app.models import ImagenPublicacion, Publicacion
 
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     if not data.orden_ids:
         raise HTTPException(status_code=422, detail="orden_ids vacío")
     try:
         pub = await db.get(Publicacion, data.publicacion_id)
         if not pub:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await _es_dueno_o_admin(user, pub.usuario_id):
+        if not await es_dueno_o_admin(user, pub.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede reordenar fotos")
         fotos = (await db.execute(
             select(ImagenPublicacion).where(
@@ -356,56 +286,25 @@ async def reordenar_fotos(
         return {"publicacion_id": data.publicacion_id, "orden": data.orden_ids,
                 "portada_id": data.orden_ids[0]}
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "reordenar_fotos")
         raise
     except Exception:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    # Mock dev sin PG: reordena MOCK_PUBS.fotos según orden_ids virtuales.
-    if not _mock_enabled():
+        await rollback_seguro(db, "reordenar_fotos")
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    try:
-        from app.routers.publicaciones import MOCK_PUBS as _MP
-    except Exception:
-        raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    pub = next((x for x in _MP if x.get("id") == data.publicacion_id), None)
-    if not pub:
-        raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if not await _es_dueno_o_admin(user, pub.get("usuario_id")):
-        raise HTTPException(status_code=403, detail="Solo el dueño puede reordenar fotos")
-    esperados = _mock_ids_para(pub)
-    if set(data.orden_ids) != set(esperados):
-        raise HTTPException(
-            status_code=422,
-            detail="orden_ids debe contener exactamente las fotos del aviso",
-        )
-    por_url = {fid: url for fid, url in zip(esperados, list(pub["fotos"]))}
-    pub["fotos"] = [por_url[fid] for fid in data.orden_ids]
-    return {"publicacion_id": data.publicacion_id, "orden": data.orden_ids,
-            "portada_id": data.orden_ids[0], "mock": True}
 
 
 @router.post("/vincular", summary="Dueño: vincular URLs subidas como fotos del aviso")
 async def vincular_fotos(
     data: VincularIn,
     db: AsyncSession = Depends(get_session),
-    user: dict = Depends(get_current_user),
+    user: ClaimsUsuario = Depends(get_current_user),
 ):
     """v15.2 paso 2 del gestor multimedia: tras `POST /upload`, vincula las
     URLs como filas `ImagenPublicacion` (orden consecutivo, máx 10 en total).
     Solo dueño o ADMIN. 401/403/404/422."""
     from app.models import ImagenPublicacion, Publicacion
 
-    uid = user.get("id")
-    if not isinstance(uid, int):
-        raise HTTPException(status_code=401, detail="Token sin propietario válido")
+    uid = id_propietario(user)
     urls = [str(u or "").strip()[:500] for u in (data.urls or []) if str(u or "").strip()]
     if not urls:
         raise HTTPException(status_code=422, detail="urls vacío")
@@ -416,7 +315,7 @@ async def vincular_fotos(
         pub = await db.get(Publicacion, data.publicacion_id)
         if not pub:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await _es_dueno_o_admin(user, pub.usuario_id):
+        if not await es_dueno_o_admin(user, pub.usuario_id):
             raise HTTPException(status_code=403, detail="Solo el dueño puede agregar fotos")
         actuales = (await db.execute(
             select(ImagenPublicacion).where(
@@ -437,33 +336,8 @@ async def vincular_fotos(
         return {"publicacion_id": data.publicacion_id, "ids": ids,
                 "total": len(actuales) + len(nuevas)}
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "vincular_fotos")
         raise
     except Exception:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    # Mock dev sin PG: anexa URLs a MOCK_PUBS.fotos (orden consecutivo).
-    if not _mock_enabled():
+        await rollback_seguro(db, "vincular_fotos")
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    try:
-        from app.routers.publicaciones import MOCK_PUBS as _MP
-    except Exception:
-        raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    pub = next((x for x in _MP if x.get("id") == data.publicacion_id), None)
-    if not pub:
-        raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if not await _es_dueno_o_admin(user, pub.get("usuario_id")):
-        raise HTTPException(status_code=403, detail="Solo el dueño puede agregar fotos")
-    if len(pub.get("fotos", [])) + len(urls) > 10:
-        raise HTTPException(status_code=422, detail="Máximo 10 fotos por aviso")
-    pub["fotos"].extend(urls)
-    nuevos = _mock_ids_para(pub)[-len(urls):]
-    return {"publicacion_id": data.publicacion_id, "ids": nuevos,
-            "total": len(pub["fotos"]), "mock": True}

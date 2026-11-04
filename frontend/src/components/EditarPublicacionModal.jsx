@@ -12,11 +12,12 @@ import { SERVICIOS } from '../utils/servicios'
 import useTiposVivienda, { TIPOS_FALLBACK } from '../hooks/useTiposVivienda'
 import useFocusTrap from '../hooks/useFocusTrap'
 import TipoIcono from './TipoIcono'
+import { authHead } from '../services/authHeaders'
 
 // Fallback local (mismo contrato slug). El hook lo reemplaza por /config-publica.
 const TIPOS = TIPOS_FALLBACK.map((t) => t.slug)
 
-// M2 selector dinámico con fallback (misma firma que el estático previo).
+// Selector dinámico con fallback (misma firma que el estático previo).
 export function SelectorTipoEditar({ value, onChange }) {
   const { tipos } = useTiposVivienda()
   return (
@@ -42,17 +43,17 @@ export default function EditarPublicacionModal({ pub, token, onClose, onSaved })
   })
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
-  // M4 buffer multimedia: copia local [{id?, url, orden}]; `fotosDirty` indica
+  // Buffer multimedia: copia local [{id?, url, orden}]; `fotosDirty` indica
   // cambios pendientes (altas/bajas/portada) que solo se commitean en guardar.
   const [fotos, setFotos] = useState(() => (pub.imagenes || []).map(f => ({ ...f })))
   const [fotosCargando, setFotosCargando] = useState(!pub.imagenes)
   const [fotosDirty, setFotosDirty] = useState(false)
   const [subiendo, setSubiendo] = useState(false)
   const [aBorrar, setABorrar] = useState(null) // confirmación en dos pasos
-  // M4 buffer etiquetas: pre-pobladas desde el aviso; se envían en guardar.
+  // Buffer etiquetas: pre-pobladas desde el aviso; se envían en guardar.
   const [tags, setTags] = useState(() => [...(pub.servicios_ids || [])])
   const [tagsDirty, setTagsDirty] = useState(false)
-  const headers = { headers: { Authorization: `Bearer ${token}` } }
+  const headers = authHead(token)
 
   // Copia inmutable con orden compacto (nunca muta objetos del estado previo).
   const reordenarLocal = (lista) => lista
@@ -149,12 +150,12 @@ export default function EditarPublicacionModal({ pub, token, onClose, onSaved })
         reglas_convivencia: form.reglas_convivencia.trim(),
       }
       if (tagsDirty) body.servicios_ids = [...tags]
-      // M4: UN solo commit — escalares + etiquetas + fotos en UNA transacción
+      // UN solo commit — escalares + etiquetas + fotos en UNA transacción
       // del backend. Todo o nada: sin mitades guardadas.
       if (fotosDirty) body.fotos = fotos.map(f => f.url)
-      const r = await api.patch(`/api/publicaciones/${pub.id}`, body, { headers: { Authorization: `Bearer ${token}` } })
+      const r = await api.patch(`/api/publicaciones/${pub.id}`, body, authHead(token))
       // Estado canónico post-guardado (una lectura, como antes).
-      const det = await api.get(`/api/publicaciones/${pub.id}`, { headers: { Authorization: `Bearer ${token}` } })
+      const det = await api.get(`/api/publicaciones/${pub.id}`, authHead(token))
       onSaved?.({ ...r.data, fotos: det.data?.fotos || r.data?.fotos, imagenes: det.data?.imagenes })
       setFotosDirty(false)
       setTagsDirty(false)
@@ -177,7 +178,7 @@ export default function EditarPublicacionModal({ pub, token, onClose, onSaved })
 
   const inputCls = 'input-field text-sm'
 
-  // M4: altas solo a storage (sin vincular): quedan en buffer local hasta guardar.
+  // Altas solo a storage (sin vincular): quedan en buffer local hasta guardar.
   const handleSubir = async (e) => {
     const files = Array.from(e.target.files || [])
     e.target.value = ''
@@ -209,7 +210,7 @@ export default function EditarPublicacionModal({ pub, token, onClose, onSaved })
     }
   }
 
-  // M4: baja local en 2 pasos (la BD solo cambia en guardar).
+  // Baja local en 2 pasos (la BD solo cambia en guardar).
   const handleBorrarFoto = (foto) => {
     const key = foto.id ?? foto.url
     if (aBorrar !== key) {
@@ -222,7 +223,7 @@ export default function EditarPublicacionModal({ pub, token, onClose, onSaved })
     setError('')
   }
 
-  // M4: portada local (reordena el buffer; la BD solo cambia en guardar).
+  // Portada local (reordena el buffer; la BD solo cambia en guardar).
   const handlePortada = (foto) => {
     if (foto.orden === 1 || subiendo) return
     const key = foto.id ?? foto.url
@@ -237,7 +238,7 @@ export default function EditarPublicacionModal({ pub, token, onClose, onSaved })
     setError('')
   }
 
-  // Bloque 3: Tab cicla dentro + foco vuelve al disparador al cerrar.
+  // Tab cicla dentro + foco vuelve al disparador al cerrar.
   const cajaRef = useRef(null)
   useFocusTrap(cajaRef, true)
 

@@ -14,7 +14,7 @@ que cada test la vacía antes (si hay PG) + limpia el store mock.
 """
 import asyncio
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -48,7 +48,6 @@ def _limpiar_destacados():
         pass
     try:
         from app.routers import publicidad as _pub
-        _pub.clear_publicidad_mock_for_tests()
     except Exception:
         pass
 
@@ -202,57 +201,6 @@ def test_mias_historial_dueno():
     assert r3.status_code in (401, 403), r3.text
 
 
-def test_mock_sin_pg_flujo_basico():
-    """Rama mock (PG caído, solo dev): planes + destacar + replay + 409."""
-    from app.db.session import get_session
-
-    class _DeadSession:
-        async def get(self, *a, **k):
-            raise RuntimeError("PG caído (test)")
-
-        async def execute(self, *a, **k):
-            raise RuntimeError("PG caído (test)")
-
-        async def commit(self):
-            raise RuntimeError("PG caído (test)")
-
-        async def refresh(self, *a, **k):
-            raise RuntimeError("PG caído (test)")
-
-        async def rollback(self):
-            return None
-
-    async def _dead():
-        yield _DeadSession()
-
-    app.dependency_overrides[get_session] = _dead
-    try:
-        rp = client.get("/api/publicidad/planes")
-        assert rp.status_code == 200, rp.text
-        assert len(rp.json()) >= 3
-        r1 = client.post(
-            "/api/publicidad/destacar",
-            json={"publicacion_id": 1, "plan_id": 1},
-            headers={**ARR, "Idempotency-Key": "test-destacar-mock-01"},
-        )
-        assert r1.status_code == 201, r1.text
-        assert r1.json()["estado"] == "PENDIENTE"
-        r2 = client.post(
-            "/api/publicidad/destacar",
-            json={"publicacion_id": 1, "plan_id": 1},
-            headers={**ARR, "Idempotency-Key": "test-destacar-mock-01"},
-        )
-        assert r2.status_code == 201 and r2.json()["id"] == r1.json()["id"]
-        r3 = client.post(
-            "/api/publicidad/destacar",
-            json={"publicacion_id": 1, "plan_id": 1},
-            headers={**ARR, "Idempotency-Key": "test-destacar-mock-02"},
-        )
-        assert r3.status_code == 409, r3.text
-    finally:
-        app.dependency_overrides.pop(get_session, None)
-
-
 def test_admin_pendientes_aprueba_rechaza():
     plan = _plan_7d()
     pub_id = _pub_activo_propia()
@@ -322,18 +270,11 @@ def _forzar_vence_pasado(destacado_id: int):
             )
         finally:
             await conn.close()
-    try:
-        asyncio.run(_run())
-    except Exception:
-        from app.routers import publicidad as _pub
-        d = next(x for x in _pub.MOCK_DESTACADOS if x["id"] == destacado_id)
-        pasado = datetime.now(timezone.utc) - timedelta(hours=1)
-        d["inicia"] = pasado - timedelta(days=1)
-        d["vence"] = pasado
+    asyncio.run(_run())
 
 
 def _pub_estado_set(pub_id: int, estado: str) -> str:
-    """Fija estado de la publicación (PG o MOCK_PUBS). Retorna el previo."""
+    """Fija estado de la publicación en PG. Retorna el previo."""
     async def _run():
         import asyncpg
         conn = await asyncpg.connect(_dsn())
@@ -343,14 +284,7 @@ def _pub_estado_set(pub_id: int, estado: str) -> str:
             return prev
         finally:
             await conn.close()
-    try:
-        return asyncio.run(_run())
-    except Exception:
-        from app.routers.publicaciones import MOCK_PUBS
-        pub = next(p for p in MOCK_PUBS if p["id"] == pub_id)
-        prev = pub["estado"]
-        pub["estado"] = estado
-        return prev
+    return asyncio.run(_run())
 
 
 def test_admin_aprueba_vencido_409():

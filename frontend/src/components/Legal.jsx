@@ -71,7 +71,7 @@ tras un cambio implica aceptación.
 `.trim()
 
 export function LegalModal({ titulo, contenido, abierto, onCerrar }) {
-  // Bloque 3: el trap solo vive mientras el modal está abierto (el hook
+  // El trap solo vive mientras el modal está abierto (el hook
   // no hace nada con activo=false, así que el early return es seguro).
   const cajaRef = useRef(null)
   useFocusTrap(cajaRef, abierto)

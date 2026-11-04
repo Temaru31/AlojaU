@@ -157,6 +157,31 @@ def _condicion_texto_ilike(q: str | None):
     return or_(*conds) if conds else None
 
 
+def _ordenar(stmt, ordenar: str, campus_id: int | None):
+    V = chat_v_publicaciones
+    if ordenar == "precio":
+        return stmt.order_by(V.c.canon_mensual.asc(), V.c.id.asc())
+    if ordenar == "distancia" and campus_id:
+        C = chat_v_publicacion_campus
+        return (stmt.join(C, C.c.publicacion_id == V.c.id)
+                    .where(C.c.campus_id == int(campus_id))
+                    .order_by(C.c.distancia_m.asc().nulls_last(), V.c.id.asc()))
+    # recientes (y confianza: el índice se calcula en Python, Fase 2)
+    return stmt.order_by(V.c.fecha_renovacion.desc(), V.c.id.asc())
+
+
+async def _buscar_ilike(db, q: str, filtros: tuple, limit: int, offset: int) -> list[dict]:
+    """Fallback ILIKE-OR cuando el FTS no casa (parciales/stems raros), con los mismos filtros."""
+    V = chat_v_publicaciones
+    cond_fb = _condicion_texto_ilike(q)
+    if cond_fb is None:
+        return []
+    stmt = _aplicar_filtros(select(V).where(cond_fb), *filtros)
+    stmt = stmt.order_by(V.c.fecha_renovacion.desc(), V.c.id.asc()).limit(limit).offset(offset)
+    res = await db.execute(stmt)
+    return _filas(res.mappings().all())
+
+
 async def buscar_publicaciones(
     db,
     *,
@@ -184,41 +209,18 @@ async def buscar_publicaciones(
     if (precio_min is not None and precio_max is not None
             and float(precio_min) > float(precio_max)):
         return []
-    stmt = _aplicar_filtros(
-        select(V), campus_id, ciudad_id, precio_min, precio_max,
-        tipo, servicio_ids)
+    filtros = (campus_id, ciudad_id, precio_min, precio_max, tipo, servicio_ids)
+    stmt = _aplicar_filtros(select(V), *filtros)
     cond_texto = None
     if q and len(q) <= _TEXTO_Q_MAX:
         cond_texto = _condicion_texto(q)
         if cond_texto is not None:
             stmt = stmt.where(cond_texto)
-    if ordenar == "precio":
-        stmt = stmt.order_by(V.c.canon_mensual.asc(), V.c.id.asc())
-    elif ordenar == "distancia" and campus_id:
-        C = chat_v_publicacion_campus
-        stmt = (stmt.join(C, C.c.publicacion_id == V.c.id)
-                    .where(C.c.campus_id == int(campus_id))
-                    .order_by(C.c.distancia_m.asc().nulls_last(),
-                              V.c.id.asc()))
-    else:  # recientes (y confianza: el índice se calcula en Python, Fase 2)
-        stmt = stmt.order_by(V.c.fecha_renovacion.desc(), V.c.id.asc())
-    stmt = stmt.limit(limit).offset(offset)
+    stmt = _ordenar(stmt, ordenar, campus_id).limit(limit).offset(offset)
     res = await db.execute(stmt)
     filas = _filas(res.mappings().all())
     if not filas and cond_texto is not None:
-        # Fallback ILIKE-OR (el FTS no casa parciales/stems raros).
-        cond_fb = _condicion_texto_ilike(q)
-        if cond_fb is not None:
-            stmt_fb = select(V).where(cond_fb)
-            # Reaplica el resto de filtros copiando la construcción base.
-            stmt_fb = _aplicar_filtros(
-                stmt_fb, campus_id, ciudad_id, precio_min, precio_max,
-                tipo, servicio_ids)
-            stmt_fb = stmt_fb.order_by(
-                V.c.fecha_renovacion.desc(), V.c.id.asc()
-            ).limit(limit).offset(offset)
-            res = await db.execute(stmt_fb)
-            filas = _filas(res.mappings().all())
+        filas = await _buscar_ilike(db, q, filtros, limit, offset)
     return filas
 
 

@@ -7,9 +7,12 @@
 // GET /api/auth/perfil; si el token es inválido (401) se limpia solo.
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react'
 import { api } from '../services/api'
+import { bearer } from '../services/authHeaders'
+import { TOKEN_KEY, borrarToken, guardarToken, leerToken } from '../services/tokenStorage'
+
+export { TOKEN_KEY }
 
 const AuthContext = createContext(null)
-export const TOKEN_KEY = 'alojau_token'
 export const AUTH_EVENT = 'alojau:auth-change'
 
 export const emitAuthChange = () => {
@@ -33,12 +36,12 @@ export const emitMiasChange = () => {
   }
 }
 
-// M1 efecto fantasma: claves de sesión/datos locales de AlojaU. Centralizar
+// Efecto fantasma: claves de sesión/datos locales de AlojaU. Centralizar
 // aquí evita que un logout deje favoritos, comparador, historial o perfil
 // de otro usuario visibles. No toca claves ajenas a la app ni cachés
 // geográficos impersonales (ej. geocode).
 export const SESION_KEYS = [
-  'alojau_token',
+  TOKEN_KEY,
   'favoritos',
   'alojau_favoritos',
   'alojau_comparar',
@@ -56,18 +59,10 @@ export function limpiarSesionLocal() {
   try { sessionStorage.removeItem('alojau_post_login_redirect') } catch { /* noop */ }
 }
 
-const readToken = () => {
-  try {
-    return localStorage.getItem(TOKEN_KEY) || ''
-  } catch {
-    return ''
-  }
-}
-
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(() => readToken())
+  const [token, setToken] = useState(() => leerToken())
   const [user, setUser] = useState(null) // {email, nombre_completo, rol} o null
-  const [loading, setLoading] = useState(() => !!readToken())
+  const [loading, setLoading] = useState(() => !!leerToken())
 
   const sync = useCallback(async (t) => {
     if (!t) {
@@ -78,13 +73,13 @@ export function AuthProvider({ children }) {
     setLoading(true)
     try {
       const r = await api.get('/api/auth/perfil', {
-        headers: { Authorization: `Bearer ${t}` },
+        headers: bearer(t),
       })
       setUser(r.data || null)
     } catch (err) {
       // Token inválido/expirado (401) o backend caído: no hay sesión válida.
       if (err?.response?.status === 401) {
-        try { localStorage.removeItem(TOKEN_KEY) } catch { /* noop */ }
+        borrarToken()
         setToken('')
         setUser(null)
       } else {
@@ -97,9 +92,9 @@ export function AuthProvider({ children }) {
 
   // Carga inicial + re-sincroniza cuando Perfil/Publicar cambian la sesión.
   useEffect(() => {
-    sync(readToken())
+    sync(leerToken())
     const onChange = () => {
-      const t = readToken()
+      const t = leerToken()
       setToken(t)
       sync(t)
     }
@@ -112,20 +107,20 @@ export function AuthProvider({ children }) {
   }, [sync])
 
   const login = useCallback((t) => {
-    try { localStorage.setItem(TOKEN_KEY, t) } catch { /* noop */ }
+    guardarToken(t)
     setToken(t)
     sync(t)
     emitAuthChange()
   }, [sync])
 
-  // M1 cierre total: revoca en BD (best-effort), limpia todo rastro local,
+  // Cierre total: revoca en BD (best-effort), limpia todo rastro local,
   // resetea el usuario y reemplaza la ruta para no dejar estados en memoria.
   const logout = useCallback(async () => {
-    const t = readToken()
+    const t = leerToken()
     if (t) {
       try {
         await api.post('/api/auth/logout', {}, {
-          headers: { Authorization: `Bearer ${t}` },
+          headers: bearer(t),
         })
       } catch { /* best-effort: el estado local se limpia igual */ }
     }
@@ -139,9 +134,9 @@ export function AuthProvider({ children }) {
     } catch { /* SSR/tests sin location */ }
   }, [])
 
-  const refresh = useCallback(() => sync(readToken()), [sync])
+  const refresh = useCallback(() => sync(leerToken()), [sync])
 
-  // R9: parche local del usuario (ej. avatar recién subido) sin refetch.
+  // Parche local del usuario (ej. avatar recién subido) sin refetch.
   // Fusiona sobre el usuario actual para que Nav/Perfil se actualicen al
   // instante; el próximo refresh() revalida contra el backend.
   const actualizarUsuario = useCallback((parche) => {
@@ -149,7 +144,7 @@ export function AuthProvider({ children }) {
     setUser((prev) => (prev ? { ...prev, ...parche } : prev))
   }, [])
 
-  // v14.1: value memoizado — sin esto cada setLoading crea objeto nuevo y
+  // Value memoizado — sin esto cada setLoading crea objeto nuevo y
   // re-renderiza a todos los consumidores (Nav, Perfil, MisPublicaciones…).
   const value = useMemo(
     () => ({ token, user, loading, login, logout, refresh, actualizarUsuario }),

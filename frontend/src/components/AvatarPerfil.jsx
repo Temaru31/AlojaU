@@ -9,6 +9,7 @@ import { Eye, Pencil, Trash2 } from 'lucide-react'
 import { api } from '../services/api'
 import { inicialesDe } from '../contexts/AuthContext'
 import useFocusTrap from '../hooks/useFocusTrap'
+import { authHead } from '../services/authHeaders'
 
 // `tamano="lg"` (w-20) para la tarjeta de identidad del sidebar; el
 // default conserva el tamaño compacto usado en el resto de la app.
@@ -21,12 +22,12 @@ export default function AvatarPerfil({ perfil, token, onCambio, tamano }) {
   const [subiendo, setSubiendo] = useState(false)
   const [error, setError] = useState('')
   const fileRef = useRef(null)
-  // Bloque 3: trap solo en el sheet abierto (el visor tiene un único botón).
+  // Trap solo en el sheet abierto (el visor tiene un único botón).
   const sheetRef = useRef(null)
   useFocusTrap(sheetRef, sheet)
   const foto = perfil?.foto_perfil_url || null
 
-  const authHead = token ? { headers: { Authorization: `Bearer ${token}` } } : {}
+  const configAuth = token ? authHead(token) : {}
 
   const cambiar = async (file) => {
     if (!file || subiendo) return
@@ -36,8 +37,8 @@ export default function AvatarPerfil({ perfil, token, onCambio, tamano }) {
       const fd = new FormData()
       fd.append('file', file)
       const r = await api.post('/api/auth/avatar', fd, {
-        ...authHead,
-        headers: { ...(authHead.headers || {}), 'Content-Type': 'multipart/form-data' },
+        ...configAuth,
+        headers: { ...(configAuth.headers || {}), 'Content-Type': 'multipart/form-data' },
       })
       onCambio?.(r.data?.foto_perfil_url || null)
       setSheet(false)
@@ -53,7 +54,7 @@ export default function AvatarPerfil({ perfil, token, onCambio, tamano }) {
     setError('')
     setSubiendo(true)
     try {
-      const r = await api.delete('/api/auth/avatar', authHead)
+      const r = await api.delete('/api/auth/avatar', configAuth)
       onCambio?.(r.data?.foto_perfil_url ?? null)
       setSheet(false)
     } catch (e) {

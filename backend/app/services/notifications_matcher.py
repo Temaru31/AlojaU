@@ -22,6 +22,7 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy import func, literal, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.dominio import EstadoPublicacion
 
 logger = logging.getLogger("alojau.notificaciones")
 
@@ -29,7 +30,11 @@ logger = logging.getLogger("alojau.notificaciones")
 PURGA_DIAS = 90
 PURGA_TOPE_FILAS = 500
 
-ESTADO_HUMANO = {"ACTIVO": "aprobado", "RECHAZADO": "rechazado", "PAUSADO": "pausado"}
+ESTADO_HUMANO = {
+    EstadoPublicacion.ACTIVO: "aprobado",
+    EstadoPublicacion.RECHAZADO: "rechazado",
+    EstadoPublicacion.PAUSADO: "pausado",
+}
 
 
 def _titulo_para(titulo_pub: str | None, pub_id: int) -> str:
@@ -41,11 +46,49 @@ def _cuerpo_para(canon, tipo: str | None) -> str:
     partes: list[str] = []
     try:
         partes.append(f"${int(canon):,}".replace(",", "."))
-    except Exception:
+    except (TypeError, ValueError):
         pass
     if tipo:
         partes.append(str(tipo).replace("_", " ").title())
     return " · ".join(partes)
+
+
+def _condiciones_busqueda(BusquedaGuardada, *, dueno_id: int, canon, zona_id, tipo,
+                          campus: list[int], pub_serv: list[int]) -> list:
+    """Filtros de las búsquedas guardadas que casan con el aviso (NULL/vacío = comodín)."""
+    conds = [
+        BusquedaGuardada.activa.is_(True),
+        BusquedaGuardada.usuario_id != int(dueno_id),
+        or_(BusquedaGuardada.precio_min.is_(None),
+            BusquedaGuardada.precio_min <= canon),
+        or_(BusquedaGuardada.precio_max.is_(None),
+            BusquedaGuardada.precio_max >= canon),
+        or_(BusquedaGuardada.zona_barrio_id.is_(None),
+            BusquedaGuardada.zona_barrio_id == zona_id),
+        or_(BusquedaGuardada.tipo.is_(None),
+            BusquedaGuardada.tipo == tipo),
+        # Vacía ({}) casa con todo; si no, debe estar contenida (@>).
+        or_(func.cardinality(BusquedaGuardada.servicios_ids) == 0,
+            BusquedaGuardada.servicios_ids.contained_by(pub_serv)),
+    ]
+    # in_([]) es siempre-falso: sin campus vinculados no se filtra.
+    if campus:
+        conds.append(or_(BusquedaGuardada.campus_id.is_(None),
+                         BusquedaGuardada.campus_id.in_(campus)))
+    return conds
+
+
+async def _purgar_notificaciones_viejas(db: AsyncSession, Notificacion) -> None:
+    """Purga TTL acotada en escritura (nunca en GET de lectura)."""
+    corte = datetime.now(timezone.utc) - timedelta(days=PURGA_DIAS)
+    sub = (
+        select(Notificacion.id)
+        .where(Notificacion.created_at < corte)
+        .limit(PURGA_TOPE_FILAS)
+    )
+    await db.execute(
+        Notificacion.__table__.delete().where(Notificacion.id.in_(sub))
+    )
 
 
 async def evaluar_y_crear_notificaciones(
@@ -67,41 +110,19 @@ async def evaluar_y_crear_notificaciones(
     try:
         from app.models import BusquedaGuardada, Notificacion
 
-        campus = [int(c) for c in (campus_ids or [])]
-        pub_serv = [int(s) for s in (servicios_ids or [])]
-        evento = f"nuevo_arriendo:{int(publicacion_id)}"
-        titulo_txt = _titulo_para(titulo, int(publicacion_id))
-        cuerpo_txt = _cuerpo_para(canon, tipo)
-
-        conds = [
-            BusquedaGuardada.activa.is_(True),
-            BusquedaGuardada.usuario_id != int(dueno_id),
-            or_(BusquedaGuardada.precio_min.is_(None),
-                BusquedaGuardada.precio_min <= canon),
-            or_(BusquedaGuardada.precio_max.is_(None),
-                BusquedaGuardada.precio_max >= canon),
-            or_(BusquedaGuardada.zona_barrio_id.is_(None),
-                BusquedaGuardada.zona_barrio_id == zona_id),
-            or_(BusquedaGuardada.tipo.is_(None),
-                BusquedaGuardada.tipo == tipo),
-            # Vacía ({}) casa con todo; si no, debe estar contenida (@>).
-            or_(func.cardinality(BusquedaGuardada.servicios_ids) == 0,
-                BusquedaGuardada.servicios_ids.contained_by(pub_serv)),
-        ]
-        # in_([]) es siempre-falso: sin campus vinculados no se filtra.
-        if campus:
-            conds.append(or_(BusquedaGuardada.campus_id.is_(None),
-                             BusquedaGuardada.campus_id.in_(campus)))
-
+        conds = _condiciones_busqueda(
+            BusquedaGuardada, dueno_id=dueno_id, canon=canon, zona_id=zona_id, tipo=tipo,
+            campus=[int(c) for c in (campus_ids or [])],
+            pub_serv=[int(s) for s in (servicios_ids or [])])
         sel = (
             select(
                 BusquedaGuardada.usuario_id,
                 literal(int(publicacion_id)),
                 BusquedaGuardada.id,
-                literal(evento),
+                literal(f"nuevo_arriendo:{int(publicacion_id)}"),
                 literal("nuevo_arriendo"),
-                literal(titulo_txt),
-                literal(cuerpo_txt),
+                literal(_titulo_para(titulo, int(publicacion_id))),
+                literal(_cuerpo_para(canon, tipo)),
             )
             .where(*conds)
         )
@@ -117,16 +138,7 @@ async def evaluar_y_crear_notificaciones(
         async with db.begin_nested():
             res = await db.execute(ins)
             creadas = res.rowcount or 0
-            # Purga TTL acotada en escritura (nunca en GET de lectura).
-            corte = datetime.now(timezone.utc) - timedelta(days=PURGA_DIAS)
-            sub = (
-                select(Notificacion.id)
-                .where(Notificacion.created_at < corte)
-                .limit(PURGA_TOPE_FILAS)
-            )
-            await db.execute(
-                Notificacion.__table__.delete().where(Notificacion.id.in_(sub))
-            )
+            await _purgar_notificaciones_viejas(db, Notificacion)
         return int(creadas or 0)
     except Exception as e:
         # PROHIBIDO db.rollback() aquí: revertiría la transacción principal

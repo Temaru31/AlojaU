@@ -178,7 +178,7 @@ describe('Publicar (HU-005: solo ARRENDADOR, nace PENDIENTE)', () => {
   })
 
   it('helpers: formato COP en vivo y sanitización anti-XSS', async () => {
-    const { formatearCOP, sanitizarTexto } = await import('./Publicar')
+    const { formatearCOP, sanitizarTexto } = await import('../utils/publicar')
     expect(formatearCOP('450000')).toBe('$ 450.000')
     expect(formatearCOP('')).toBe('')
     expect(sanitizarTexto('<script>alert(1)</script> hola')).not.toContain('<')

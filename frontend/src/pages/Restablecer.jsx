@@ -15,7 +15,7 @@ export default function Restablecer() {
   const [confirmar, setConfirmar] = useState('')
   const [estado, setEstado] = useState('idle')
   const [mensaje, setMensaje] = useState('')
-  // Bloque 3: el redirect diferido se cancela al desmontar.
+  // El redirect diferido se cancela al desmontar.
   const navTimer = useRef(null)
   useEffect(() => () => window.clearTimeout(navTimer.current), [])
 
@@ -35,7 +35,7 @@ export default function Restablecer() {
       })
       setEstado('ok')
       setMensaje('Contraseña restablecida. Tus sesiones anteriores fueron revocadas.')
-      // Bloque 3: navegar solo si se sigue montado (limpieza al desmontar).
+      // Navegar solo si se sigue montado (limpieza al desmontar).
       navTimer.current = window.setTimeout(() => navigate('/perfil'), 1500)
     } catch (err) {
       setEstado('error')

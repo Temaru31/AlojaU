@@ -153,6 +153,19 @@ describe('Roomies page', () => {
     expect(linksWhatsApp[0]).toHaveAttribute('href', expect.stringContaining('https://wa.me/573128904561'))
   })
 
+  it('si la API falla muestra perfiles de ejemplo avisados y sin contacto', async () => {
+    vi.spyOn(apiModule, 'getCandidatosRoomies').mockRejectedValueOnce(new Error('caída'))
+    render(
+      <BrowserRouter>
+        <Roomies />
+      </BrowserRouter>,
+    )
+
+    expect(await screen.findByText(/ejemplos ilustrativos, no personas reales/i)).toBeInTheDocument()
+    expect(screen.queryAllByRole('link', { name: /WhatsApp/i })).toHaveLength(0)
+    expect(screen.getAllByText(/Perfil de ejemplo: sin contacto/i).length).toBeGreaterThan(0)
+  })
+
   it('soporta candidatos con el formato minimal del backend (id, score, sin detalle ni preferencias)', async () => {
     vi.spyOn(apiModule, 'getCandidatosRoomies').mockResolvedValueOnce({
       data: [

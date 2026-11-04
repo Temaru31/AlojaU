@@ -6,7 +6,6 @@
 - PATCH /api/admin/housing-types/{slug} (ADMIN, edita + audit, invalida caché).
 - DELETE /api/admin/housing-types/{slug} (ADMIN, FK RESTRICT -> 409 si en uso).
 
-Mock dev (_mock_enabled): opera sobre MOCK_TIPOS en memoria (misma forma).
 """
 import re
 
@@ -16,20 +15,16 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import require_admin
+from app.core.security import require_admin, ClaimsUsuario
 from app.core.logseguro import exc_resumen
-from app.core.config import settings
 from app.db.session import get_session
 
 import logging
+from app.core.db_utils import rollback_seguro
 logger = logging.getLogger("alojau.housing_types")
 
 router_public = APIRouter(prefix="/api/housing-types", tags=["housing-types"])
 router_admin = APIRouter(prefix="/api/admin/housing-types", tags=["admin-housing-types"])
-
-
-def _mock_enabled() -> bool:
-    return bool(getattr(settings, "mock_enabled", False))
 
 
 _SLUG_RE = re.compile(r"^[A-Z0-9_]{3,40}$")
@@ -73,7 +68,7 @@ def _to_out(r) -> dict:
     }
 
 
-async def _auditar(db: AsyncSession, admin: dict, detalle: str) -> None:
+async def _auditar(db: AsyncSession, admin: ClaimsUsuario, detalle: str) -> None:
     try:
         from app.models import PublicacionesAudit
         db.add(PublicacionesAudit(
@@ -82,23 +77,20 @@ async def _auditar(db: AsyncSession, admin: dict, detalle: str) -> None:
             evento="SETTINGS",
             detalle=detalle[:500],
         ))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[tipos] auditoría del cambio no registrada: %s", exc_resumen(e))
 
 
 @router_public.get("", response_model=list[HousingOut], summary="Catálogo público de tipos (solo activos)")
 async def listar_publicos(db: AsyncSession = Depends(get_session)):
     from app.services import housing_types as _ht
-    try:
-        return await _ht.get_activos(db)
-    except Exception:
-        return [dict(t) for t in _ht.MOCK_TIPOS if t.get("esta_activo")]
+    return await _ht.get_activos(db)  # nunca lanza: cae al catálogo estático
 
 
 @router_admin.get("", response_model=list[HousingOut], summary="Admin: listar todos los tipos")
 async def listar_admin(
     db: AsyncSession = Depends(get_session),
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
 ):
     try:
         from app.models import HousingType
@@ -108,21 +100,15 @@ async def listar_admin(
         raise
     except Exception as e:
         logger.error(f"[housing admin listar] falló: {exc_resumen(e)}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    from app.services.housing_types import MOCK_TIPOS as _MT
-    return [dict(t) for t in _MT]
+        await rollback_seguro(db, "listar_admin")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router_admin.post("", response_model=HousingOut, status_code=201, summary="Admin: crear tipo")
 async def crear_tipo(
     data: HousingCreateIn,
     db: AsyncSession = Depends(get_session),
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
 ):
     slug = _validar_slug(data.slug)
     try:
@@ -144,37 +130,15 @@ async def crear_tipo(
         _ht.clear_cache()
         return _to_out(nuevo)
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "crear_tipo")
         raise
     except IntegrityError:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "crear_tipo")
         raise HTTPException(status_code=409, detail=f"slug '{slug}' ya existe")
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "crear_tipo")
         logger.error(f"[housing crear] falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    # Mock dev
-    from app.services import housing_types as _ht
-    if any(t["slug"] == slug for t in _ht.MOCK_TIPOS):
-        raise HTTPException(status_code=409, detail=f"slug '{slug}' ya existe")
-    nuevo = {
-        "slug": slug, "nombre_visible": data.nombre_visible.strip(),
-        "descripcion_tooltip": data.descripcion_tooltip, "icono": data.icono,
-        "esta_activo": bool(data.esta_activo),
-    }
-    _ht.MOCK_TIPOS.append(nuevo)
-    _ht.clear_cache()
-    return nuevo
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router_admin.patch("/{slug}", response_model=HousingOut, summary="Admin: editar tipo")
@@ -182,7 +146,7 @@ async def editar_tipo(
     slug: str = Path(..., min_length=3, max_length=40),
     data: HousingUpdateIn = ...,
     db: AsyncSession = Depends(get_session),
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
 ):
     slug = _validar_slug(slug)
     cambios = {k: v for k, v in data.model_dump().items() if v is not None}
@@ -208,34 +172,19 @@ async def editar_tipo(
         _ht.clear_cache()
         return _to_out(row)
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "editar_tipo")
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "editar_tipo")
         logger.error(f"[housing editar] falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    from app.services import housing_types as _ht
-    for t in _ht.MOCK_TIPOS:
-        if t["slug"] == slug:
-            for k, v in cambios.items():
-                t[k] = v
-            _ht.clear_cache()
-            return dict(t)
-    raise HTTPException(status_code=404, detail="Tipo no encontrado")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router_admin.delete("/{slug}", status_code=204, summary="Admin: eliminar tipo (RESTRICT si en uso)")
 async def eliminar_tipo(
     slug: str = Path(..., min_length=3, max_length=40),
     db: AsyncSession = Depends(get_session),
-    admin: dict = Depends(require_admin),
+    admin: ClaimsUsuario = Depends(require_admin),
 ):
     from fastapi import Response
     slug = _validar_slug(slug)
@@ -256,33 +205,9 @@ async def eliminar_tipo(
         _ht.clear_cache()
         return Response(status_code=204)
     except HTTPException:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "eliminar_tipo")
         raise
     except Exception as e:
-        try:
-            await db.rollback()
-        except Exception:
-            pass
+        await rollback_seguro(db, "eliminar_tipo")
         logger.error(f"[housing eliminar] falló: {exc_resumen(e)}", exc_info=True)
-        if not _mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-    # Mock dev: RESTRICT si algún MOCK_PUB lo usa.
-    from app.services import housing_types as _ht
-    try:
-        from app.routers.publicaciones import MOCK_PUBS as _MP
-        if any(p.get("tipo_inmueble") == slug for p in _MP):
-            raise HTTPException(status_code=409, detail=f"slug '{slug}' en uso (mock RESTRICT)")
-    except HTTPException:
-        raise
-    except Exception:
-        pass
-    for i, t in enumerate(_ht.MOCK_TIPOS):
-        if t["slug"] == slug:
-            _ht.MOCK_TIPOS.pop(i)
-            _ht.clear_cache()
-            from fastapi import Response as _R
-            return _R(status_code=204)
-    raise HTTPException(status_code=404, detail="Tipo no encontrado")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")

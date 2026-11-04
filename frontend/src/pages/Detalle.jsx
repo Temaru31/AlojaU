@@ -1,16 +1,11 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
-import { ArrowRight, Check, Eye, Flag, Heart, Pause, Pencil, Plus } from 'lucide-react'
+import { ArrowRight, Pause } from 'lucide-react'
 import { api } from '../services/api'
 import Indice from '../components/IndiceConfianza'
 import MapaZona from '../components/MapaZona'
 import GaleriaFotos from '../components/GaleriaFotos'
-import Icono from '../components/Icono'
-import IconoWhatsApp from '../components/IconoWhatsApp'
-import BotonCompartir from '../components/BotonCompartir'
-import CarruselFotos from '../components/CarruselFotos'
 import ReportarModal from '../components/ReportarModal'
-import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
 import { useFavoritos } from '../contexts/FavoritosContext'
 import { useComparar } from '../contexts/CompararContext'
 import { useAuth } from '../contexts/AuthContext'
@@ -18,16 +13,20 @@ import EditarPublicacionModal from '../components/EditarPublicacionModal'
 import { haceRelativo, estaDesactualizada, fetchConfigPublica, diasDesactualizadaEfectiva } from '../constants'
 import { fotosOrdenadas } from '../utils/portada'
 import { getEtiquetaTipo } from '../utils/tiposVivienda'
-import { formatearSesionFecha } from '../utils/sesion'
-import { etiquetaEvento } from '../utils/historial'
-import { api as _apiDetalle } from '../services/api'
-import useTiposVivienda from '../hooks/useTiposVivienda'
 
-export function humanizarTipo(tipo, tipos = null) {
-  // Compat: antes mapa local; ahora delega a la fuente única (Bloque 3).
-  // Sin `tipos` equivale al mapa histórico (tests intactos).
-  return getEtiquetaTipo(tipo, tipos)
-}
+import useTiposVivienda from '../hooks/useTiposVivienda'
+import { authHead, bearer } from '../services/authHeaders'
+import { ESTADO } from '../utils/estados'
+import CabeceraMovilDetalle from './detalle/CabeceraMovilDetalle'
+import AccionesAviso from './detalle/AccionesAviso'
+import CabeceraDetalle from './detalle/CabeceraDetalle'
+import DescripcionAviso from './detalle/DescripcionAviso'
+import CaracteristicasAviso from './detalle/CaracteristicasAviso'
+import ContactoArrendador from './detalle/ContactoArrendador'
+import HistorialInmueble from './detalle/HistorialInmueble'
+import SimilaresZona from './detalle/SimilaresZona'
+import BarraContactoMovil from './detalle/BarraContactoMovil'
+
 
 function leerContactos() {
   try {
@@ -66,14 +65,14 @@ export default function Detalle() {
   const [yaContactado, setYaContactado] = useState(false)
   const [copiado, setCopiado] = useState('')
   const favHook = useFavoritos()
-  // v14.1: con sesión, el dueño/Admin ve su aviso aunque no esté ACTIVO.
+  // Con sesión, el dueño/Admin ve su aviso aunque no esté ACTIVO.
   const { token: authToken, user: authUser } = useAuth()
   const [editando, setEditando] = useState(false)
   const [similares, setSimilares] = useState([])
-  // Detalle #3: umbral de frescura desde config pública (fallback 30 local).
+  // Umbral de frescura desde config pública (fallback 30 local).
   // ANTES de los early-returns (hooks siempre en el mismo orden).
   const [diasDesact, setDiasDesact] = useState(() => diasDesactualizadaEfectiva())
-  // M2: nombre dinámico del tipo con fallback estático.
+  // Nombre dinámico del tipo con fallback estático.
   const { tipos: tiposCatalogo } = useTiposVivienda()
   const vistaEnviada = useRef(null)
   const compHook = useComparar()
@@ -87,7 +86,7 @@ export default function Detalle() {
     mostrarToast._t = window.setTimeout(() => setToast(''), 3500)
   }
 
-  // Bloque 3: el toast local no debe aparecer en otra pantalla si se navega
+  // El toast local no debe aparecer en otra pantalla si se navega
   // antes de los 3.5s (el global de Toaster sí sobrevive, es su trabajo).
   useEffect(() => () => window.clearTimeout(mostrarToast._t), [])
 
@@ -105,7 +104,7 @@ export default function Detalle() {
     setReportOpen(false)
     setEditando(false)
     const qs = campusIdParam ? `?campus_id=${encodeURIComponent(campusIdParam)}` : ''
-    const cfg = authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : {}
+    const cfg = authToken ? authHead(authToken) : {}
     api.get(`/api/publicaciones/${id}${qs}`, cfg)
       .then(r => { if (!cancelled) setPub(r.data) })
       .catch((err) => {
@@ -120,7 +119,7 @@ export default function Detalle() {
     return () => { cancelled = true }
   }, [id, campusIdParam, authToken])
 
-  // v15.2 métrica de vistas: 1 POST por aviso (el backend deduplica por IP/día).
+  // Métrica de vistas: 1 POST por aviso (el backend deduplica por IP/día).
   useEffect(() => {
     if (!pub || vistaEnviada.current === pub.id) return
     vistaEnviada.current = pub.id
@@ -130,7 +129,7 @@ export default function Detalle() {
     } catch { /* métrica best-effort */ }
   }, [pub, id])
 
-  // v15.2 bloque "similares en la zona" (también alimenta el fallback).
+  // Bloque "similares en la zona" (también alimenta el fallback).
   useEffect(() => {
     if (!pub) { setSimilares([]); return }
     let vivo = true
@@ -140,14 +139,14 @@ export default function Detalle() {
     return () => { vivo = false }
   }, [pub, id])
 
-  // M4 historial del inmueble: solo se pide si es el dueño (el backend
+  // Historial del inmueble: solo se pide si es el dueño (el backend
   // responde 403 al resto; ni siquiera se intenta sin sesión).
   const [historial, setHistorial] = useState(null)
   useEffect(() => {
     if (!pub || !authToken) { setHistorial(null); return }
     let vivo = true
     api.get(`/api/publicaciones/${pub.id}/historial`, {
-      headers: { Authorization: `Bearer ${authToken}` },
+      headers: bearer(authToken),
     })
       .then(r => { if (vivo) setHistorial(Array.isArray(r.data?.items) ? r.data.items : []) })
       .catch(() => { if (vivo) setHistorial(null) })
@@ -187,10 +186,10 @@ export default function Detalle() {
     }
   }, [id])
 
-  // Detalle #3: lee la config pública una vez (cache 5 min en constants.js).
+  // Lee la config pública una vez (cache 5 min en constants.js).
   useEffect(() => {
     let vivo = true
-    fetchConfigPublica(() => _apiDetalle.get('/api/publicaciones/config-publica').then((r) => r.data))
+    fetchConfigPublica(() => api.get('/api/publicaciones/config-publica').then((r) => r.data))
       .then((cfg) => { if (vivo && cfg?.dias_desactualizada) setDiasDesact(Number(cfg.dias_desactualizada)) })
       .catch(() => {})
     return () => { vivo = false }
@@ -276,8 +275,8 @@ export default function Detalle() {
     ? `Distancia a ${refApi.nombre_sede}`
     : (lugarLista ? `Distancia a ${nombreLugarLista}` : 'Distancia al campus')
 
-  const isActivo = pub.estado === 'ACTIVO'
-  // v15.2 autoría reactiva (usuario_id lo expone DetailOut).
+  const isActivo = pub.estado === ESTADO.ACTIVO
+  // Autoría reactiva (usuario_id lo expone DetailOut).
   const esDueno = !!(authUser?.id != null && pub.usuario_id != null
     && Number(authUser.id) === Number(pub.usuario_id))
   const actualizadoHace = haceRelativo(pub.updated_at || pub.fecha_renovacion)
@@ -295,8 +294,8 @@ export default function Detalle() {
   const zona = pub.zona_nombre || pub.zona || 'No informado'
   const servicios = pub.servicios || []
   const descripcion = (pub.descripcion || '').trim()
-  // M2: catálogo dinámico primero, estático como fallback (mismo texto).
-  const tipoHumano = humanizarTipo(pub.tipo_inmueble, tiposCatalogo)
+  // Catálogo dinámico primero, estático como fallback (mismo texto).
+  const tipoHumano = getEtiquetaTipo(pub.tipo_inmueble, tiposCatalogo)
   const numFotos = Array.isArray(pub.fotos) ? pub.fotos.length : (pub.num_fotos ?? 0)
   const isFav = favHook.isFav(pub.id)
   const isComp = compHook.isSelected(pub.id)
@@ -333,6 +332,11 @@ export default function Detalle() {
     guardarContacto(pub.id, pub.titulo)
     setYaContactado(true)
     mostrarToast('Marcado como contactado · lo verás en tu historial')
+  }
+
+  // Acciones del visitante sobre el aviso, compartidas por la cabecera móvil y la barra de acciones.
+  const acciones = {
+    esDueno, isFav, isComp, handleToggleFav, handleToggleComp, setEditando, setReportOpen,
   }
 
   return (
@@ -372,7 +376,7 @@ export default function Detalle() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
         <div className="lg:col-span-2 space-y-6">
-          {!isActivo && pub.estado === 'PAUSADO_POR_REPORTE' && (
+          {!isActivo && pub.estado === ESTADO.PAUSADO_POR_REPORTE && (
             <div className="bg-red-50 border border-red-200 text-red-700 rounded-md p-4 text-sm" role="alert">
               <p className="font-bold mb-1 flex items-center gap-1.5"><Pause aria-hidden="true" className="w-4 h-4" /> Anuncio pausado temporalmente</p>
               <p className="text-xs leading-relaxed">
@@ -381,118 +385,17 @@ export default function Detalle() {
               </p>
             </div>
           )}
-          {!isActivo && pub.estado !== 'PAUSADO_POR_REPORTE' && (
+          {!isActivo && pub.estado !== ESTADO.PAUSADO_POR_REPORTE && (
             <div className="bg-amber-50 border border-amber-200 text-amber-700 rounded-md p-3 text-sm">
               {/* UX: copia humana, sin enum de BD (ACTIVO/PENDIENTE es interno) */}
-              No disponible para contacto por ahora{pub.estado === 'PENDIENTE' ? ' — en revisión' : ''}.
+              No disponible para contacto por ahora{pub.estado === ESTADO.PENDIENTE ? ' — en revisión' : ''}.
             </div>
           )}
 
           {/* R7 móvil: título + carrusel táctil + chips deslizables (desktop abajo intacto). */}
-          <div className="sm:hidden space-y-3 mb-4">
-            <div>
-              <h1 className="font-display text-xl font-bold text-navy-900 tracking-tight leading-snug">
-                {pub.titulo}
-              </h1>
-              <p className="text-xs text-neutral-600 mt-1 truncate">{zona} · {tipoHumano}</p>
-            </div>
-            <CarruselFotos
-              fotos={fotosOrdenadas(pub)}
-              titulo={pub.titulo}
-              acciones={
-                <>
-                  <button
-                    type="button"
-                    onClick={handleToggleFav}
-                    aria-pressed={isFav}
-                    aria-label={isFav ? 'Quitar de favoritos' : 'Guardar en favoritos'}
-                    title={isFav ? 'Quitar de favoritos' : 'Guardar en favoritos'}
-                    className={`w-11 h-11 rounded-full text-lg flex items-center justify-center backdrop-blur-sm border border-white/20 active:scale-95 transition ${isFav ? 'bg-red-500 text-white' : 'bg-black/60 text-white'}`}
-                  >
-                    {isFav ? <Heart aria-hidden="true" className="w-5 h-5 fill-current" /> : <Heart aria-hidden="true" className="w-5 h-5" />}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleToggleComp}
-                    aria-pressed={isComp}
-                    aria-label={isComp ? 'Quitar de comparar' : 'Agregar a comparar'}
-                    title={isComp ? 'Quitar de comparar' : 'Agregar a comparar'}
-                    className={`w-11 h-11 rounded-full text-lg font-bold flex items-center justify-center backdrop-blur-sm border border-white/20 active:scale-95 transition ${isComp ? 'bg-indigo-600 text-white' : 'bg-black/60 text-white'}`}
-                  >
-                    {isComp ? <Check aria-hidden="true" className="w-5 h-5" /> : <Plus aria-hidden="true" className="w-5 h-5" />}
-                  </button>
-                  <BotonCompartir
-                    titulo={`${pub.titulo} en AlojaU`}
-                    texto={mensajeWa}
-                    url={typeof window !== 'undefined' ? window.location.href : `/publicacion/${pub.id}`}
-                    etiqueta="Compartir esta publicación"
-                    variante="flotante"
-                  />
-                  {esDueno && (
-                    <button
-                      type="button"
-                      onClick={() => setEditando(true)}
-                      aria-label="Editar publicación"
-                      title="Editar publicación"
-                      className="w-11 h-11 rounded-full text-white flex items-center justify-center backdrop-blur-sm border border-white/20 active:scale-95 transition bg-navy-800/85"
-                    >
-                      <Icono nombre="lapiz" className="w-5 h-5" />
-                    </button>
-                  )}
-                </>
-              }
-            />
-            {/* focus-within quita la máscara para no recortar el anillo de foco en bordes. */}
-            <div className="flex gap-2 overflow-x-auto whitespace-nowrap no-scrollbar fade-x focus-within:[mask-image:none] focus-within:[-webkit-mask-image:none] pb-1" role="list" aria-label="Características">
-              {[tipoHumano, zona, ...servicios].map((c, i) => (
-                <span key={`${c}-${i}`} role="listitem" className="shrink-0 text-xs font-medium px-2.5 py-1.5 rounded-full bg-neutral-100 text-neutral-600 border border-neutral-200">
-                  {c}
-                </span>
-              ))}
-            </div>
-          </div>
+          <CabeceraMovilDetalle pub={pub} zona={zona} tipoHumano={tipoHumano} servicios={servicios} mensajeWa={mensajeWa} acciones={acciones} />
 
-          <div className="flex flex-wrap gap-2">
-            <button type="button"
-              onClick={handleToggleFav}
-              aria-pressed={isFav}
-              className={`hidden sm:inline-flex sm:items-center sm:gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition active:scale-95 ${isFav ? 'bg-red-500 text-white border-red-500' : 'bg-white border-neutral-200 hover:bg-neutral-50'}`}
-            >
-              {isFav ? (<><Heart aria-hidden="true" className="w-4 h-4 fill-current" /> En favoritos</>) : (<><Heart aria-hidden="true" className="w-4 h-4" /> Añadir a favoritos</>)}
-            </button>
-            <button type="button"
-              onClick={handleToggleComp}
-              aria-pressed={isComp}
-              className={`hidden sm:inline-flex sm:items-center sm:gap-1.5 px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition active:scale-95 ${isComp ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white border-neutral-200 hover:bg-neutral-50'}`}
-            >
-              {isComp ? (<><Check aria-hidden="true" className="w-4 h-4" /> En comparar</>) : (<><Plus aria-hidden="true" className="w-4 h-4" /> Comparar (máx 3)</>)}
-            </button>
-            <span className="hidden sm:inline-block">
-              <BotonCompartir
-                titulo={`${pub.titulo} en AlojaU`}
-                url={typeof window !== 'undefined' ? window.location.href : `/publicacion/${pub.id}`}
-                etiqueta="Compartir aviso"
-              />
-            </span>
-            {/* UX: reportar visible en cabecera (secundario discreto, no escondido bajo el mapa) */}
-            <button type="button"
-              onClick={() => setReportOpen(true)}
-              aria-label="Reportar este aviso"
-              className="px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition bg-white border-neutral-200 text-neutral-500 hover:text-red-600 hover:border-red-200 hover:bg-red-50 inline-flex items-center gap-1.5"
-            >
-              <Flag aria-hidden="true" className="w-4 h-4" /> Reportar aviso
-            </button>
-            {/* v15.2 acceso directo del dueño (verificado por usuario_id). */}
-            {esDueno && (
-              <button type="button"
-                onClick={() => setEditando(true)}
-                aria-label={`Editar ${pub.titulo}`}
-                className="px-3 py-1.5 rounded-full text-xs sm:text-sm border font-medium transition bg-navy-800 border-navy-800 text-white hover:bg-navy-900 inline-flex items-center gap-1.5"
-              >
-                <Pencil aria-hidden="true" className="w-4 h-4" /> Editar publicación
-              </button>
-            )}
-          </div>
+          <AccionesAviso pub={pub} acciones={acciones} />
 
           {compHook.error && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2" role="alert">{compHook.error}</p>}
           {toast && (
@@ -504,45 +407,7 @@ export default function Detalle() {
           )}
 
           {/* R7: en móvil el título/precio viven en el bloque superior + sticky bar. */}
-          <div className="hidden sm:block">
-            <h1 className="font-display text-2xl md:text-3xl font-bold text-navy-900 tracking-tight mb-2">
-              {pub.titulo}
-            </h1>
-            <div className="flex flex-wrap items-center gap-2 text-[11px] text-neutral-400 mb-2">
-              {actualizadoHace && <span>Actualizado {actualizadoHace}</span>}
-              {typeof pub.vistas === 'number' && (
-                <span aria-label={`${pub.vistas} vistas`} className="inline-flex items-center gap-1">· <Eye aria-hidden="true" className="w-4 h-4" /> {pub.vistas} {pub.vistas === 1 ? 'vista' : 'vistas'}</span>
-              )}
-              {desactualizada && (
-                <span className="font-semibold px-2 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-300">
-                  Desactualizada
-                </span>
-              )}
-            </div>
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <span className="text-2xl font-bold text-navy-800">
-                {canon != null ? `$${Number(canon).toLocaleString('es-CO')}` : 'No informado'}
-              </span>
-              <span className="text-sm text-neutral-400">COP/mes</span>
-              {deposito == null ? (
-                <span className="text-xs text-neutral-400 ml-2">· Depósito no informado</span>
-              ) : deposito > 0 ? (
-                <span className="text-xs text-neutral-500 ml-2">
-                  + depósito ${Number(deposito).toLocaleString('es-CO')}
-                </span>
-              ) : (
-                <span className="text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 ml-2">
-                  Sin depósito
-                </span>
-              )}
-            </div>
-            {totalPrimerMes != null && (
-              <p className="text-xs text-neutral-500 mt-1">
-                Total primer mes: <span className="font-semibold text-navy-800">${Number(totalPrimerMes).toLocaleString('es-CO')} COP</span>
-                <span className="text-neutral-400"> (canon + depósito)</span>
-              </p>
-            )}
-          </div>
+          <CabeceraDetalle pub={pub} canon={canon} deposito={deposito} totalPrimerMes={totalPrimerMes} actualizadoHace={actualizadoHace} desactualizada={desactualizada} />
 
           <div className="hidden sm:flex flex-wrap gap-2">
             <span className="badge bg-navy-50 text-navy-700 border border-navy-100">
@@ -568,86 +433,9 @@ export default function Detalle() {
           </div>
 
           {/* P-01: la descripción existía en BD/API pero nunca se renderizaba. */}
-          <div className="card p-5">
-            <h3 className="text-sm font-semibold text-navy-800 mb-1.5">Descripción</h3>
-            {descripcion ? (
-              <div>
-                <p className={`text-sm text-neutral-600 leading-relaxed whitespace-pre-line ${descExpandida ? '' : 'line-clamp-2'}`}>
-                  {descripcion}
-                </p>
-                {descripcion.length > 180 && (
-                  <button
-                    type="button"
-                    onClick={() => setDescExpandida(v => !v)}
-                    className="mt-2 text-xs font-semibold text-navy-700 hover:text-navy-900 hover:underline"
-                    aria-expanded={descExpandida}
-                  >
-                    {descExpandida ? 'Leer menos' : 'Leer más'}
-                  </button>
-                )}
-              </div>
-            ) : (
-              <p className="text-sm text-neutral-400">El arrendador aún no agregó una descripción.</p>
-            )}
-          </div>
+          <DescripcionAviso descripcion={descripcion} descExpandida={descExpandida} setDescExpandida={setDescExpandida} />
 
-          <div className="card p-5 space-y-4">
-            <div>
-              <h3 className="text-sm font-semibold text-navy-800 mb-1.5">Contrato y estadía</h3>
-              <dl className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-                <div className="rounded-md bg-neutral-50 border border-neutral-150 p-3">
-                  <dt className="text-[11px] text-neutral-400 mb-0.5">Tipo</dt>
-                  <dd className="font-medium text-navy-800">{tipoHumano}</dd>
-                </div>
-                <div className="rounded-md bg-neutral-50 border border-neutral-150 p-3">
-                  <dt className="text-[11px] text-neutral-400 mb-0.5">Depósito</dt>
-                  <dd className="font-medium text-navy-800">
-                    {deposito == null ? 'No informado' : deposito === 0 ? 'Sin depósito' : `$${Number(deposito).toLocaleString('es-CO')}`}
-                  </dd>
-                </div>
-                <div className="rounded-md bg-neutral-50 border border-neutral-150 p-3">
-                  <dt className="text-[11px] text-neutral-400 mb-0.5">Total entrada</dt>
-                  <dd className="font-medium text-navy-800">
-                    {totalPrimerMes != null ? `$${Number(totalPrimerMes).toLocaleString('es-CO')}` : 'No informado'}
-                  </dd>
-                </div>
-              </dl>
-              <p className="text-[11px] text-neutral-400 mt-2">
-                Confirma reembolsabilidad del depósito, duración mínima y servicios incluidos por WhatsApp antes de separar.
-              </p>
-            </div>
-            <div className="border-t border-neutral-100 pt-4">
-              <h3 className="text-sm font-semibold text-navy-800 mb-1.5">Reglas de convivencia</h3>
-              <p className="text-sm text-neutral-600 leading-relaxed">{pub.reglas_convivencia || pub.reglas || 'No informado'}</p>
-            </div>
-            <div className="border-t border-neutral-100 pt-4">
-              <h3 className="text-sm font-semibold text-navy-800 mb-1.5">Dirección de referencia</h3>
-              <p className="text-sm text-neutral-600">{pub.direccion_referencial || 'No informado'}</p>
-            </div>
-            <div className="border-t border-neutral-100 pt-4">
-              {/* UX: sin columna "Estado" (ACTIVO/PENDIENTE es interno de BD, no del estudiante) */}
-              <div className="flex items-center gap-4">
-                <div>
-                  {modoTrayectoria ? (
-                    <>
-                      <p className="text-xs text-neutral-400 mb-0.5">{etiquetaDist}</p>
-                      <p className="text-sm font-semibold text-navy-800">{distMapa != null ? formatDistancia(distMapa) : 'No informado'}{distMapa != null && formatTiempoCaminando(distMapa) ? ` · ${formatTiempoCaminando(distMapa)}` : ''}</p>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-xs text-neutral-400 mb-0.5">Ubicación de la vivienda</p>
-                      <p className="text-sm font-semibold text-navy-800">{zona}</p>
-                    </>
-                  )}
-                </div>
-                <div className="w-px h-8 bg-neutral-150" />
-                <div>
-                  <p className="text-xs text-neutral-400 mb-0.5">Fotos</p>
-                  <p className="text-sm font-semibold text-navy-800">{numFotos}</p>
-                </div>
-              </div>
-            </div>
-          </div>
+          <CaracteristicasAviso pub={pub} zona={zona} tipoHumano={tipoHumano} deposito={deposito} totalPrimerMes={totalPrimerMes} numFotos={numFotos} distMapa={distMapa} etiquetaDist={etiquetaDist} modoTrayectoria={modoTrayectoria} />
 
           <div>
             <h3 className="text-sm font-semibold text-navy-800 mb-3">Ubicación referencial</h3>
@@ -663,97 +451,7 @@ export default function Detalle() {
             />
           </div>
 
-          <div className="card p-5 sm:p-6">
-            {hasTel ? (
-              <div className="space-y-4">
-                <div>
-                  <h3 className="text-base font-semibold text-navy-900 mb-0.5">Contactar arrendador</h3>
-                  <p className="text-xs text-neutral-500">Respuesta directa por WhatsApp</p>
-                  {yaContactado && (
-                    <p className="text-xs font-medium text-emerald-700 mt-1.5 inline-flex items-center gap-1">
-                      <Check aria-hidden="true" className="w-4 h-4" /> Ya contactaste este aviso
-                    </p>
-                  )}
-                </div>
-                {/* Acción primaria: CTA dominante, ancho completo en móvil */}
-                <a
-                  href={wa}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={handleWhatsAppClick}
-                  className="flex w-full items-center justify-center gap-2.5 px-6 py-3.5 min-h-[52px] bg-emerald-700 text-white font-semibold text-base rounded-xl shadow-sm hover:bg-emerald-800 hover:shadow active:bg-emerald-800 active:scale-[0.99] transition"
-                >
-                  <IconoWhatsApp />
-                  Contactar por WhatsApp
-                </a>
-                {/* Acciones secundarias: ghost, agrupadas, sin competir con el CTA */}
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 pt-1 border-t border-neutral-100">
-                  <button
-                    type="button"
-                    onClick={() => handleCopiar(pub.telefono_whatsapp, 'numero')}
-                    className="text-xs text-neutral-500 hover:text-navy-800 hover:underline transition py-1"
-                  >
-                    {copiado === 'numero' ? (<span className="inline-flex items-center gap-1"><Check aria-hidden="true" className="w-4 h-4" /> Número copiado</span>) : 'Copiar número'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleCopiar(mensajeWa, 'mensaje')}
-                    className="text-xs text-neutral-500 hover:text-navy-800 hover:underline transition py-1"
-                  >
-                    {copiado === 'mensaje' ? (<span className="inline-flex items-center gap-1"><Check aria-hidden="true" className="w-4 h-4" /> Mensaje copiado</span>) : 'Copiar mensaje'}
-                  </button>
-                  {!yaContactado && (
-                    <button
-                      type="button"
-                      onClick={handleMarcarContactado}
-                      className="text-xs text-neutral-500 hover:text-navy-800 hover:underline transition py-1"
-                    >
-                      Ya contacté por otro medio
-                    </button>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex items-center gap-3 p-3 bg-orange-50 border border-orange-200 rounded-md">
-                  <svg className="w-4 h-4 text-orange-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
-                  </svg>
-                  <p className="text-xs text-orange-700">
-                    {/* UX: sin enum de BD; el estudiante solo necesita saber que no hay contacto */}
-                    {!isActivo
-                      ? 'Este aviso no está disponible por ahora'
-                      : 'Sin WhatsApp autorizado — no se muestra botón de contacto'}
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 pt-1">
-                  <button
-                    type="button"
-                    onClick={handleToggleFav}
-                    className="text-xs text-neutral-500 hover:text-navy-800 hover:underline transition py-1"
-                  >
-                    {isFav ? (<span className="inline-flex items-center gap-1"><Heart aria-hidden="true" className="w-4 h-4 fill-current" /> Guardado en favoritos</span>) : (<span className="inline-flex items-center gap-1"><Heart aria-hidden="true" className="w-4 h-4" /> Guardar y avísame si habilita contacto</span>)}
-                  </button>
-                  {!yaContactado && (
-                    <button
-                      type="button"
-                      onClick={handleMarcarContactado}
-                      className="text-xs text-neutral-500 hover:text-navy-800 hover:underline transition py-1"
-                    >
-                      Ya contacté por otro medio
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-            {/* UX: segunda vía clara para reportar, junto al contacto (texto oscuro legible) */}
-            <button type="button"
-              onClick={() => setReportOpen(true)}
-              className="mt-3 w-full inline-flex items-center justify-center gap-1.5 text-xs font-medium text-neutral-600 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-100 rounded-md py-2 transition-colors"
-            >
-              <Flag aria-hidden="true" className="w-4 h-4" /> ¿Hay algún problema con este anuncio?
-            </button>
-          </div>
+          <ContactoArrendador pub={pub} wa={wa} hasTel={hasTel} isActivo={isActivo} mensajeWa={mensajeWa} copiado={copiado} yaContactado={yaContactado} isFav={isFav} handleWhatsAppClick={handleWhatsAppClick} handleCopiar={handleCopiar} handleMarcarContactado={handleMarcarContactado} handleToggleFav={handleToggleFav} setReportOpen={setReportOpen} />
         </div>
 
         <div className="space-y-6">
@@ -770,43 +468,11 @@ export default function Detalle() {
       )}
       {/* M4 historial del inmueble: solo el dueño ve su trazabilidad. */}
       {esDueno && historial && historial.length > 0 && (
-        <section aria-label="Historial del inmueble" className="mt-10">
-          <h2 className="font-display text-lg font-bold text-navy-900 mb-3">
-            Historial del inmueble
-          </h2>
-          <ul className="card divide-y divide-neutral-100">
-            {historial.map(h => (
-              <li key={h.id} className="flex items-center gap-3 px-4 py-2.5 text-xs">
-                <span className="font-semibold text-navy-800 shrink-0 min-w-24">
-                  {etiquetaEvento(h.evento)}
-                </span>
-                <span className="text-neutral-400 ml-auto shrink-0">
-                  {formatearSesionFecha(h.creado_en) || 'fecha desconocida'}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
+        <HistorialInmueble historial={historial} />
       )}
       {/* v15.2 similares en la zona (también visibles en avisos inactivos). */}
       {similares.length > 0 && (
-        <section aria-label="Inmuebles similares disponibles en esta zona" className="mt-10">
-          <h2 className="font-display text-lg font-bold text-navy-900 mb-3">
-            Inmuebles similares disponibles en esta zona
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {similares.map(s => (
-              <Link key={s.id} to={`/publicacion/${s.id}`}
-                className="card p-3 hover:border-navy-300 transition block">
-                <p className="text-sm font-semibold text-navy-900 line-clamp-1">{s.titulo}</p>
-                <p className="text-xs text-neutral-500 mt-1">
-                  {s.canon_mensual != null ? `$${Number(s.canon_mensual).toLocaleString('es-CO')} COP/mes` : 'Canon no informado'}
-                </p>
-                <p className="text-[11px] text-neutral-400 mt-0.5">{s.zona_nombre || s.zona || ''}</p>
-              </Link>
-            ))}
-          </div>
-        </section>
+        <SimilaresZona similares={similares} />
       )}
       {/* v15.2 el dueño edita sin salir del detalle (reutiliza el modal). */}
       {editando && authToken && (
@@ -820,35 +486,7 @@ export default function Detalle() {
 
       {/* Sticky móvil: deriva SIEMPRE del `pub` en pantalla (mismo `canon`
           del desglose). Etiqueta inequívoca mensual + nota de depósito. */}
-      <div className="sm:hidden fixed bottom-0 inset-x-0 z-40 border-t border-neutral-150 bg-white/95 backdrop-blur px-4 py-3" role="region" aria-label="Contacto rápido">
-        <div className="flex items-center gap-3">
-          <div className="min-w-0 flex-1">
-            <p className="text-lg font-extrabold text-navy-900 leading-tight truncate">
-              {canon != null ? `$${Number(canon).toLocaleString('es-CO')}` : 'No informado'}
-              <span className="text-[11px] font-normal text-neutral-500"> COP/mes</span>
-            </p>
-            <p className="text-xs text-neutral-600 truncate">
-              {zona}{deposito != null && deposito > 0 ? ` · +depósito $${Number(deposito).toLocaleString('es-CO')}` : ''}
-            </p>
-          </div>
-          {wa ? (
-            <a
-              href={wa}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={handleWhatsAppClick}
-              aria-label="Abrir chat de WhatsApp"
-              className="shrink-0 inline-flex items-center gap-1.5 px-5 py-3 min-h-[48px] rounded-xl bg-emerald-700 text-white text-sm font-bold shadow-lg active:bg-emerald-800 transition"
-            >
-              <IconoWhatsApp className="w-4 h-4" /> WhatsApp
-            </a>
-          ) : (
-            <span className="shrink-0 inline-flex items-center px-4 py-3 min-h-[48px] rounded-xl bg-neutral-100 text-neutral-600 border border-neutral-200 text-xs font-semibold">
-              Sin contacto
-            </span>
-          )}
-        </div>
-      </div>
+      <BarraContactoMovil canon={canon} deposito={deposito} zona={zona} wa={wa} handleWhatsAppClick={handleWhatsAppClick} />
     </div>
   )
 }

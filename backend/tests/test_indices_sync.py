@@ -6,7 +6,12 @@ import pathlib
 import re
 
 REPO = pathlib.Path(__file__).resolve().parent.parent  # backend/
-MODELS = REPO / "app" / "models" / "__init__.py"
+MODELS_DIR = REPO / "app" / "models"
+
+
+def texto_modelos() -> str:
+    """Fuente de todos los modelos (el paquete está dividido por dominio)."""
+    return "\n".join(p.read_text(encoding="utf-8") for p in sorted(MODELS_DIR.glob("*.py")))
 SCHEMA = REPO / "db" / "schema.sql"
 MIG_001 = REPO / "alembic" / "versions" / "001_initial_schema.py"
 MIG_002 = REPO / "alembic" / "versions" / "002_alineacion_indices.py"
@@ -66,7 +71,7 @@ SQL_022 = REPO / "db" / "migrations" / "022_publicidad_destacados.sql"
 
 
 def _model_index_names() -> list[str]:
-    return re.findall(r'Index\("([^"]+)"', MODELS.read_text(encoding="utf-8"))
+    return re.findall(r'Index\("([^"]+)"', texto_modelos())
 
 
 def test_modelos_tienen_indices_en_schema_sql():
@@ -203,7 +208,7 @@ def test_migracion_018_cubre_indice_pendiente():
         assert n in schema, f"{n} falta en schema.sql"
     assert "chat_id_pendiente" in mig and "chat_id_pendiente" in sql
     assert "chat_id_pendiente" in schema
-    modelos = MODELS.read_text(encoding="utf-8")
+    modelos = texto_modelos()
     assert "chat_id_pendiente" in modelos, "columna ausente en modelos"
 
 
@@ -222,7 +227,7 @@ def test_migracion_019_cubre_indices_notificaciones():
         assert pieza in mig, f"{pieza} falta en 019_notificaciones_y_busquedas.py"
         assert pieza in sql, f"{pieza} falta en 019_notificaciones_y_busquedas.sql"
         assert pieza in schema, f"{pieza} falta en schema.sql"
-    modelos = MODELS.read_text(encoding="utf-8")
+    modelos = texto_modelos()
     assert "class BusquedaGuardada" in modelos and "class Notificacion" in modelos
 
 
@@ -241,5 +246,5 @@ def test_migracion_022_cubre_indices_publicidad():
         assert pieza in mig, f"{pieza} falta en 022_publicidad_destacados.py"
         assert pieza in sql, f"{pieza} falta en 022_publicidad_destacados.sql"
         assert pieza in schema, f"{pieza} falta en schema.sql"
-    modelos = MODELS.read_text(encoding="utf-8")
+    modelos = texto_modelos()
     assert "class PlanPublicidad" in modelos and "class PublicacionDestacado" in modelos

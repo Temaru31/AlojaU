@@ -65,7 +65,7 @@ def test_tool_args_extra_y_tipos_rechazados():
 def test_tools_requieren_pg_para_datos():
     async def _main():
         if not await _pg_ok():
-            pytest.skip("sin PG local (modo mock)")
+            pytest.skip("sin PG local")
         db = await _sesion_pg()
         try:
             r = await ejecutar_tool(db, "buscar_publicaciones", {})
@@ -87,7 +87,7 @@ def test_tools_requieren_pg_para_datos():
 def test_obtener_invisible_fuera_de_activo():
     async def _main():
         if not await _pg_ok():
-            pytest.skip("sin PG local (modo mock)")
+            pytest.skip("sin PG local")
         db = await _sesion_pg()
         try:
             from sqlalchemy import text as _t
@@ -109,7 +109,7 @@ def test_obtener_invisible_fuera_de_activo():
 def test_confianza_y_faq():
     async def _main():
         if not await _pg_ok():
-            pytest.skip("sin PG local (modo mock)")
+            pytest.skip("sin PG local")
         db = await _sesion_pg()
         try:
             r = await ejecutar_tool(db, "buscar_en_faq",

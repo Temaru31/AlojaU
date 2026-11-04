@@ -15,6 +15,7 @@ import { formatCOP, formatDistancia } from '../utils/formatters'
 import BadgeConfianza from './BadgeConfianza'
 import { notifyToast } from './Toast'
 import useFocusTrap from '../hooks/useFocusTrap'
+import { bearer } from '../services/authHeaders'
 
 const MENSAJE_BIENVENIDA = (
   'Hola, soy el asistente automático de AlojaU. Te ayudo a buscar vivienda '
@@ -125,7 +126,7 @@ export default function ChatWidget() {
     const nuevos = [...mensajes, { rol: 'user', texto: cuerpo }]
     setMensajes(nuevos)
     try {
-      const headers = token ? { Authorization: `Bearer ${token}` } : undefined
+      const headers = token ? bearer(token) : undefined
       const r = await api.post('/api/chat',
         { mensaje: cuerpo, historial: ultimosTurnos(nuevos) },
         headers ? { headers } : undefined)

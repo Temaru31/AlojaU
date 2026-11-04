@@ -20,6 +20,7 @@ Pre-mortem (ver también permissions.py):
 """
 from __future__ import annotations
 
+import logging
 import time
 from abc import ABC, abstractmethod
 from typing import Any
@@ -27,6 +28,10 @@ from typing import Any
 import jwt as pyjwt
 
 from app.core.config import settings
+from app.core.logseguro import exc_resumen
+from app.core.normalizacion import normalizar_email
+
+logger = logging.getLogger("alojau.auth_service")
 
 
 class AuthService(ABC):
@@ -59,7 +64,7 @@ class LocalAuthService(AuthService):
         return _decode(token)
 
     def normalize_email(self, email: str) -> str:
-        return str(email or "").strip().lower()
+        return normalizar_email(email)
 
 
 # --- Caché en memoria del JWKS (evita 1 fetch por request en free tier) ---
@@ -149,7 +154,7 @@ class SupabaseAuthService(AuthService):
         return LocalAuthService().create_token(data)
 
     def normalize_email(self, email: str) -> str:
-        return str(email or "").strip().lower()
+        return normalizar_email(email)
 
     def decode_token(self, token: str) -> dict:
         from fastapi import HTTPException
@@ -210,8 +215,8 @@ def get_auth_service() -> AuthService:
     try:
         if settings.supabase_configured and settings.jwks_url:
             return SupabaseAuthService()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[auth] configuración Supabase inválida, se usa proveedor local: %s", exc_resumen(e))
     return LocalAuthService()
 
 

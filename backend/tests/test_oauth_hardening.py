@@ -32,8 +32,6 @@ def limpieza():
     creados = []
     yield creados
     auth_router._OAUTH_ATTEMPTS.clear()
-    for e in list(creados):
-        auth_router.MOCK_USERS.pop(e, None)
     try:
         import asyncio
         import os
@@ -86,7 +84,6 @@ def test_callback_foto_no_https_422_sin_crear_usuario(limpieza):
     limpieza.append(email)
     r = _callback(email, foto_perfil_url="http://evil.com/x.jpg")
     assert r.status_code == 422
-    assert email not in auth_router.MOCK_USERS
 
 
 # --- Rate-limit en memoria: 10 OK + 11vo 429 ---------------------------------

@@ -11,6 +11,8 @@ import { getEtiquetaTipo } from '../utils/tiposVivienda'
 import { etiquetaLugar } from '../components/CercanoA'
 import { guardarCampusFiltro, resolverCampusId } from '../utils/persistenciaBuscar'
 import useTiposVivienda from '../hooks/useTiposVivienda'
+import { authHead } from '../services/authHeaders'
+import { etiquetaEstado } from '../utils/estados'
 
 function NoInformado() {
   return <span className="text-neutral-400 italic text-xs">No informado</span>
@@ -39,13 +41,13 @@ export function textoTiempoConCampus(distM, campusNombre) {
 
 export default function Comparar() {
   const { comparar, clear, toggle, error } = useComparar()
-  // v14.1: con sesión, el dueño ve sus PENDIENTE en vez de "no disponible".
+  // Con sesión, el dueño ve sus PENDIENTE en vez de "no disponible".
   const { token: authToken } = useAuth()
-  // M2: catálogo dinámico con fallback (misma etiqueta que el resto).
+  // Catálogo dinámico con fallback (misma etiqueta que el resto).
   const { tipos: tiposCatalogo } = useTiposVivienda()
   const [pubs, setPubs] = useState([])
   const [loading, setLoading] = useState(false)
-  // Bloque 4: filtro global de ubicación de Buscar. Comparar vive en otra
+  // Filtro global de ubicación de Buscar. Comparar vive en otra
   // ruta (`/comparar`), así que el `?campus_id=` de Buscar no viaja en su
   // URL: se resuelve contra el último filtro guardado (localStorage).
   // La escritura al storage ocurre en efecto (nunca en render).
@@ -82,7 +84,7 @@ export default function Comparar() {
     setLoading(true)
     const cfg = {
       signal: controller.signal,
-      ...(authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : {}),
+      ...(authToken ? authHead(authToken) : {}),
     }
     Promise.all(comparar.map(id =>
       api.get(`/api/publicaciones/${id}`, cfg).then(r => r.data).catch((err) => {
@@ -125,7 +127,7 @@ export default function Comparar() {
     { label: 'Índice confianza', key: 'indice', render: (p) => p.indice_confianza != null ? <BadgeConfianza indice={p.indice_confianza} /> : <NoInformado /> },
     { label: 'Servicios', key: 'servicios', render: (p) => p.servicios?.length ? p.servicios.join(' · ') : <NoInformado /> },
     { label: 'Fotos', key: 'fotos', render: (p) => `${numFotosDe(p)} fotos` },
-    { label: 'Estado', key: 'estado', render: (p) => p.estado === 'PENDIENTE' ? 'En revisión' : p.estado === 'ACTIVO' ? 'Publicada' : (p.estado || <NoInformado />) },
+    { label: 'Estado', key: 'estado', render: (p) => (p.estado ? etiquetaEstado(p.estado) : <NoInformado />) },
     { label: 'Dirección ref.', key: 'direccion', render: (p) => p.direccion_referencial || <NoInformado /> },
     {
       label: 'Anuncio', key: 'cta', render: (p) => (

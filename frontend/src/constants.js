@@ -56,7 +56,7 @@ export function estaDesactualizada(fechaRenovacion, diasLimite = LIMITES.desactu
   return (Date.now() - t) / 86_400_000 > diasLimite
 }
 
-// Detalle #3: config pública del backend (GET /api/publicaciones/config-publica).
+// Config pública del backend (GET /api/publicaciones/config-publica).
 // El endpoint es público y barato (1 query); aquí se lee UNA vez por sesión y
 // se cachea en memoria + localStorage (TTL 5 min). Si falla o no hay red, se
 // usa LIMITES local (divergencia aceptada y documentada).

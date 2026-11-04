@@ -29,7 +29,7 @@ export default function ConfirmDialog({
     return () => window.removeEventListener('keydown', onKey)
   }, [onCancelar, ocupado])
 
-  // Bloque 3: Tab cicla dentro del diálogo y al cerrar vuelve al disparador.
+  // Tab cicla dentro del diálogo y al cerrar vuelve al disparador.
   const cajaRef = useRef(null)
   useFocusTrap(cajaRef, true)
 

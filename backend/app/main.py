@@ -15,10 +15,13 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from app.core.config import settings
-from app.routers import publicaciones, campus, auth, uploads, reportes, admin, ciudades, admin_automation, zonas, housing_types, notificaciones, chat, preferencias, matching
-from app.routers import publicaciones, campus, auth, uploads, reportes, admin, ciudades, admin_automation, zonas, housing_types, notificaciones, chat, publicidad
+from app.core.logseguro import exc_resumen
+from app.routers import (
+    admin, admin_automation, auth, campus, chat, ciudades, housing_types, matching,
+    notificaciones, preferencias, publicaciones, publicidad, reportes, uploads, zonas,
+)
 
-# Detalle #7 DX local: el OTP se loguea con logger.info pero uvicorn deja el
+# DX local: el OTP se loguea con logger.info pero uvicorn deja el
 # root en WARNING y el código era invisible. En dev/test se sube a INFO para
 # verlo; en prod se respeta el nivel del entorno (sin secretos en logs).
 if getattr(settings, "ENV", "dev") != "prod":
@@ -26,7 +29,7 @@ if getattr(settings, "ENV", "dev") != "prod":
 
 logger = logging.getLogger("alojau")
 
-# OLA5-M7: CSP base restrictiva (la API sirve JSON + estáticos; sin JS propio).
+# CSP base restrictiva (la API sirve JSON + estáticos; sin JS propio).
 # Nota Vite: la CSP vive en las RESPUESTAS de la API, no afecta al dev server
 # de Vite (origen distinto) ni a los fetch del frontend (los gobierna la CSP
 # de la página). /docs (Swagger UI con inline JS + CDN jsdelivr) usa CSP_DOCS.
@@ -97,8 +100,8 @@ async def lifespan(app: FastAPI):
                 except Exception as e:
                     logger.warning("[telegram webhook] auto-registro falló: %s", e)
             asyncio.get_running_loop().create_task(_fondo())
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[arranque] tarea de webhook Telegram no programada: %s", exc_resumen(e))
     yield
 
 
@@ -111,7 +114,7 @@ app = FastAPI(
 )
 
 # CORS restringido (DoD-5): nunca "*" con credentials
-# Detalle #10: sin PUT (ningún endpoint lo usa; todo es PATCH/POST) — reduce
+# Sin PUT (ningún endpoint lo usa; todo es PATCH/POST) — reduce
 # superficie preflight sin romper contratos.
 app.add_middleware(
     CORSMiddleware,
@@ -131,7 +134,7 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["X-XSS-Protection"] = "0"  # deshabilitado, CSP es mejor
-    # OLA5-M7: CSP + Permissions-Policy (/docs con política propia por Swagger UI)
+    # CSP + Permissions-Policy (/docs con política propia por Swagger UI)
     if request.url.path == "/docs":
         response.headers["Content-Security-Policy"] = CSP_DOCS
     else:
@@ -139,7 +142,7 @@ async def security_headers(request: Request, call_next):
     response.headers["Permissions-Policy"] = PERMISSIONS_POLICY
     return response
 
-# OLA5-M7: request_id de punta a punta (logs + header de respuesta).
+# Request_id de punta a punta (logs + header de respuesta).
 # Se registra DESPUÉS de security_headers para correr ANTES (outermost).
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
@@ -167,25 +170,27 @@ def clear_security_burst_for_tests() -> None:
 @app.middleware("http")
 async def security_burst_middleware(request: Request, call_next):
     response = await call_next(request)
-    try:
-        if response.status_code in (401, 403, 429):
-            minuto = int(time.monotonic() // _SEC_BURST_WINDOW_S)
-            _SEC_BURST[minuto] = _SEC_BURST.get(minuto, 0) + 1
-            for k in [k for k in _SEC_BURST if k < minuto - 1]:
-                _SEC_BURST.pop(k, None)
-            total = _SEC_BURST.get(minuto, 0) + _SEC_BURST.get(minuto - 1, 0)
-            if total >= _SEC_BURST_UMBRAL and _SEC_BURST_ULTIMO_AVISO["minuto"] != minuto:
-                _SEC_BURST_ULTIMO_AVISO["minuto"] = minuto
-                logger.warning(
-                    "[secops] ráfaga de %s respuestas 401/403/429 en ~2min (posible sondeo)",
-                    total,
-                )
-    except Exception:
-        pass
+    if response.status_code in (401, 403, 429):
+        _contar_respuesta_denegada()
     return response
 
 
-# OLA5-M7: handler global 500 con traza estructurada + request_id.
+def _contar_respuesta_denegada() -> None:
+    """Cuenta 401/403/429 por ventana y avisa una vez por minuto si hay ráfaga."""
+    minuto = int(time.monotonic() // _SEC_BURST_WINDOW_S)
+    _SEC_BURST[minuto] = _SEC_BURST.get(minuto, 0) + 1
+    for k in [k for k in _SEC_BURST if k < minuto - 1]:
+        _SEC_BURST.pop(k, None)
+    total = _SEC_BURST.get(minuto, 0) + _SEC_BURST.get(minuto - 1, 0)
+    if total >= _SEC_BURST_UMBRAL and _SEC_BURST_ULTIMO_AVISO["minuto"] != minuto:
+        _SEC_BURST_ULTIMO_AVISO["minuto"] = minuto
+        logger.warning(
+            "[secops] ráfaga de %s respuestas 401/403/429 en ~2min (posible sondeo)",
+            total,
+        )
+
+
+# Handler global 500 con traza estructurada + request_id.
 # HTTPException (401/403/404/...) pasa INTACTA (mismo status/detail/headers):
 # Starlette también la dirigiría a un handler de `Exception` por MRO, así que
 # el passthrough explícito es obligatorio para no romper el contrato API.
@@ -221,7 +226,7 @@ def ping():
     return {"status": "ok", "service": "AlojaU API"}
 
 # Static uploads (HU-005) - sirve /uploads/{uuid}.jpg
-# AUDITORÍA PRE-PUSH: makedirs tolerante (contenedor read-only no debe tumbar
+# Makedirs tolerante (contenedor read-only no debe tumbar
 # el arranque; StaticFiles exige dir existente -> se crea bajo try).
 _upload_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
 try:
@@ -231,8 +236,8 @@ except Exception:
     try:
         os.makedirs("/tmp/alojau_uploads", exist_ok=True)
         _upload_dir = "/tmp/alojau_uploads"
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("[storage] /tmp/alojau_uploads tampoco es escribible: %s", exc_resumen(e))
 app.mount("/uploads", StaticFiles(directory=_upload_dir), name="uploads")
 
 # Favicon AlojaU para /docs (F1: reemplaza rayo FastAPI por marca propia)
@@ -268,11 +273,10 @@ app.include_router(notificaciones.router)
 app.include_router(notificaciones.router_busquedas)
 app.include_router(chat.router)  # Chatbot MVP solo lectura (CHAT_ENABLED)
 app.include_router(preferencias.router)
-app.include_router(matching.router)  # Mockup 501 (contrato futuro, sin lógica)
+app.include_router(matching.router)  # Matching de roomies (HU-13)
 app.include_router(publicidad.router)
 app.include_router(publicidad.router_admin)
 
-# Legacy mock endpoints removidos: ahora en routers/publicaciones.py y routers/campus.py
 # - GET /api/publicaciones?campus_id=&precio_min=&precio_max=&tipo=&servicios=  (HU-001+002)
 # - GET /api/publicaciones/{id}  (HU-003+007+008)
 # - POST /api/publicaciones  (HU-005 PENDIENTE, solo ARRENDADOR)

@@ -112,7 +112,7 @@ def test_rate_limit_429_antes_de_bd(throttle_limpio, monkeypatch):
 
 def test_encendido_fake_flujo_busqueda(throttle_limpio, monkeypatch):
     if not _hay_pg():
-        pytest.skip("sin PG local (modo mock)")
+        pytest.skip("sin PG local")
     monkeypatch.setattr(settings, "CHAT_ENABLED", True)
     monkeypatch.setenv("CHAT_DATABASE_URL", _dsn_prueba())
     chat_sesion.clear_chat_engine_for_tests()
@@ -143,7 +143,7 @@ def test_encendido_fake_flujo_busqueda(throttle_limpio, monkeypatch):
 
 def test_encendido_faq_y_anonimo_vs_autenticado(throttle_limpio, monkeypatch):
     if not _hay_pg():
-        pytest.skip("sin PG local (modo mock)")
+        pytest.skip("sin PG local")
     monkeypatch.setattr(settings, "CHAT_ENABLED", True)
     monkeypatch.setenv("CHAT_DATABASE_URL", _dsn_prueba())
     chat_sesion.clear_chat_engine_for_tests()

@@ -10,8 +10,6 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.models import Publicacion
 from app.repositories import publicacion_repo as repo
-from app.routers.publicaciones import MOCK_PUBS
-from app.services.publicacion_view import filter_mock_pubs
 
 client = TestClient(app)
 
@@ -41,30 +39,7 @@ def test_lista_conditions_q_agrega_filtro_texto():
     assert len(fuzzy) == len(base) + 1
 
 
-# --- Mock matching (sin tildes, parciales) ---
-def test_mock_q_sin_tilde_encuentra_con_tilde():
-    res = filter_mock_pubs(MOCK_PUBS, None, None, None, None, None, "habitacion")
-    assert len(res) >= 1
-    # El top-1 debe ser una habitación (relevancia: título antes que descripción).
-    assert "habitaci" in res[0]["titulo"].lower()
-
-
-def test_mock_q_parcial():
-    res = filter_mock_pubs(MOCK_PUBS, None, None, None, None, None, "apartaest")
-    assert any(p["id"] == 2 for p in res)
-
-
-def test_mock_q_sin_resultados():
-    assert filter_mock_pubs(MOCK_PUBS, None, None, None, None, None, "zzzquilombo") == []
-
-
-def test_mock_q_combina_con_filtros():
-    res = filter_mock_pubs(MOCK_PUBS, 1, 400000, None, None, None, "tulcan")
-    assert all(p["estado"] == "ACTIVO" for p in res)
-    assert all(p["canon_mensual"] >= 400000 for p in res)
-
-
-# --- API (modo mock sin PG) ---
+# --- API ---
 def test_api_q_devuelve_200_y_filtra():
     r = client.get("/api/publicaciones", params={"q": "habitacion"})
     assert r.status_code == 200

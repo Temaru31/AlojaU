@@ -1,7 +1,6 @@
 """
 db/session.py - Sesión async SQLAlchemy 2.0 + asyncpg -> PostgreSQL 16 (Sección 5.10)
 No tocar si no eres de BD. Lee DATABASE_URL del .env
-Sprint1: fallback mock si PG no disponible para que frontend no se bloquee.
 """
 import os
 import sys
@@ -62,7 +61,7 @@ _connect_args = {
 }
 
 # pool 5-20 para 50-100 concurrentes Tabla18 (NFR)
-# Sprint1: pool_pre_ping evita "cold start" + silent disconnect en Render
+# Pool_pre_ping evita "cold start" + silent disconnect en Render
 # B0 fix (<=3 líneas): bajo pytest usa NullPool (cada TestClient request corre en
 # loop distinto; el pool persistente reutiliza conexiones atadas a loops cerrados
 # -> RuntimeError "attached to a different loop"). Prod/dev intactos.

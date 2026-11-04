@@ -14,12 +14,13 @@ import { formatDistancia } from '../utils/formatters'
 import { portadaUrl } from '../utils/portada'
 import { getEtiquetaTipo } from '../utils/tiposVivienda'
 import useTiposVivienda from '../hooks/useTiposVivienda'
+import { authHead } from '../services/authHeaders'
 
 export default function Favoritos() {
   const { ids, remove, clear, count } = useFavoritos()
-  // v14.1: con sesión, el dueño ve sus PENDIENTE en vez de "No vigente".
+  // Con sesión, el dueño ve sus PENDIENTE en vez de "No vigente".
   const { token: authToken } = useAuth()
-  // Bloque 3: etiquetas desde la fuente única (dinámico + fallback central).
+  // Etiquetas desde la fuente única (dinámico + fallback central).
   const { tipos: tiposCatalogo } = useTiposVivienda()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
@@ -37,7 +38,7 @@ export default function Favoritos() {
     let isMounted = true
     setLoading(true)
 
-    const cfg = authToken ? { headers: { Authorization: `Bearer ${authToken}` } } : {}
+    const cfg = authToken ? authHead(authToken) : {}
     const fetchPromises = ids.map(async (id) => {
       try {
         const res = await api.get(`/api/publicaciones/${id}`, cfg)

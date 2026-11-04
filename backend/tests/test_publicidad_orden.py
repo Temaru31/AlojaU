@@ -43,7 +43,6 @@ def _limpiar_destacados():
         pass
     try:
         from app.routers import publicidad as _pub
-        _pub.clear_publicidad_mock_for_tests()
     except Exception:
         pass
 

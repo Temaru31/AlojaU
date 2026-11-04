@@ -246,5 +246,5 @@ def test_migracion_020_tipo_telegram_ok():
     sql = (repo / "db" / "migrations" / "020_notificacion_telegram.sql").read_text(encoding="utf-8")
     assert "chk_notif_tipo" in sql and "'telegram'" in sql
     assert "telegram" in (repo / "db" / "schema.sql").read_text(encoding="utf-8")
-    modelos = (repo / "app" / "models" / "__init__.py").read_text(encoding="utf-8")
+    modelos = (repo / "app" / "models" / "notificaciones.py").read_text(encoding="utf-8")
     assert "'telegram'" in modelos

@@ -1,7 +1,7 @@
 """GET /api/ciudades — catálogo multiciudad (Fase 4).
 
 Lista ciudades activas con slug URL-safe. Sin auth. Cache-Control 1h
-(mismo patrón que /api/campus). En prod sin DB -> 503, en dev -> mock Popayán.
+(mismo patrón que /api/campus). Sin DB -> 503.
 """
 
 import time
@@ -10,12 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.logseguro import exc_resumen
 from app.db.session import get_session
 from app.services.ciudades import ciudad_to_out
 
 import logging
+from app.core.db_utils import rollback_seguro
 
 logger = logging.getLogger("alojau.ciudades")
 
@@ -29,10 +29,6 @@ def clear_ciudades_cache() -> None:
     """Invalida el caché (tests + ingesta manual)."""
     _cache["ts"] = 0.0
     _cache["payload"] = None
-
-
-def _mock_enabled() -> bool:
-    return bool(getattr(settings, "mock_enabled", False))
 
 
 @router.get("", summary="Listar ciudades activas (multiciudad)")
@@ -54,15 +50,8 @@ async def list_ciudades(response: Response, db: AsyncSession = Depends(get_sessi
         payload = [ciudad_to_out(r) for r in rows]
     except Exception as e:
         logger.error(f"[ciudades] DB falló: {exc_resumen(e)}", exc_info=True)
-        try:
-            await db.rollback()
-        except Exception:
-            pass
-        if not _mock_enabled():
-            raise HTTPException(status_code=503, detail="Base de datos no disponible")
-        payload = [
-            {"id": 1, "nombre": "Popayán", "departamento": "Cauca", "slug": "popayan", "activo": True}
-        ]
+        await rollback_seguro(db, "list_ciudades")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
     _cache["ts"] = ahora
     _cache["payload"] = payload
     response.headers["Cache-Control"] = "public, max-age=3600"

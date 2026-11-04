@@ -78,28 +78,6 @@ def test_whatsapp_link_sin_tel_none():
     assert link.startswith("https://wa.me/573001234567?text=")
 
 
-def test_filter_mock_ciudad_desconocida_vacia():
-    assert view.filter_mock_pubs([PUB], ciudad_slug="bogota") == []
-
-
-def test_filter_mock_ciudad_popayan_y_id():
-    assert view.filter_mock_pubs([PUB], ciudad_slug="popayan") == [PUB]
-    assert view.filter_mock_pubs([PUB], ciudad_id=2) == []
-    assert view.filter_mock_pubs([PUB], ciudad_id=1) == [PUB]
-
-
-def test_filter_mock_poi_nuevo_ordena_sin_filtrar():
-    pubs = [dict(PUB, id=1), dict(PUB, id=2)]
-    out = view.filter_mock_pubs(pubs, campus_id=99)
-    assert [p["id"] for p in out] == [1, 2]
-
-
-def test_filter_mock_servicios_y_stopwords():
-    assert view.filter_mock_pubs([PUB], servicios_ids=[2]) == []
-    assert view.filter_mock_pubs([PUB], servicios_ids=[1]) == [PUB]
-    assert view.filter_mock_pubs([PUB], q="con de la") == [PUB]
-
-
 def test_parse_servicios_param_ramas():
     assert view.parse_servicios_param(None) is None
     assert view.parse_servicios_param("1,2") == [1, 2]
