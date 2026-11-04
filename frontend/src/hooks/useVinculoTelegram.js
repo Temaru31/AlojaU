@@ -138,6 +138,13 @@ export default function useVinculoTelegram({
     }
   }
 
+  // Al pulsar el enlace (el <a> abre Telegram): arranca el sondeo desde cero.
+  const abrirBot = () => {
+    setError('')
+    setBotAbierto(true)
+    setIntentos(0)
+  }
+
   const comprobarVinculacion = async () => {
     setComprobando(true)
     setError('')
@@ -175,7 +182,7 @@ export default function useVinculoTelegram({
 
   return {
     enlace, cargandoEnlace, modoLocal, error, setError, pedirEnlace,
-    botAbierto, setBotAbierto,
+    botAbierto, abrirBot,
     comprobando, intentos, comprobarVinculacion,
     confirmaDesvincular, setConfirmaDesvincular, desvinculando, desvincular,
   }

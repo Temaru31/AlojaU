@@ -25,7 +25,7 @@ export default function TelegramVincular({
   const [pinOk, setPinOk] = useState(false)
   const {
     enlace, cargandoEnlace, modoLocal, error, setError, pedirEnlace,
-    setBotAbierto, comprobando, intentos, comprobarVinculacion,
+    abrirBot, comprobando, intentos, comprobarVinculacion,
     confirmaDesvincular, setConfirmaDesvincular, desvinculando, desvincular,
   } = useVinculoTelegram({
     token, vinculado, telefonoGuardado, onVinculado, onDesvinculado,
@@ -106,7 +106,7 @@ export default function TelegramVincular({
                   href={enlace}
                   target="_blank"
                   rel="noopener noreferrer"
-                  onClick={() => { setError(''); setBotAbierto(true); setIntentos(0) }}
+                  onClick={abrirBot}
                   className={`inline-flex items-center justify-center w-full sm:w-auto px-4 py-2 min-h-[44px] text-sm font-semibold text-white bg-navy-800 rounded-lg hover:bg-navy-900 active:bg-navy-900 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy-800/40 ${bloqueado ? 'pointer-events-none opacity-50' : ''}`}
                   aria-disabled={bloqueado || undefined}
                 >
