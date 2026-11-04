@@ -3,10 +3,6 @@ import { LIMITES } from '../constants'
 import { esHttpUrl } from './urls'
 import { CookingPot, ShowerHead, Sofa, Sparkles, WashingMachine, Wifi } from 'lucide-react'
 
-
-
-
-
 /** Clave del borrador local (persistencia ante recargas / cold start). */
 export const DRAFT_KEY = 'alojau_publicar_draft'
 
@@ -112,6 +108,27 @@ export function validarPublicar(form, lim = LIMITES) {
   if (form.latitud !== '' && form.latitud != null && (isNaN(Number(form.latitud)) || Number(form.latitud) < -90 || Number(form.latitud) > 90)) e.latitud = 'Latitud entre -90 y 90'
   if (form.longitud !== '' && form.longitud != null && (isNaN(Number(form.longitud)) || Number(form.longitud) < -180 || Number(form.longitud) > 180)) e.longitud = 'Longitud entre -180 y 180'
   return e
+}
+
+// Cuerpo del POST /api/publicaciones a partir del formulario. Sanea los textos
+// (defensa en profundidad: el backend también valida y rechaza HTML).
+export function armarPayloadPublicacion(form, lim = LIMITES) {
+  return {
+    titulo: sanitizarTexto(form.titulo, lim.titulo.max),
+    descripcion: sanitizarTexto(form.descripcion, lim.descripcion.max),
+    tipo_inmueble: form.tipo_inmueble,
+    canon_mensual: Number(soloDigitos(form.canon_mensual) || form.canon_mensual),
+    deposito_requerido: Number(soloDigitos(form.deposito_requerido) || 0),
+    zona_barrio_id: form.zona_barrio_id != null ? Number(form.zona_barrio_id) : null,
+    barrio_texto: sanitizarTexto(form.barrio_texto || '', 120) || null,
+    direccion_referencial: sanitizarTexto(form.direccion_referencial, lim.direccion.max),
+    reglas_convivencia: sanitizarTexto(form.reglas_convivencia, lim.reglas.max),
+    latitud: form.latitud === '' ? null : Number(form.latitud),
+    longitud: form.longitud === '' ? null : Number(form.longitud),
+    servicios_ids: form.servicios_ids,
+    campus_ids: [],
+    fotos: form.fotos.filter(f => f.trim() !== ''),
+  }
 }
 
 export const FORM_INICIAL = {

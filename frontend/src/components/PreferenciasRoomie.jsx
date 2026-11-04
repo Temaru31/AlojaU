@@ -7,7 +7,7 @@ import {
   calcularCompletitudRoomie,
   validarPreferenciasRoomie,
 } from '../utils/preferenciasRoomie'
-import { getEnumsPreferencias, guardarPreferenciasUsuario } from '../services/api'
+import { getEnumsPreferencias, guardarPreferenciasUsuario } from '../services/roomiesApi'
 import { notifyToast } from './Toast'
 import { useAuth, emitAuthChange } from '../contexts/AuthContext'
 import { Check, AlertCircle, Clock, Moon, Utensils, PawPrint, Heart, Users } from 'lucide-react'

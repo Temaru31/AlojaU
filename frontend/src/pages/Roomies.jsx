@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { getCandidatosRoomies } from '../services/api'
+import { getCandidatosRoomies } from '../services/roomiesApi'
 import { calcularCompletitudRoomie, obtenerBandaCompatibilidad } from '../utils/preferenciasRoomie'
 import { Users, Sparkles, SlidersHorizontal, ChevronRight, AlertCircle } from 'lucide-react'
 import TarjetaCandidato from './roomies/TarjetaCandidato'

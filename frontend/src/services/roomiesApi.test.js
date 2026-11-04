@@ -1,10 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
-import {
-  api,
-  getEnumsPreferencias,
-  guardarPreferenciasUsuario,
-  getCandidatosRoomies,
-} from './api'
+import { api } from './api'
+import { getEnumsPreferencias, guardarPreferenciasUsuario, getCandidatosRoomies } from './roomiesApi'
 
 describe('api roomie y preferencias (HU-12 / HU-13)', () => {
   it('getEnumsPreferencias llama a GET /api/preferencias/enums', async () => {

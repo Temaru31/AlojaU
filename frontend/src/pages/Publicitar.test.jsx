@@ -2,11 +2,14 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import Publicitar from './Publicitar'
-import { getPlanesPublicidad, destacarPublicacion, getMisDestacados, api } from '../services/api'
+import { getPlanesPublicidad, destacarPublicacion, getMisDestacados } from '../services/publicidadApi'
+import { api } from '../services/api'
 import * as Auth from '../contexts/AuthContext'
 
 vi.mock('../services/api', () => ({
   api: { get: vi.fn(), post: vi.fn() },
+}))
+vi.mock('../services/publicidadApi', () => ({
   getPlanesPublicidad: vi.fn(),
   destacarPublicacion: vi.fn(),
   getMisDestacados: vi.fn(),

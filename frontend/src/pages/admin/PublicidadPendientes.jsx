@@ -1,7 +1,7 @@
 // Bandeja admin de destacados pendientes de aprobación.
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { getPublicidadPendientes, decidirDestacado } from '../../services/api'
+import { getPublicidadPendientes, decidirDestacado } from '../../services/publicidadApi'
 
 
 

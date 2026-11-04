@@ -22,6 +22,18 @@ export const emitAuthChange = () => {
   }
 }
 
+// Crear, pausar o eliminar un aviso puede promover o degradar el rol en el
+// backend (`rol_actualizado`): se relee el perfil y se avisa al resto de la app.
+export async function sincronizarRolSiCambio(respuesta, refresh) {
+  if (!respuesta?.rol_actualizado) return
+  try {
+    await refresh?.()
+  } catch {
+    // Sin red: el próximo refresh() revalida el rol.
+  }
+  emitAuthChange()
+}
+
 // Contador de avisos propios para el navbar ("Mis publicaciones" se oculta
 // con 0 avisos). Evento dedicado — no reutilizar AUTH_EVENT (ese resincroniza
 // tokens en Perfil/Publicar y no debe dispararse por cada mutación de avisos).

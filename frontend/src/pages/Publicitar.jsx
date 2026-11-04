@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Megaphone, Star } from 'lucide-react'
-import { getPlanesPublicidad, destacarPublicacion, getMisDestacados } from '../services/api'
+import { getPlanesPublicidad, destacarPublicacion, getMisDestacados } from '../services/publicidadApi'
 import { mensajeDeError } from '../services/erroresApi'
 import { useAuth } from '../contexts/AuthContext'
 import { listarMisPublicaciones } from '../services/publicacionesApi'

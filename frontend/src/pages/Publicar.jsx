@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import GoogleButton from '../components/GoogleButton'
 import { signInWithGoogle, guardarRedirectPostLogin } from '../services/supabaseClient'
-import { emitAuthChange, emitMiasChange, useAuth } from '../contexts/AuthContext'
+import { emitMiasChange, sincronizarRolSiCambio, useAuth } from '../contexts/AuthContext'
 import { LIMITES } from '../constants'
 import useTiposVivienda from '../hooks/useTiposVivienda'
 import { getEtiquetaTipo } from '../utils/tiposVivienda'
@@ -11,7 +11,7 @@ import { leerToken } from '../services/tokenStorage'
 import PasoInformacion from './publicar/PasoInformacion'
 import PasoUbicacion from './publicar/PasoUbicacion'
 import PasoServiciosFotos from './publicar/PasoServiciosFotos'
-import { sanitizarTexto, formatearCOP, soloDigitos, leerBorrador, guardarBorrador, limpiarBorrador, validarPublicar, FORM_INICIAL, mezclarBorrador } from '../utils/publicar'
+import { armarPayloadPublicacion, formatearCOP, soloDigitos, leerBorrador, guardarBorrador, limpiarBorrador, validarPublicar, FORM_INICIAL, mezclarBorrador } from '../utils/publicar'
 import { crearPublicacion } from '../services/publicacionesApi'
 import { mensajeDeError } from '../services/erroresApi'
 
@@ -99,8 +99,6 @@ export default function Publicar() {
   // de usuario del navbar; en Publicar era ruido irrelevante.)
 
   const validate = () => {
-    // Fuente única LIMITES (antes hardcodeaba 10/150/20/2000/10M
-    // duplicando constants.js). El JSX ya usa LIMITES para maxLength.
     const e = validarPublicar(form)
     setErrors(e)
     return Object.keys(e).length === 0
@@ -125,25 +123,7 @@ export default function Publicar() {
     }
     enviandoRef.current = true
     setSubmitting(true)
-    const fotosValid = form.fotos.filter(f => f.trim() !== '')
-    // Bloque 2B: sanitización (defensa en profundidad; el backend valida con
-    // Pydantic + rechaza HTML y usa ORM parametrizado).
-    const payload = {
-      titulo: sanitizarTexto(form.titulo, LIMITES.titulo.max),
-      descripcion: sanitizarTexto(form.descripcion, LIMITES.descripcion.max),
-      tipo_inmueble: form.tipo_inmueble,
-      canon_mensual: Number(soloDigitos(form.canon_mensual) || form.canon_mensual),
-      deposito_requerido: Number(soloDigitos(form.deposito_requerido) || 0),
-      zona_barrio_id: form.zona_barrio_id != null ? Number(form.zona_barrio_id) : null,
-      barrio_texto: sanitizarTexto(form.barrio_texto || '', 120) || null,
-      direccion_referencial: sanitizarTexto(form.direccion_referencial, LIMITES.direccion.max),
-      reglas_convivencia: sanitizarTexto(form.reglas_convivencia, LIMITES.reglas.max),
-      latitud: form.latitud === '' ? null : Number(form.latitud),
-      longitud: form.longitud === '' ? null : Number(form.longitud),
-      servicios_ids: form.servicios_ids,
-      campus_ids: [],
-      fotos: fotosValid,
-    }
+    const payload = armarPayloadPublicacion(form)
     // UNA sola capa de reintento (el interceptor de api.js ya
     // reintenta este POST idempotente 2 veces con 2s/4s ante cold start).
     // El borrador persiste hasta el éxito: si la red falla, nada se pierde.
@@ -163,11 +143,7 @@ export default function Publicar() {
       setFotosPendientes(0)
       // El navbar muestra "Mis publicaciones" tras el primer aviso.
       emitMiasChange()
-      // Reactividad de rol: si hubo promoción, re-sincroniza el perfil.
-      if (creada?.rol_actualizado) {
-        try { await refresh?.() } catch { /* noop */ }
-        emitAuthChange()
-      }
+      await sincronizarRolSiCambio(creada, refresh)
     } catch (err) {
       if (!vivoRef.current) return
       setSubmitError(mensajeErrorPublicar(err))
