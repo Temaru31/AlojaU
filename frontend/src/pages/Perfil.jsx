@@ -16,6 +16,7 @@ import SeguridadTab from './perfil/SeguridadTab'
 import { useBorradorPerfil } from './perfil/useBorradorPerfil'
 import { useMisStats } from './perfil/useMisStats'
 import { actualizarPerfil, obtenerPerfil } from '../services/cuentaApi'
+import { mensajeDeError } from '../services/erroresApi'
 
 // Iconos del set propio (aria-hidden): misma gramática que PreferenceChip.
 const TABS = [
@@ -191,7 +192,7 @@ export default function Perfil() {
       // Toast flotante (visible sin importar el scroll) en vez de banner fijo.
       notifyToast('Cambios guardados en tu perfil')
     } catch (err) {
-      setError(err?.response?.data?.detail || 'Error al actualizar el perfil')
+      setError(mensajeDeError(err, 'Error al actualizar el perfil'))
     } finally {
       setSaving(false)
     }

@@ -6,6 +6,7 @@ import { useRef, useState } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import useFocusTrap from '../hooks/useFocusTrap'
 import { renovarPublicacion } from '../services/publicacionesApi'
+import { mensajeDeError } from '../services/erroresApi'
 
 /** Formatea un Date o string ISO a texto legible en español. */
 function formatFecha(fechaRaw) {
@@ -61,17 +62,14 @@ export default function RenovarModal({ pub, token, onClose, onRenovada }) {
       if (onRenovada) onRenovada(renovada)
     } catch (err) {
       const status = err?.response?.status
-      const detail = err?.response?.data?.detail
       if (status === 401) {
         setErrorMsg('Sesión vencida. Inicia sesión de nuevo.')
       } else if (status === 403) {
         setErrorMsg('No tienes permisos para renovar esta publicación.')
       } else if (status === 404) {
         setErrorMsg('La publicación no fue encontrada.')
-      } else if (detail) {
-        setErrorMsg(String(detail))
       } else {
-        setErrorMsg('Error de red o de servidor. La publicación NO fue renovada.')
+        setErrorMsg(mensajeDeError(err, 'Error de red o de servidor. La publicación NO fue renovada.'))
       }
       setEstado('error')
       // Criterio Gherkin: no presentar fecha renovada ante error

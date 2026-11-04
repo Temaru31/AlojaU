@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import useFocusTrap from '../hooks/useFocusTrap'
 import { reportarPublicacion } from '../services/publicacionesApi'
+import { mensajeDeError } from '../services/erroresApi'
 
 const MOTIVOS = [
   { value: 'POSIBLE_ESTAFA', label: 'Posible estafa' },
@@ -42,7 +43,7 @@ export default function ReportarModal({ publicacionId, titulo = '', onClose }) {
       } else if (status === 404) {
         setError('Esta publicación ya no existe.')
       } else {
-        setError(err?.response?.data?.detail || 'No se pudo enviar el reporte. Intenta de nuevo.')
+        setError(mensajeDeError(err, 'No se pudo enviar el reporte. Intenta de nuevo.'))
       }
     } finally {
       setSending(false)

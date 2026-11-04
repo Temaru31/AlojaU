@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Megaphone, Star } from 'lucide-react'
 import { getPlanesPublicidad, destacarPublicacion, getMisDestacados } from '../services/api'
+import { mensajeDeError } from '../services/erroresApi'
 import { useAuth } from '../contexts/AuthContext'
 import { listarMisPublicaciones } from '../services/publicacionesApi'
 
@@ -93,8 +94,8 @@ export default function Publicitar() {
     } catch (err) {
       const status = err?.response?.status
       setError(status === 409
-        ? (err?.response?.data?.detail || 'Este aviso ya tiene un destacado vigente o no está activo.')
-        : (err?.response?.data?.detail || 'No se pudo crear el destacado.'))
+        ? mensajeDeError(err, 'Este aviso ya tiene un destacado vigente o no está activo.')
+        : mensajeDeError(err, 'No se pudo crear el destacado.'))
     } finally {
       setEnviando(false)
     }

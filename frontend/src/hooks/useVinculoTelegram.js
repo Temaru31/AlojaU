@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { notifyToast } from '../components/Toast'
 import { desvincularTelegram, enlaceTelegram, obtenerPerfil } from '../services/cuentaApi'
+import { mensajeDeError } from '../services/erroresApi'
 
 export const TELEGRAM_POLL_MS = 3000
 export const TELEGRAM_POLL_MAX = 60 // 3 min
@@ -91,7 +92,7 @@ export default function useVinculoTelegram({
       if (esErrorSinBot(e)) {
         setModoLocal(true)
       } else if (!silencioso) {
-        setError(e?.response?.data?.detail || e?.message || 'No se pudo preparar el enlace. Reintenta.')
+        setError(mensajeDeError(e, e?.message || 'No se pudo preparar el enlace. Reintenta.'))
       }
       // Silencioso: conserva el enlace anterior hasta que expire.
     } finally {
@@ -131,7 +132,7 @@ export default function useVinculoTelegram({
       onDesvinculado?.()
       notifyToast('Telegram desvinculado y número liberado.')
     } catch (e) {
-      setError(e?.response?.data?.detail || e?.message || 'No se pudo desvincular. Intenta de nuevo.')
+      setError(mensajeDeError(e, e?.message || 'No se pudo desvincular. Intenta de nuevo.'))
       setConfirmaDesvincular(false)
     } finally {
       if (vivoRef.current) setDesvinculando(false)

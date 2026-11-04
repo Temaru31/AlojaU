@@ -6,6 +6,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Check } from 'lucide-react'
 import { solicitarOtp, verificarOtp } from '../services/cuentaApi'
+import { mensajeDeError } from '../services/erroresApi'
 
 // Pausa anti-spam tras pedir código (el backend limita a 5/15min).
 const COOLDOWN_S = 60
@@ -52,7 +53,7 @@ export default function OtpForm({ email, proposito = 'email_verify', onVerificad
         })
       }, 1000)
     } catch (e) {
-      setMensaje(e?.response?.data?.detail || 'No se pudo enviar el código.')
+      setMensaje(mensajeDeError(e, 'No se pudo enviar el código.'))
       setEstado('error')
     }
   }
@@ -73,7 +74,7 @@ export default function OtpForm({ email, proposito = 'email_verify', onVerificad
       onVerificado?.()
     } catch (err) {
       setEstado('error')
-      setMensaje(err?.response?.data?.detail || 'Código inválido o expirado.')
+      setMensaje(mensajeDeError(err, 'Código inválido o expirado.'))
     }
   }
 

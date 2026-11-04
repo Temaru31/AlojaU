@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom'
 import BreadcrumbsAdmin from '../components/BreadcrumbsAdmin'
 import { leerToken } from '../services/tokenStorage'
 import { listarReportesPendientes, resolverReporte } from '../services/adminApi'
+import { mensajeDeError } from '../services/erroresApi'
 
 const MOTIVO_LABEL = {
   POSIBLE_ESTAFA: 'Posible estafa',
@@ -54,7 +55,7 @@ export default function AdminReportes() {
       await resolverReporte(id, accion, token)
       setItems((prev) => prev.filter((x) => x.id !== id))
     } catch (err) {
-      setError(err?.response?.data?.detail || 'No se pudo actualizar el reporte.')
+      setError(mensajeDeError(err, 'No se pudo actualizar el reporte.'))
     } finally {
       setActing(null)
     }

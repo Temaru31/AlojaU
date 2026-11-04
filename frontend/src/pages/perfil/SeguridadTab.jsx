@@ -7,6 +7,7 @@ import { fortalezaPassword } from '../../utils/perfil'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import { notifyToast } from '../../components/Toast'
 import { cambiarPassword, eliminarCuenta, listarSesiones, revocarTodasLasSesiones } from '../../services/cuentaApi'
+import { mensajeDeError } from '../../services/erroresApi'
 
 // Pestaña Seguridad: contraseña, sesiones activas y borrado de cuenta.
 // `onCuentaCerrada` se llama cuando este token deja de valer (revocación o borrado).
@@ -44,7 +45,7 @@ export default function SeguridadTab({ token, perfil, onError, onCuentaCerrada }
       onCuentaCerrada()
       emitAuthChange()
     } catch (err) {
-      setError(err?.response?.data?.detail || 'No se pudo eliminar la cuenta.')
+      setError(mensajeDeError(err, 'No se pudo eliminar la cuenta.'))
     } finally {
       setEliminando(false)
     }
@@ -76,7 +77,7 @@ export default function SeguridadTab({ token, perfil, onError, onCuentaCerrada }
       emitAuthChange()
       try { window.location.replace('/') } catch { /* SSR/tests */ }
     } catch (err) {
-      setError(err?.response?.data?.detail || 'No se pudieron revocar las sesiones.')
+      setError(mensajeDeError(err, 'No se pudieron revocar las sesiones.'))
       setARevocar(false)
     } finally {
       setRevocando(false)
@@ -93,7 +94,7 @@ export default function SeguridadTab({ token, perfil, onError, onCuentaCerrada }
       setPwActual('')
       setPwNueva('')
     } catch (err) {
-      setError(err?.response?.data?.detail || 'No se pudo actualizar la contraseña.')
+      setError(mensajeDeError(err, 'No se pudo actualizar la contraseña.'))
     } finally {
       setPwSaving(false)
     }

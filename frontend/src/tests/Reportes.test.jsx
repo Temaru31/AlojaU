@@ -50,6 +50,17 @@ describe('T1 Reportes frontend', () => {
     expect(await screen.findByText(/Gracias, revisaremos/)).toBeInTheDocument()
   })
 
+  it('un 422 de validación muestra el mensaje en texto (no rompe el modal)', async () => {
+    api.post.mockRejectedValue({ response: { status: 422, data: { detail: [
+      { loc: ['body', 'detalle'], msg: 'Value error, no se permite HTML ni los caracteres < > (texto plano)', type: 'value_error' },
+    ] } } })
+    renderModal()
+    fireEvent.change(screen.getByLabelText(/Detalle/), { target: { value: 'el precio real es > al anunciado' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Enviar anónimo' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('no se permite HTML ni los caracteres < > (texto plano)')
+    expect(screen.getByRole('dialog', { name: 'Reportar aviso' })).toBeInTheDocument()
+  })
+
   it('modal cierra con tecla Escape (accesibilidad)', async () => {
     const onClose = vi.fn()
     render(<ReportarModal publicacionId={1} titulo="Apto test" onClose={onClose} />)

@@ -13,10 +13,21 @@ import PasoUbicacion from './publicar/PasoUbicacion'
 import PasoServiciosFotos from './publicar/PasoServiciosFotos'
 import { sanitizarTexto, formatearCOP, soloDigitos, leerBorrador, guardarBorrador, limpiarBorrador, validarPublicar, FORM_INICIAL, mezclarBorrador } from '../utils/publicar'
 import { crearPublicacion } from '../services/publicacionesApi'
+import { mensajeDeError } from '../services/erroresApi'
 
-// ---------------------------------------------------------------------------
-// Helpers exportados (testeables). Bloque 2 + Bloque 5.
-// ---------------------------------------------------------------------------
+const SERVIDOR_DESPERTANDO = 'El servidor está despertando (Render gratuito tarda hasta 50s). Tus datos quedaron guardados en el borrador: espera unos segundos y pulsa de nuevo «Enviar a revisión».'
+
+// Solo se usan si el backend no envía un texto propio en `detail`.
+const MENSAJE_POR_STATUS = {
+  401: 'No autorizado. Verifica tu token ARRENDADOR.',
+  403: 'Solo ARRENDADOR puede publicar (403). Si tu cuenta es de estudiante, se promueve sola al publicar; confirma tu correo en Mi Perfil si se solicita.',
+}
+
+function mensajeErrorPublicar(err) {
+  if (!err.response) return SERVIDOR_DESPERTANDO
+  const porDefecto = MENSAJE_POR_STATUS[err.response.status] || err.message || 'Error al publicar'
+  return mensajeDeError(err, porDefecto, { conCampo: true })
+}
 
 export default function Publicar() {
   const { refresh } = useAuth()
@@ -159,23 +170,9 @@ export default function Publicar() {
       }
     } catch (err) {
       if (!vivoRef.current) return
-      const detail = err.response?.data?.detail
-      if (Array.isArray(detail)) {
-        setSubmitError(detail.map(d => `${d.loc?.join('.')}: ${d.msg}`).join(' | '))
-      } else if (typeof detail === 'string') {
-        setSubmitError(detail)
-        setSubmitPhoneGate(err.response?.status === 400)
-      } else if (!err.response) {
-        setSubmitError('El servidor está despertando (Render gratuito tarda hasta 50s). Tus datos quedaron guardados en el borrador: espera unos segundos y pulsa de nuevo «Enviar a revisión».')
-      } else if (err.response?.status === 401) {
-        setSubmitError('No autorizado. Verifica tu token ARRENDADOR.')
-      } else if (err.response?.status === 403) {
-        const d = typeof detail === 'string' ? detail : ''
-        // Email sin confirmar o scope insuficiente.
-        setSubmitError(d || 'Solo ARRENDADOR puede publicar (403). Si tu cuenta es de estudiante, se promueve sola al publicar; confirma tu correo en Mi Perfil si se solicita.')
-      } else {
-        setSubmitError(err.message || 'Error al publicar')
-      }
+      setSubmitError(mensajeErrorPublicar(err))
+      // 400 con texto = falta verificar el teléfono: se ofrece el atajo.
+      setSubmitPhoneGate(err.response?.status === 400 && typeof err.response?.data?.detail === 'string')
     } finally {
       setSubmitting(false)
       enviandoRef.current = false

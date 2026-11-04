@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Hourglass } from 'lucide-react'
 import { isCancelError } from '../services/api'
+import { mensajeDeError } from '../services/erroresApi'
 import { useAuth, emitMiasChange } from '../contexts/AuthContext'
 import Paginacion from '../components/Paginacion'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -75,7 +76,7 @@ export default function MisPublicaciones() {
         try { await refresh?.() } catch { /* noop */ }
       }
     } catch (err) {
-      setError(err?.response?.data?.detail || 'No se pudo cambiar el estado.')
+      setError(mensajeDeError(err, 'No se pudo cambiar el estado.'))
       setAPausar(null)
     } finally {
       setCambiandoEstado(null)
@@ -97,7 +98,7 @@ export default function MisPublicaciones() {
         try { await refresh?.() } catch { /* noop */ }
       }
     } catch (err) {
-      setError(err?.response?.data?.detail || 'No se pudo eliminar la publicación.')
+      setError(mensajeDeError(err, 'No se pudo eliminar la publicación.'))
       setAEliminar(null)
     } finally {
       setEliminando(false)
