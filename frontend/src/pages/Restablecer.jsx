@@ -3,8 +3,8 @@
 // Uso: ruta /restablecer.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
-import { api } from '../services/api'
 import PasswordStrength, { passwordValidaV13 } from '../components/PasswordStrength'
+import { confirmarRecuperacion } from '../services/cuentaApi'
 
 export default function Restablecer() {
   const [params] = useSearchParams()
@@ -30,9 +30,7 @@ export default function Restablecer() {
     setEstado('guardando')
     setMensaje('')
     try {
-      await api.post('/api/auth/recovery/confirmar', {
-        email, token, nueva_password: nueva,
-      })
+      await confirmarRecuperacion(email, token, nueva)
       setEstado('ok')
       setMensaje('Contraseña restablecida. Tus sesiones anteriores fueron revocadas.')
       // Navegar solo si se sigue montado (limpieza al desmontar).

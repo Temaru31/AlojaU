@@ -4,15 +4,14 @@
 // Uso: ruta /admin/dashboard. Ej: métricas {total_publicaciones, pendientes, ...}.
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { api } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 import BreadcrumbsAdmin from '../components/BreadcrumbsAdmin'
 import { Flag, House, Megaphone, ScrollText, Settings, ShieldCheck } from 'lucide-react'
-import { authHead } from '../services/authHeaders'
 import AjustesSistema from './admin/AjustesSistema'
 import HistorialAdmin from './admin/HistorialAdmin'
 import PublicidadPendientes from './admin/PublicidadPendientes'
 import Stat from './admin/Stat'
+import { eliminarPublicacionAdmin, listarPendientes, moderarPublicacion, obtenerMetricas } from '../services/adminApi'
 
 
 export default function AdminDashboard() {
@@ -32,12 +31,12 @@ export default function AdminDashboard() {
     setError('')
     try {
       const [m, p] = await Promise.all([
-        api.get('/api/admin/metricas', authHead(token)),
-        api.get('/api/admin/pendientes', { params: { size: 10 }, ...authHead(token) }),
+        obtenerMetricas(token),
+        listarPendientes(token, { size: 10 }),
       ])
-      setMetricas(m.data)
-      setPendientes(p.data.items || [])
-      setTotalPen(p.data.total || 0)
+      setMetricas(m)
+      setPendientes(p.items || [])
+      setTotalPen(p.total || 0)
     } catch (err) {
       setError(err?.response?.status === 401 || err?.response?.status === 403
         ? 'Sin permiso de administrador.'
@@ -53,7 +52,7 @@ export default function AdminDashboard() {
     setActing(id)
     setError('')
     try {
-      await api.patch(`/api/admin/publicaciones/${id}`, { estado }, authHead(token))
+      await moderarPublicacion(id, estado, token)
       await cargar()
     } catch {
       setError('No se pudo cambiar el estado.')
@@ -66,7 +65,7 @@ export default function AdminDashboard() {
     setActing(id)
     setError('')
     try {
-      await api.delete(`/api/admin/publicaciones/${id}`, authHead(token))
+      await eliminarPublicacionAdmin(id, token)
       setConfirmDel(null)
       await cargar()
     } catch {

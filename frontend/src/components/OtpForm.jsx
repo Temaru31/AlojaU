@@ -5,7 +5,7 @@
 //   <OtpForm email="a@b.co" proposito="email_verify" onVerificado={...} />
 import { useState, useEffect, useRef } from 'react'
 import { Check } from 'lucide-react'
-import { api } from '../services/api'
+import { solicitarOtp, verificarOtp } from '../services/cuentaApi'
 
 // Pausa anti-spam tras pedir código (el backend limita a 5/15min).
 const COOLDOWN_S = 60
@@ -32,8 +32,8 @@ export default function OtpForm({ email, proposito = 'email_verify', onVerificad
     setMensaje('')
     try {
       // Transparencia: el backend dice por dónde viajó el código.
-      const r = await api.post('/api/auth/otp/solicitar', { email, proposito })
-      const c = r?.data?.canal === 'telegram' ? 'telegram' : 'email'
+      const r = await solicitarOtp(email, proposito)
+      const c = r?.canal === 'telegram' ? 'telegram' : 'email'
       setCanal(c)
       setMensaje(c === 'telegram'
         ? 'Código enviado a través de nuestro Bot oficial de Telegram (válido 10 minutos).'
@@ -67,7 +67,7 @@ export default function OtpForm({ email, proposito = 'email_verify', onVerificad
     setEstado('verificando')
     setMensaje('')
     try {
-      await api.post('/api/auth/otp/verificar', { email, codigo, proposito })
+      await verificarOtp(email, codigo, proposito)
       setEstado('ok')
       setMensaje('Correo verificado. Ya puedes publicar.')
       onVerificado?.()

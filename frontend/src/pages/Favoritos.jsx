@@ -6,7 +6,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Heart, House, X } from 'lucide-react'
-import { api } from '../services/api'
 import { useFavoritos } from '../contexts/FavoritosContext'
 import { useAuth } from '../contexts/AuthContext'
 import SmartImage from '../components/SmartImage'
@@ -14,7 +13,7 @@ import { formatDistancia } from '../utils/formatters'
 import { portadaUrl } from '../utils/portada'
 import { getEtiquetaTipo } from '../utils/tiposVivienda'
 import useTiposVivienda from '../hooks/useTiposVivienda'
-import { authHead } from '../services/authHeaders'
+import { obtenerPublicacion } from '../services/publicacionesApi'
 
 export default function Favoritos() {
   const { ids, remove, clear, count } = useFavoritos()
@@ -38,11 +37,9 @@ export default function Favoritos() {
     let isMounted = true
     setLoading(true)
 
-    const cfg = authToken ? authHead(authToken) : {}
     const fetchPromises = ids.map(async (id) => {
       try {
-        const res = await api.get(`/api/publicaciones/${id}`, cfg)
-        const pub = res.data
+        const pub = await obtenerPublicacion(id, { token: authToken })
 
         const ahora = new Date()
         const vencidaPorFecha = pub.fecha_expiracion

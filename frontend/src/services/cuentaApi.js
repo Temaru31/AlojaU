@@ -1,5 +1,6 @@
-// Cuenta del usuario: perfil, vinculación de Telegram y sesiones. Los
-// componentes llaman a estas funciones (devuelven `data`), no a las URLs.
+// Cuenta del usuario: acceso (login, registro, OTP, recuperación, Google),
+// perfil y avatar, vinculación de Telegram y sesiones. Los componentes llaman a
+// estas funciones (devuelven `data`), no a las URLs.
 import { api } from './api'
 import { authHead } from './authHeaders'
 
@@ -45,4 +46,50 @@ export function eliminarCuenta(confirmEmail, password, token) {
 
 export function cerrarSesion(token) {
   return api.post('/api/auth/logout', {}, authHead(token))
+}
+
+/** Login con correo y contraseña: `{ access_token, ... }`. */
+export async function loginConPassword(email, password) {
+  return (await api.post('/api/auth/login', { email, password })).data
+}
+
+export async function registrarCuenta(datos) {
+  return (await api.post('/api/auth/register', datos)).data
+}
+
+/** Crea o vincula la cuenta con los datos que devolvió Google (Supabase). */
+export async function loginConGoogle(datos) {
+  return (await api.post('/api/auth/oauth/google/callback', datos)).data
+}
+
+/** Pide un código de 6 dígitos; `{ canal: 'email' | 'telegram', ... }`. */
+export async function solicitarOtp(email, proposito) {
+  return (await api.post('/api/auth/otp/solicitar', { email, proposito })).data
+}
+
+export function verificarOtp(email, codigo, proposito) {
+  return api.post('/api/auth/otp/verificar', { email, codigo, proposito })
+}
+
+export async function solicitarRecuperacion(email) {
+  return (await api.post('/api/auth/recovery/solicitar', { email })).data
+}
+
+export function confirmarRecuperacion(email, token, nuevaPassword) {
+  return api.post('/api/auth/recovery/confirmar', { email, token, nueva_password: nuevaPassword })
+}
+
+/** Sube la foto de perfil; devuelve `{ foto_perfil_url }`. */
+export async function subirAvatar(archivo, token) {
+  const fd = new FormData()
+  fd.append('file', archivo)
+  const head = token ? authHead(token) : {}
+  return (await api.post('/api/auth/avatar', fd, {
+    ...head,
+    headers: { ...(head.headers || {}), 'Content-Type': 'multipart/form-data' },
+  })).data
+}
+
+export async function quitarAvatar(token) {
+  return (await api.delete('/api/auth/avatar', token ? authHead(token) : {})).data
 }

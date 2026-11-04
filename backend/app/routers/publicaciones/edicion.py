@@ -2,7 +2,6 @@
 import logging
 from fastapi import APIRouter
 from fastapi import Depends, Path, HTTPException, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_session
 from app.core.security import get_current_user, id_propietario, ClaimsUsuario
@@ -118,10 +117,7 @@ async def _reconciliar_fotos_urls(db: AsyncSession, pub_id: int, urls: list[str]
     """
     from app.models import ImagenPublicacion
 
-    actuales = (await db.execute(
-        select(ImagenPublicacion).where(
-            ImagenPublicacion.publicacion_id == pub_id)
-    )).scalars().all()
+    actuales = await repo.fotos_de_aviso(db, pub_id)
     por_url = {r.url: r for r in actuales}
     vistas = set(urls)
     for r in actuales:
@@ -139,10 +135,7 @@ async def _reconciliar_fotos_urls(db: AsyncSession, pub_id: int, urls: list[str]
         else:
             db.add(ImagenPublicacion(publicacion_id=pub_id, url=url, orden=i))
     await db.flush()
-    return (await db.execute(
-        select(ImagenPublicacion).where(ImagenPublicacion.publicacion_id == pub_id)
-        .order_by(ImagenPublicacion.orden.asc())
-    )).scalars().all()
+    return await repo.fotos_de_aviso(db, pub_id)
 
 
 class FotosSetIn(BaseModel):
@@ -186,10 +179,7 @@ async def reemplazar_fotos(
             raise HTTPException(status_code=403, detail="Solo el dueño puede editar fotos")
         await _reconciliar_fotos_urls(db, pub_id, urls)
         await db.commit()
-        filas = (await db.execute(
-            select(ImagenPublicacion).where(ImagenPublicacion.publicacion_id == pub_id)
-            .order_by(ImagenPublicacion.orden.asc())
-        )).scalars().all()
+        filas = await repo.fotos_de_aviso(db, pub_id)
         return {"id": pub_id,
                 "fotos": [r.url for r in filas],
                 "imagenes": [{"id": r.id, "url": r.url, "orden": r.orden} for r in filas],

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { api, isCancelError } from '../services/api'
+import { isCancelError } from '../services/api'
 
 import { CIUDADES_FALLBACK, etiquetaCiudad } from '../components/CiudadSelector'
 import { contarAvanzados } from '../components/Filtros'
@@ -10,6 +10,8 @@ import HeroBuscar from './buscar/HeroBuscar'
 import FiltrosMovil from './buscar/FiltrosMovil'
 import BarraFiltrosEscritorio from './buscar/BarraFiltrosEscritorio'
 import ResultadosBusqueda from './buscar/ResultadosBusqueda'
+import { obtenerCampus, obtenerCiudades } from '../services/catalogosApi'
+import { buscarPublicaciones } from '../services/publicacionesApi'
 
 function parseCiudadId(searchParams) {
   const raw = searchParams.get('ciudad_id')
@@ -203,13 +205,13 @@ export default function Buscar() {
   }, [filtros.min, filtros.max, filtros.tipo, filtros.servicios, queryString, setSearchParams])
 
   useEffect(() => {
-    api.get('/api/campus')
-      .then(r => setCampus(r.data))
+    obtenerCampus()
+      .then(setCampus)
       .catch(() => setCampus([{ id: 1, institucion: 'Universidad del Cauca', nombre_sede: 'Campus Tulcan' }]))
     // Catálogo de ciudades una sola vez (selector + píldora comparten).
-    api.get('/api/ciudades')
-      .then((r) => {
-        if (Array.isArray(r.data) && r.data.length > 0) setCiudades(r.data)
+    obtenerCiudades()
+      .then((lista) => {
+        if (Array.isArray(lista) && lista.length > 0) setCiudades(lista)
       })
       .catch(() => { /* fallback Popayán */ })
   }, [])
@@ -237,9 +239,8 @@ export default function Buscar() {
       q: qq.get('q') || undefined,
       page, size: 9
     }
-    api.get('/api/publicaciones', { params, signal: controller.signal })
-      .then(r => {
-        const data = r.data
+    buscarPublicaciones(params, { signal: controller.signal })
+      .then(data => {
         if (Array.isArray(data)) {
           setPubs(data); setTotal(data.length); setPages(1)
         } else {

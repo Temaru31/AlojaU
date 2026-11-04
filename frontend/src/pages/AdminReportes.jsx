@@ -2,10 +2,9 @@
 // Uso: ruta /admin/reportes. Ej: confirmar -> CONFIRMADO, descartar -> DESCARTADO.
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api } from '../services/api'
 import BreadcrumbsAdmin from '../components/BreadcrumbsAdmin'
-import { bearer } from '../services/authHeaders'
 import { leerToken } from '../services/tokenStorage'
+import { listarReportesPendientes, resolverReporte } from '../services/adminApi'
 
 const MOTIVO_LABEL = {
   POSIBLE_ESTAFA: 'Posible estafa',
@@ -25,10 +24,7 @@ export default function AdminReportes() {
     setLoading(true)
     setError('')
     try {
-      const token = leerToken()
-      const headers = bearer(token)
-      const r = await api.get('/api/reportes', { params: { estado: 'PENDIENTE' }, headers, signal })
-      setItems(r.data)
+      setItems(await listarReportesPendientes(leerToken(), { signal }))
     } catch (err) {
       if (err?.code === 'ERR_CANCELED') return
       const status = err?.response?.status
@@ -55,9 +51,7 @@ export default function AdminReportes() {
     setError('')
     try {
       const token = leerToken()
-      await api.patch(`/api/reportes/${id}`, { accion }, {
-        headers: bearer(token),
-      })
+      await resolverReporte(id, accion, token)
       setItems((prev) => prev.filter((x) => x.id !== id))
     } catch (err) {
       setError(err?.response?.data?.detail || 'No se pudo actualizar el reporte.')

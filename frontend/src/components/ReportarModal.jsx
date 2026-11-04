@@ -1,8 +1,8 @@
 // ReportarModal - denuncia anónima de avisos (HU-011).
 // Uso: <ReportarModal publicacionId titulo onClose /> en Detalle. Ej: <ReportarModal publicacionId={1} titulo="Apto" onClose={...} />.
 import { useState, useEffect, useRef } from 'react'
-import { api } from '../services/api'
 import useFocusTrap from '../hooks/useFocusTrap'
+import { reportarPublicacion } from '../services/publicacionesApi'
 
 const MOTIVOS = [
   { value: 'POSIBLE_ESTAFA', label: 'Posible estafa' },
@@ -33,11 +33,7 @@ export default function ReportarModal({ publicacionId, titulo = '', onClose }) {
     setSending(true)
     setError('')
     try {
-      await api.post('/api/reportes', {
-        publicacion_id: Number(publicacionId),
-        motivo,
-        detalle: detalle.trim() || undefined,
-      })
+      await reportarPublicacion(publicacionId, motivo, detalle.trim())
       setDone(true)
     } catch (err) {
       const status = err?.response?.status

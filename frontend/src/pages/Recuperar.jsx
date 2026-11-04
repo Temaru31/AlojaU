@@ -3,7 +3,7 @@
 // para e2e sin SMTP. Uso: ruta /recuperar.
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api } from '../services/api'
+import { solicitarRecuperacion } from '../services/cuentaApi'
 
 export default function Recuperar() {
   const [email, setEmail] = useState('')
@@ -17,9 +17,9 @@ export default function Recuperar() {
     setMensaje('')
     setDevToken('')
     try {
-      const r = await api.post('/api/auth/recovery/solicitar', { email })
-      setMensaje(r.data?.mensaje || 'Si el correo existe, enviamos un enlace válido 15 minutos.')
-      if (r.data?.dev_token) setDevToken(r.data.dev_token)
+      const r = await solicitarRecuperacion(email)
+      setMensaje(r?.mensaje || 'Si el correo existe, enviamos un enlace válido 15 minutos.')
+      if (r?.dev_token) setDevToken(r.dev_token)
       setEstado('ok')
     } catch (err) {
       setEstado('error')

@@ -6,12 +6,12 @@
 // Uso: <RegistroForm onRegistrado={(token,email)=>...} />
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { api } from '../services/api'
 import GoogleButton from './GoogleButton'
 import OtpForm from './OtpForm'
 import PasswordStrength, { passwordValidaV13 } from './PasswordStrength'
 import { CONSENTIMIENTO_TEXTO, TERMINOS_COMPLETOS, POLITICA_COMPLETA, LegalModal } from './Legal'
 import { signInWithGoogle } from '../services/supabaseClient'
+import { loginConPassword, registrarCuenta } from '../services/cuentaApi'
 
 export default function RegistroForm({ onRegistrado }) {
   const [form, setForm] = useState({ email: '', password: '', nombre: '', telefono: '' })
@@ -34,7 +34,7 @@ export default function RegistroForm({ onRegistrado }) {
     setEstado('enviando')
     setError('')
     try {
-      const r = await api.post('/api/auth/register', {
+      const creado = await registrarCuenta({
         email: form.email.trim(),
         password: form.password,
         nombre_completo: form.nombre.trim(),
@@ -42,13 +42,13 @@ export default function RegistroForm({ onRegistrado }) {
         telefono_whatsapp: telDigitos === '' ? null : telDigitos,
         acepto_tratamiento_datos: true,
       })
-      setEmailCreado(r.data.email)
+      setEmailCreado(creado.email)
       // Auto-login tras registro para UX continua (rol ESTUDIANTE).
       try {
-        const l = await api.post('/api/auth/login', { email: form.email.trim(), password: form.password })
-        onRegistrado?.(l.data.access_token, r.data.email)
+        const sesion = await loginConPassword(form.email.trim(), form.password)
+        onRegistrado?.(sesion.access_token, creado.email)
       } catch {
-        onRegistrado?.('', r.data.email)
+        onRegistrado?.('', creado.email)
       }
       setEstado('ok')
     } catch (err) {

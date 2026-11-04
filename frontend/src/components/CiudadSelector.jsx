@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Check } from 'lucide-react'
-import { api } from '../services/api'
+import { obtenerCiudades } from '../services/catalogosApi'
 
 const FALLBACK = [{ id: 1, nombre: 'Popayán', departamento: 'Cauca', slug: 'popayan' }]
 
@@ -27,10 +27,10 @@ export default function CiudadSelector({ value, onChange, inputId = 'ciudad', ci
     if (ciudades && ciudades.length > 0) { setRemotas(ciudades); return }
     if (ciudades) return
     let alive = true
-    api.get('/api/ciudades')
-      .then((r) => {
-        if (!alive || !Array.isArray(r.data) || r.data.length === 0) return
-        setRemotas(r.data)
+    obtenerCiudades()
+      .then((lista) => {
+        if (!alive || !Array.isArray(lista) || lista.length === 0) return
+        setRemotas(lista)
       })
       .catch(() => { /* fallback Popayán */ })
     return () => { alive = false }

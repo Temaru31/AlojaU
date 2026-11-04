@@ -1,12 +1,11 @@
 // Historial de auditoría admin (paginado).
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { api } from '../../services/api'
 import { formatearSesionFecha } from '../../utils/sesion'
 import { etiquetaEvento, describirAuditoria } from '../../utils/historial'
 
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { authHead } from '../../services/authHeaders'
+import { listarAuditoria } from '../../services/adminApi'
 
 // Historial de cambios (usa GET /api/admin/auditoria existente).
 export default function HistorialAdmin({ token }) {
@@ -23,12 +22,10 @@ export default function HistorialAdmin({ token }) {
     setLoading(true)
     setError('')
     try {
-      const r = await api.get('/api/admin/auditoria', {
-        params: { page: p, size: SIZE }, ...authHead(token),
-      })
-      setItems(r.data?.items || [])
-      setTotal(r.data?.total || 0)
-      setPages(Math.max(1, Math.ceil((r.data?.total || 0) / SIZE)))
+      const datos = await listarAuditoria(token, { page: p, size: SIZE })
+      setItems(datos?.items || [])
+      setTotal(datos?.total || 0)
+      setPages(Math.max(1, Math.ceil((datos?.total || 0) / SIZE)))
     } catch {
       setError('No se pudo cargar el historial.')
     } finally {

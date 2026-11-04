@@ -51,3 +51,15 @@ async def fetch_detail_campus_ref(db: AsyncSession, pub_id: int, campus_id: int)
     row = await db.get(PublicacionCampus, (pub_id, campus_id))
     dist = row.distancia_geodesica_m if row else None
     return dist, campus
+
+
+async def fotos_de_aviso(db, pub_id: int) -> list:
+    """Fotos del aviso ordenadas por `orden` (1 = portada)."""
+    from sqlalchemy import select
+
+    from app.models import ImagenPublicacion
+
+    return (await db.execute(
+        select(ImagenPublicacion).where(ImagenPublicacion.publicacion_id == pub_id)
+        .order_by(ImagenPublicacion.orden.asc())
+    )).scalars().all()

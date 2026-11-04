@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { api, isCancelError } from '../services/api'
+import { isCancelError } from '../services/api'
 import { useComparar } from '../contexts/CompararContext'
 import { useAuth } from '../contexts/AuthContext'
 import { formatDistancia, formatTiempoCaminando } from '../utils/formatters'
@@ -11,8 +11,9 @@ import { getEtiquetaTipo } from '../utils/tiposVivienda'
 import { etiquetaLugar } from '../components/CercanoA'
 import { guardarCampusFiltro, resolverCampusId } from '../utils/persistenciaBuscar'
 import useTiposVivienda from '../hooks/useTiposVivienda'
-import { authHead } from '../services/authHeaders'
 import { etiquetaEstado } from '../utils/estados'
+import { obtenerPublicacion } from '../services/publicacionesApi'
+import { obtenerCampus } from '../services/catalogosApi'
 
 function NoInformado() {
   return <span className="text-neutral-400 italic text-xs">No informado</span>
@@ -64,10 +65,10 @@ export default function Comparar() {
   useEffect(() => {
     if (!campusIdParam) { setCampusNombre(''); return }
     let vivo = true
-    api.get('/api/campus')
-      .then((r) => {
+    obtenerCampus()
+      .then((datos) => {
         if (!vivo) return
-        const lista = Array.isArray(r.data) ? r.data : []
+        const lista = Array.isArray(datos) ? datos : []
         const hit = lista.find((c) => String(c.id) === String(campusIdParam))
         setCampusNombre(hit ? etiquetaLugar(hit) : '')
       })
@@ -82,12 +83,8 @@ export default function Comparar() {
     if (comparar.length === 0) { setPubs([]); return }
     const controller = new AbortController()
     setLoading(true)
-    const cfg = {
-      signal: controller.signal,
-      ...(authToken ? authHead(authToken) : {}),
-    }
     Promise.all(comparar.map(id =>
-      api.get(`/api/publicaciones/${id}`, cfg).then(r => r.data).catch((err) => {
+      obtenerPublicacion(id, { token: authToken, signal: controller.signal }).catch((err) => {
         if (isCancelError(err) || controller.signal.aborted) return null
         return ({ id, titulo: `ID ${id} no disponible`, error: true })
       })

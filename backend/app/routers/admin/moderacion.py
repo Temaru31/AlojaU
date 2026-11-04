@@ -59,15 +59,7 @@ async def cambiar_estado(
         await _notificar_moderacion_in_app(db, p, payload.estado)
         await db.commit()
         dueno_id, titulo = p.usuario_id, p.titulo
-        stmt = (
-            select(Publicacion)
-            .options(
-                selectinload(Publicacion.imagenes),
-                selectinload(Publicacion.servicios),
-                selectinload(Publicacion.zona),
-            )
-            .where(Publicacion.id == pub_id)
-        )
+        stmt = repo.select_con_relaciones().where(Publicacion.id == pub_id)
         p = (await db.execute(stmt)).scalars().unique().one()
         rep_map, users_map, _ = await repo.fetch_page_aggregates(db, [p], None)
         # Aviso fuera de la app (no bloquea la respuesta si Telegram falla).

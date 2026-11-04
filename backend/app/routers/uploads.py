@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from app.core.security import get_current_user, require_arrendador, id_propietario, ClaimsUsuario
 from app.services.storage import StorageBackend, get_storage
 from app.db.session import get_session
-from sqlalchemy import select
+from app.repositories import publicacion_repo as repo
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db_utils import rollback_seguro
 from app.core.security import es_dueno_o_admin
@@ -200,10 +200,7 @@ async def eliminar_foto(
         await db.delete(img)
         await db.flush()
         # Compacta orden 1..N para que la portada siga siendo orden=1.
-        restantes = (await db.execute(
-            select(ImagenPublicacion).where(ImagenPublicacion.publicacion_id == pid)
-            .order_by(ImagenPublicacion.orden.asc())
-        )).scalars().all()
+        restantes = await repo.fotos_de_aviso(db, pid)
         for i, r in enumerate(restantes, start=1):
             r.orden = i
         await db.commit()
@@ -259,10 +256,7 @@ async def reordenar_fotos(
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
         if not await es_dueno_o_admin(user, pub.usuario_id, db):
             raise HTTPException(status_code=403, detail="Solo el dueño puede reordenar fotos")
-        fotos = (await db.execute(
-            select(ImagenPublicacion).where(
-                ImagenPublicacion.publicacion_id == data.publicacion_id)
-        )).scalars().all()
+        fotos = await repo.fotos_de_aviso(db, data.publicacion_id)
         por_id = {f.id: f for f in fotos}
         if set(data.orden_ids) != set(por_id.keys()):
             raise HTTPException(
@@ -311,10 +305,7 @@ async def vincular_fotos(
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
         if not await es_dueno_o_admin(user, pub.usuario_id, db):
             raise HTTPException(status_code=403, detail="Solo el dueño puede agregar fotos")
-        actuales = (await db.execute(
-            select(ImagenPublicacion).where(
-                ImagenPublicacion.publicacion_id == data.publicacion_id)
-        )).scalars().all()
+        actuales = await repo.fotos_de_aviso(db, data.publicacion_id)
         if len(actuales) + len(urls) > 10:
             raise HTTPException(status_code=422, detail="Máximo 10 fotos por aviso")
         base = max([r.orden for r in actuales], default=0)

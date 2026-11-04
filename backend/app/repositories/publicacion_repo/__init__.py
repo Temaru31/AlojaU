@@ -34,6 +34,7 @@ from app.repositories.publicacion_repo.lista import (  # noqa: F401
 from app.repositories.publicacion_repo.detalle import (  # noqa: F401
     fetch_detail_bundle,
     fetch_detail_campus_ref,
+    fotos_de_aviso,
 )
 from app.repositories.publicacion_repo.escritura import (  # noqa: F401
     create_persisted,

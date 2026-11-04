@@ -5,9 +5,9 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Megaphone, Star } from 'lucide-react'
-import { api, getPlanesPublicidad, destacarPublicacion, getMisDestacados } from '../services/api'
+import { getPlanesPublicidad, destacarPublicacion, getMisDestacados } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
-import { bearer } from '../services/authHeaders'
+import { listarMisPublicaciones } from '../services/publicacionesApi'
 
 const ESTADO_LABEL = {
   PENDIENTE: 'Pendiente de aprobación',
@@ -16,8 +16,9 @@ const ESTADO_LABEL = {
   RECHAZADO: 'Rechazado por el equipo',
 }
 
+// Acepta una respuesta de axios ({ data }) o ya los datos (servicios de dominio).
 function listaDe(res) {
-  const d = res?.data
+  const d = res && !Array.isArray(res) && 'data' in res ? res.data : res
   if (Array.isArray(d)) return d
   if (Array.isArray(d?.items)) return d.items
   return []
@@ -49,10 +50,7 @@ export default function Publicitar() {
     setError('')
     Promise.all([
       getPlanesPublicidad(),
-      api.get('/api/publicaciones/mias', {
-        params: { size: 50 },
-        headers: bearer(token),
-      }),
+      listarMisPublicaciones(token, { size: 50 }),
       getMisDestacados(token),
     ])
       .then(([rPlanes, rMias, rDest]) => {

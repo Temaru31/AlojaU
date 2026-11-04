@@ -1,9 +1,8 @@
 // Panel de ajustes del sistema (system_settings) agrupados por sección.
 import { useEffect, useState, useCallback } from 'react'
-import { api } from '../../services/api'
 import InfoTooltip from '../../components/InfoTooltip'
 import { Eye, Newspaper, Settings, ShieldCheck } from 'lucide-react'
-import { authHead } from '../../services/authHeaders'
+import { guardarAjuste, listarAjustes } from '../../services/adminApi'
 
 // Claves internas de PostgreSQL -> etiquetas de dominio.
 const SETTING_LABELS = {
@@ -101,10 +100,10 @@ export default function AjustesSistema({ token }) {
     setLoading(true)
     setError('')
     try {
-      const r = await api.get('/api/admin/automation/settings', authHead(token))
-      setSettings(r.data)
+      const ajustes = await listarAjustes(token)
+      setSettings(ajustes)
       const d = {}
-      for (const s of r.data) d[s.clave] = s.valor
+      for (const s of ajustes) d[s.clave] = s.valor
       setDraft(d)
     } catch (err) {
       setError(err?.response?.status === 401 || err?.response?.status === 403
@@ -122,10 +121,10 @@ export default function AjustesSistema({ token }) {
     setError('')
     setOk('')
     try {
-      const r = await api.patch(`/api/admin/automation/settings/${clave}`, { valor: String(draft[clave] ?? '') }, authHead(token))
-      setSettings((prev) => (prev || []).map((s) => (s.clave === clave ? r.data : s)))
-      setDraft((d) => ({ ...d, [clave]: r.data.valor }))
-      setOk(`"${etiquetaSetting(r.data).titulo}" guardado.`)
+      const guardado = await guardarAjuste(clave, draft[clave], token)
+      setSettings((prev) => (prev || []).map((s) => (s.clave === clave ? guardado : s)))
+      setDraft((d) => ({ ...d, [clave]: guardado.valor }))
+      setOk(`"${etiquetaSetting(guardado).titulo}" guardado.`)
     } catch (err) {
       setError(err?.response?.data?.detail || `No se pudo guardar "${etiquetaSetting({ clave }).titulo}".`)
     } finally {

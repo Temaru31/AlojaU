@@ -8,14 +8,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { MessageCircle, Send, X } from 'lucide-react'
-import { api } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
-import { fetchConfigPublica, leerConfigCache } from '../constants'
+import { leerConfigCache } from '../constants'
 import { formatCOP, formatDistancia } from '../utils/formatters'
 import BadgeConfianza from './BadgeConfianza'
 import { notifyToast } from './Toast'
 import useFocusTrap from '../hooks/useFocusTrap'
-import { bearer } from '../services/authHeaders'
+import { obtenerConfigPublica } from '../services/catalogosApi'
+import { conversar } from '../services/chatApi'
 
 const MENSAJE_BIENVENIDA = (
   'Hola, soy el asistente automático de AlojaU. Te ayudo a buscar vivienda '
@@ -98,7 +98,7 @@ export default function ChatWidget() {
       setHabilitado(cache.chat_enabled === true)
       return () => { vivo = false }
     }
-    fetchConfigPublica(() => api.get('/api/publicaciones/config-publica').then((r) => r.data))
+    obtenerConfigPublica()
       .then((cfg) => { if (vivo) setHabilitado(cfg?.chat_enabled === true) })
       .catch(() => { if (vivo) setHabilitado(false) })
     return () => { vivo = false }
@@ -126,11 +126,7 @@ export default function ChatWidget() {
     const nuevos = [...mensajes, { rol: 'user', texto: cuerpo }]
     setMensajes(nuevos)
     try {
-      const headers = token ? bearer(token) : undefined
-      const r = await api.post('/api/chat',
-        { mensaje: cuerpo, historial: ultimosTurnos(nuevos) },
-        headers ? { headers } : undefined)
-      const data = r.data || {}
+      const data = await conversar(cuerpo, ultimosTurnos(nuevos), token)
       if (data.deshabilitado) {
         setEstado('deshabilitado')
         setMensajes((m) => [...m, { rol: 'assistant', texto: data.respuesta || MENSAJE_ERROR }])

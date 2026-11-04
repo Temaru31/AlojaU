@@ -5,14 +5,13 @@
 // queda un archivo huérfano, nunca filas inconsistentes. El estado NO cambia.
 // Uso: {editando && <EditarPublicacionModal pub={editando} token={token} onClose={...} onSaved={...} />}
 import { useState, useEffect, useRef } from 'react'
-import { api } from '../services/api'
 import ContadorCaracteres from './ContadorCaracteres'
 import { LIMITES, estadoRango, RANGO_CLS } from '../constants'
 import { SERVICIOS } from '../utils/servicios'
 import useTiposVivienda, { TIPOS_FALLBACK } from '../hooks/useTiposVivienda'
 import useFocusTrap from '../hooks/useFocusTrap'
 import TipoIcono from './TipoIcono'
-import { authHead } from '../services/authHeaders'
+import { editarPublicacion, obtenerPublicacion, subirUnaFoto } from '../services/publicacionesApi'
 
 // Fallback local (mismo contrato slug). El hook lo reemplaza por /config-publica.
 const TIPOS = TIPOS_FALLBACK.map((t) => t.slug)
@@ -53,7 +52,6 @@ export default function EditarPublicacionModal({ pub, token, onClose, onSaved })
   // Buffer etiquetas: pre-pobladas desde el aviso; se envían en guardar.
   const [tags, setTags] = useState(() => [...(pub.servicios_ids || [])])
   const [tagsDirty, setTagsDirty] = useState(false)
-  const headers = authHead(token)
 
   // Copia inmutable con orden compacto (nunca muta objetos del estado previo).
   const reordenarLocal = (lista) => lista
@@ -71,8 +69,8 @@ export default function EditarPublicacionModal({ pub, token, onClose, onSaved })
   useEffect(() => {
     if (pub.imagenes) return
     let vivo = true
-    api.get(`/api/publicaciones/${pub.id}`, headers)
-      .then(r => { if (vivo) setFotos((r.data?.imagenes || []).map(f => ({ ...f }))) })
+    obtenerPublicacion(pub.id, { token })
+      .then(det => { if (vivo) setFotos((det?.imagenes || []).map(f => ({ ...f }))) })
       .catch(() => { /* sin fotos gestionables: solo escalares */ })
       .finally(() => { if (vivo) setFotosCargando(false) })
     return () => { vivo = false }
@@ -153,10 +151,10 @@ export default function EditarPublicacionModal({ pub, token, onClose, onSaved })
       // UN solo commit — escalares + etiquetas + fotos en UNA transacción
       // del backend. Todo o nada: sin mitades guardadas.
       if (fotosDirty) body.fotos = fotos.map(f => f.url)
-      const r = await api.patch(`/api/publicaciones/${pub.id}`, body, authHead(token))
+      const editado = await editarPublicacion(pub.id, body, token)
       // Estado canónico post-guardado (una lectura, como antes).
-      const det = await api.get(`/api/publicaciones/${pub.id}`, authHead(token))
-      onSaved?.({ ...r.data, fotos: det.data?.fotos || r.data?.fotos, imagenes: det.data?.imagenes })
+      const det = await obtenerPublicacion(pub.id, { token })
+      onSaved?.({ ...editado, fotos: det?.fotos || editado?.fotos, imagenes: det?.imagenes })
       setFotosDirty(false)
       setTagsDirty(false)
       onClose?.()
@@ -192,13 +190,7 @@ export default function EditarPublicacionModal({ pub, token, onClose, onSaved })
     try {
       const urls = []
       for (const f of files) {
-        const fd = new FormData()
-        fd.append('file', f)
-        const r = await api.post('/api/publicaciones/upload/una', fd, {
-          ...headers,
-          headers: { ...headers.headers, 'Content-Type': 'multipart/form-data' },
-        })
-        urls.push(...(r.data?.urls || []))
+        urls.push(...(await subirUnaFoto(f, token)))
       }
       if (urls.length === 0) throw new Error('sin urls')
       setFotos(prev => reordenarLocal([...prev, ...urls.map(url => ({ url, _nueva: true }))]))

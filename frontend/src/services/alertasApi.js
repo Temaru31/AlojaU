@@ -2,6 +2,7 @@
 // estas funciones, no la URL: si cambia el endpoint, se toca solo aquí.
 import { api } from './api'
 import { bearer } from './authHeaders'
+import { obtenerCampus } from './catalogosApi'
 
 const RUTA = '/api/busquedas-guardadas'
 
@@ -24,8 +25,8 @@ export function eliminarAlerta(id, token) {
 /** Catálogo de lugares para el selector; si falla, lista vacía (no bloquea la página). */
 export async function listarCampus() {
   try {
-    const r = await api.get('/api/campus')
-    return Array.isArray(r.data) ? r.data : []
+    const lista = await obtenerCampus()
+    return Array.isArray(lista) ? lista : []
   } catch {
     return []
   }
