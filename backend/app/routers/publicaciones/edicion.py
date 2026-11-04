@@ -85,7 +85,7 @@ async def editar_publicacion(
         p = await db.get(Publicacion, pub_id)
         if not p:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await es_dueno_o_admin(user, p.usuario_id):
+        if not await es_dueno_o_admin(user, p.usuario_id, db):
             raise HTTPException(status_code=403, detail="Solo el dueño puede editar")
         if servicios_nuevos is not None:
             await _exigir_servicios_existentes(db, servicios_nuevos)
@@ -182,7 +182,7 @@ async def reemplazar_fotos(
         pub = await db.get(Publicacion, pub_id)
         if not pub:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await es_dueno_o_admin(user, pub.usuario_id):
+        if not await es_dueno_o_admin(user, pub.usuario_id, db):
             raise HTTPException(status_code=403, detail="Solo el dueño puede editar fotos")
         await _reconciliar_fotos_urls(db, pub_id, urls)
         await db.commit()
@@ -263,7 +263,7 @@ async def eliminar_publicacion(
         p = await db.get(Publicacion, pub_id)
         if not p:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await es_dueno_o_admin(user, p.usuario_id):
+        if not await es_dueno_o_admin(user, p.usuario_id, db):
             raise HTTPException(status_code=403, detail="Solo el dueño puede eliminar")
         dueno_id = p.usuario_id
         await db.delete(p)
@@ -292,7 +292,7 @@ async def _aviso_pausable(db: AsyncSession, pub_id: int, user: ClaimsUsuario):
     p = await db.get(Publicacion, pub_id)
     if not p:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if not await es_dueno_o_admin(user, p.usuario_id):
+    if not await es_dueno_o_admin(user, p.usuario_id, db):
         raise HTTPException(status_code=403, detail="Solo el dueño puede cambiar el estado")
     if p.estado not in (EstadoPublicacion.ACTIVO, EstadoPublicacion.PAUSADO):
         raise HTTPException(

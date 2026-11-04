@@ -36,7 +36,7 @@ async def _db_rate_check_vista(db: AsyncSession, ip: str) -> None:
     except Exception:
         await rollback_seguro(db, "_db_rate_check_vista")
 
-async def _exigir_detalle_visible(p, dueno, current_user) -> None:
+async def _exigir_detalle_visible(p, dueno, current_user, db: AsyncSession) -> None:
     """404 (sin filtrar existencia) si el aviso no es visible para quien consulta."""
     # Ley 1581: dueño eliminado -> invisible salvo ADMIN
     # (la búsqueda ya los excluye; esto cubre acceso directo por URL).
@@ -44,7 +44,7 @@ async def _exigir_detalle_visible(p, dueno, current_user) -> None:
             and not (current_user and current_user.get("rol") == Rol.ADMIN)):
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
     # Detalle no-ACTIVO privado.
-    if p.estado != EstadoPublicacion.ACTIVO and not await es_dueno_o_admin(current_user, p.usuario_id):
+    if p.estado != EstadoPublicacion.ACTIVO and not await es_dueno_o_admin(current_user, p.usuario_id, db):
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
 
 
@@ -86,11 +86,11 @@ async def get_publicacion(
     HU-008: telefono_whatsapp solo si verificado + whatsapp_url wa.me
     PENDIENTE (y no-ACTIVO) es privado -> 404 salvo owner/admin.
     """
-    current_user = await get_optional_user(authorization)
+    current_user = await get_optional_user(authorization, db)
     try:
         p, reportes_activos, u, dist_detalle = await repo.fetch_detail_bundle(db, pub_id)
         if p:
-            await _exigir_detalle_visible(p, u, current_user)
+            await _exigir_detalle_visible(p, u, current_user, db)
             dist, campus_ref = dist_detalle, None
             if campus_id is not None:
                 dist, campus_ref = await _referencia_campus(db, pub_id, campus_id)
@@ -98,7 +98,7 @@ async def get_publicacion(
             _info = _dest_map.get(p.id)
             return view.build_detail(
                 p, reportes_activos, u, dist, campus_ref,
-                await repo.vistas_publicas(db) or await es_dueno_o_admin(current_user, p.usuario_id),
+                await repo.vistas_publicas(db) or await es_dueno_o_admin(current_user, p.usuario_id, db),
                 _info is not None,
                 _info["vence"] if _info else None,
             )
@@ -129,7 +129,7 @@ async def historial_aviso(
         pub = await db.get(Publicacion, pub_id)
         if not pub:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await es_dueno_o_admin(user, pub.usuario_id):
+        if not await es_dueno_o_admin(user, pub.usuario_id, db):
             raise HTTPException(status_code=403, detail="Solo el dueño puede ver el historial")
         rows = (await db.execute(
             select(PublicacionesAudit).where(PublicacionesAudit.publicacion_id == pub_id)

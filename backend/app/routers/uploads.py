@@ -11,11 +11,11 @@ import logging
 import os
 import uuid
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request, Path
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Path
 from pydantic import BaseModel
 
 from app.core.security import get_current_user, require_arrendador, id_propietario, ClaimsUsuario
-from app.services.storage import get_storage_backend
+from app.services.storage import StorageBackend, get_storage
 from app.db.session import get_session
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -98,9 +98,9 @@ def _check_upload_rate_limit(uid: int) -> None:
 
 @router.post("", response_model=UploadOut, summary="HU-005 Upload 3-10 imágenes (solo ARRENDADOR)")
 async def upload_fotos(
-    request: Request,
     files: List[UploadFile] = File(..., description="3-10 imágenes, cada una max 5MB, image/*"),
     user: ClaimsUsuario = Depends(require_arrendador),
+    backend: StorageBackend = Depends(get_storage),
 ):
     uid_t = id_propietario(user)
     _check_upload_rate_limit(uid_t)
@@ -108,10 +108,6 @@ async def upload_fotos(
         raise HTTPException(status_code=422, detail=f"Mínimo {MIN_FILES} fotos (HU-005 C2), recibidas {len(files)}")
     if len(files) > MAX_FILES:
         raise HTTPException(status_code=422, detail=f"Máximo {MAX_FILES} fotos, recibidas {len(files)}")
-
-    # Factory elige Local (dev) o Cloudinary (prod con CLOUDINARY_*).
-    base = str(request.base_url).rstrip("/")
-    backend = get_storage_backend(base_url=base)
 
     urls = []
     for file in files:
@@ -149,9 +145,9 @@ async def upload_fotos(
 
 @router.post("/una", response_model=UploadOut, summary="Dueño: subir 1 imagen (gestor multimedia)")
 async def upload_una_foto(
-    request: Request,
     file: UploadFile = File(..., description="1 imagen, max 5MB, image/*"),
     user: ClaimsUsuario = Depends(require_arrendador),
+    backend: StorageBackend = Depends(get_storage),
 ):
     """v15.2 paso 1 del gestor: UNA foto (el /upload grupal exige 3-10).
 
@@ -177,8 +173,6 @@ async def upload_una_foto(
         chunks.append(chunk)
     if size == 0:
         raise HTTPException(status_code=400, detail=f"Archivo {file.filename} vacío")
-    base = str(request.base_url).rstrip("/")
-    backend = get_storage_backend(base_url=base)
     filename = f"{uuid.uuid4().hex}{ext}"
     url = await asyncio.to_thread(backend.save, b"".join(chunks), filename, mime)
     return {"urls": [url], "count": 1}
@@ -200,7 +194,7 @@ async def eliminar_foto(
         if not img:
             raise HTTPException(status_code=404, detail="Foto no encontrada")
         pub = await db.get(Publicacion, img.publicacion_id)
-        if not pub or not await es_dueno_o_admin(user, pub.usuario_id):
+        if not pub or not await es_dueno_o_admin(user, pub.usuario_id, db):
             raise HTTPException(status_code=403, detail="Solo el dueño puede eliminar fotos")
         pid = img.publicacion_id
         await db.delete(img)
@@ -263,7 +257,7 @@ async def reordenar_fotos(
         pub = await db.get(Publicacion, data.publicacion_id)
         if not pub:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await es_dueno_o_admin(user, pub.usuario_id):
+        if not await es_dueno_o_admin(user, pub.usuario_id, db):
             raise HTTPException(status_code=403, detail="Solo el dueño puede reordenar fotos")
         fotos = (await db.execute(
             select(ImagenPublicacion).where(
@@ -315,7 +309,7 @@ async def vincular_fotos(
         pub = await db.get(Publicacion, data.publicacion_id)
         if not pub:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await es_dueno_o_admin(user, pub.usuario_id):
+        if not await es_dueno_o_admin(user, pub.usuario_id, db):
             raise HTTPException(status_code=403, detail="Solo el dueño puede agregar fotos")
         actuales = (await db.execute(
             select(ImagenPublicacion).where(

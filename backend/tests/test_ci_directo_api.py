@@ -248,10 +248,13 @@ def test_api_uploads_directos(stores_limpios):
         from app.routers import uploads as u
         from app.routers.uploads import OrdenIn, VincularIn
 
+        from app.services.storage import get_storage
+
         user = _h(1)
-        r = await u.upload_fotos(req(), [_archivo(f"f{i}.jpg") for i in range(3)], user)
+        storage = get_storage(req())
+        r = await u.upload_fotos([_archivo(f"f{i}.jpg") for i in range(3)], user, storage)
         assert r["count"] == 3 and len(r["urls"]) == 3
-        una = await u.upload_una_foto(req(), _archivo(), user)
+        una = await u.upload_una_foto(_archivo(), user, storage)
         assert una["count"] == 1
         vinc = await u.vincular_fotos(VincularIn(publicacion_id=1, urls=una["urls"]), db, user)
         assert vinc["total"] >= 4

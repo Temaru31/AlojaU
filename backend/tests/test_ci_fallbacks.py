@@ -4,7 +4,8 @@ El backend no tiene modo de datos en memoria: con PostgreSQL caído, todo lo
 que lo necesita responde 503 (igual en dev y en prod). Solo dos lecturas
 públicas son resilientes por diseño y responden 200 con datos estáticos:
 `/api/publicaciones/config-publica` (DEFAULTS) y `/api/housing-types`
-(catálogo del seed). El panel de ajustes admin lista los DEFAULTS.
+(catálogo del seed). El panel de ajustes admin lista los DEFAULTS si falla
+solo su lectura (con la BD caída entera, el rol ADMIN no es verificable: 503).
 
 Se fuerza la caída sobrescribiendo `get_session` con una sesión que falla.
 """
@@ -119,7 +120,19 @@ def test_admin_503_y_ajustes_por_defecto(db_muerta):
     assert client.post("/api/admin/publicaciones/bulk-approve", json={"ids": [1]},
                        headers=ha).status_code == BD_NO_DISPONIBLE
     assert client.post("/api/admin/automation/evaluar/1", headers=ha).status_code == BD_NO_DISPONIBLE
-    ajustes = client.get("/api/admin/automation/settings", headers=ha)
+    # Con la BD caída el rol ADMIN no es verificable: 503, nunca 403 ni datos.
+    assert client.get("/api/admin/automation/settings", headers=ha).status_code == BD_NO_DISPONIBLE
+
+
+def test_ajustes_por_defecto_si_falla_solo_la_lectura(db_muerta):
+    """Admin ya verificado y la lectura de ajustes falla: lista los DEFAULTS."""
+    from app.core.security import require_admin
+
+    app.dependency_overrides[require_admin] = lambda: {"id": 2, "rol": "ADMIN"}
+    try:
+        ajustes = client.get("/api/admin/automation/settings", headers=h_legacy("ADMIN", 2))
+    finally:
+        app.dependency_overrides.pop(require_admin, None)
     assert ajustes.status_code == 200
     assert any(s["clave"] == "dias_vigencia_publicacion" for s in ajustes.json())
 

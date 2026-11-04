@@ -16,7 +16,12 @@ from typing import Mapping, TypedDict
 import jwt  # OLA1: PyJWT (reemplaza python-jose abandonado); HS256 + require exp/sub
 import bcrypt as _bcrypt
 from app.core.logseguro import exc_resumen
-from fastapi import HTTPException, Header
+from contextlib import asynccontextmanager
+
+from fastapi import Depends, HTTPException, Header
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.db.session import get_session
 from .config import settings
 from app.core.flags import mock_enabled
 from app.core.dominio import Rol
@@ -120,6 +125,19 @@ MOCK_TOKENS = {
     },
 }
 
+@asynccontextmanager
+async def _sesion(db):
+    """La sesión inyectada en la petición o, en llamadas directas (scripts,
+    pruebas), una propia. FastAPI pasa a los guards la misma sesión que al
+    endpoint (Depends se resuelve una vez por petición)."""
+    if db is not None and hasattr(db, "execute"):
+        yield db
+        return
+    from app.db.session import AsyncSession as _Factory
+    async with _Factory() as propia:
+        yield propia
+
+
 async def _verificar_sesion_activa(claims: dict, db=None) -> None:
     """401 si el jti está revocado en `sesiones`.
 
@@ -132,15 +150,10 @@ async def _verificar_sesion_activa(claims: dict, db=None) -> None:
     try:
         from sqlalchemy import select as _select
         from app.models import Sesion as _Sesion
-        if db is None:
-            from app.db.session import AsyncSession as _Factory
-            async with _Factory() as _s:
-                res = await _s.execute(_select(_Sesion).where(_Sesion.jti == jti))
-                row = res.scalars().first()
-        else:
-            res = await db.execute(_select(_Sesion).where(_Sesion.jti == jti))
-            row = res.scalars().first()
-        if row is not None and bool(getattr(row, "revocado", False)):
+        # Solo la columna: no deja objetos ORM en la sesión del endpoint.
+        async with _sesion(db) as s:
+            revocado = (await s.execute(_select(_Sesion.revocado).where(_Sesion.jti == jti))).scalar()
+        if revocado:
             raise HTTPException(status_code=401, detail="Sesión revocada")
     except HTTPException:
         raise
@@ -149,7 +162,8 @@ async def _verificar_sesion_activa(claims: dict, db=None) -> None:
         raise HTTPException(status_code=503, detail="Servicio de autenticación no disponible")
 
 
-async def get_current_user(authorization: str = Header(None), db=None) -> ClaimsUsuario:
+async def get_current_user(authorization: str = Header(None),
+                           db: AsyncSession = Depends(get_session)) -> ClaimsUsuario:
     if not authorization or not authorization.strip():
         raise HTTPException(status_code=401, detail="Falta Bearer token")
     # Normaliza: "Bearer <token>" case-insensitive, permite espacios extra
@@ -177,13 +191,14 @@ async def get_current_user(authorization: str = Header(None), db=None) -> Claims
     await _verificar_sesion_activa(claims, db)
     return claims
 
-async def get_optional_user(authorization: str | None = Header(None)) -> ClaimsUsuario | None:
+async def get_optional_user(authorization: str | None = Header(None),
+                            db: AsyncSession = Depends(get_session)) -> ClaimsUsuario | None:
     # Auth opcional: ausente/inválido (401) -> None; otro error se propaga.
     # 503 de revocación SÍ se propaga (no enmascarar fail-closed).
     if not authorization or not authorization.strip():
         return None
     try:
-        return await get_current_user(authorization)
+        return await get_current_user(authorization, db)
     except HTTPException as e:
         if e.status_code == 401:
             return None
@@ -200,69 +215,77 @@ def clear_rol_cache_for_tests() -> None:
     _ROL_CACHE.clear()
 
 
-async def require_arrendador(authorization: str = Header(None)) -> ClaimsUsuario:
+async def require_arrendador(authorization: str = Header(None),
+                            db: AsyncSession = Depends(get_session)) -> ClaimsUsuario:
     """Guard ARRENDADOR. El rol real manda sobre el claim (anti-staleness):
     un token emitido antes de la auto-promoción dice ESTUDIANTE."""
-    u = await get_current_user(authorization)
+    u = await get_current_user(authorization, db)
     if u.get("rol") == Rol.ARRENDADOR:
         return u
     uid = u.get("id")
-    if isinstance(uid, int) and await _es_arrendador_real(uid):
+    if isinstance(uid, int) and await _es_arrendador_real(uid, db):
         con_rol = {**u, "rol": Rol.ARRENDADOR}
         con_rol.pop("scopes", None)  # los scopes se derivan del rol real
         return con_rol
     raise HTTPException(status_code=403, detail="Solo ARRENDADOR")
 
 
-async def require_admin(authorization: str = Header(None)) -> ClaimsUsuario:
+async def require_admin(authorization: str = Header(None),
+                        db: AsyncSession = Depends(get_session)) -> ClaimsUsuario:
     """Guard ADMIN para moderación. 401 sin token, 403 si no ADMIN.
 
     El claim ADMIN se REVALIDA contra BD en cada llamada (vigencia del JWT 2h):
     un ADMIN democionado pierde el panel de inmediato. Un claim no-ADMIN da 403
-    sin consultar (nadie se promueve solo). Sin rol verificable en BD -> 403.
+    sin consultar (nadie se promueve solo). Usuario inexistente -> 403; BD caída -> 503 (fail-closed).
     """
-    u = await get_current_user(authorization)
+    u = await get_current_user(authorization, db)
     if u.get("rol") != Rol.ADMIN:
         raise HTTPException(status_code=403, detail="Solo ADMIN")
     uid = u.get("id")
     if not isinstance(uid, int):
         raise HTTPException(status_code=403, detail="Solo ADMIN")
     try:
-        rol = await _rol_en_bd(uid)
+        rol = await _rol_en_bd(uid, db)
     except Exception as e:
-        logger.warning("[security] verificación de rol ADMIN falló: %s", exc_resumen(e))
-        raise HTTPException(status_code=403, detail="Solo ADMIN")
+        raise _rol_no_verificable("ADMIN", e)
     if rol != Rol.ADMIN:
         raise HTTPException(status_code=403, detail="Solo ADMIN")
     return {**u, "rol": Rol.ADMIN}
 
 
-async def _es_arrendador_real(uid: int) -> bool:
-    """Caché positiva (60s) o rol actual en BD; si la BD falla, se deniega."""
+async def _es_arrendador_real(uid: int, db=None) -> bool:
+    """Caché positiva (60s) o rol actual en BD; si la BD falla, 503 (fail-closed)."""
     ahora = time.monotonic()
     hit = _ROL_CACHE.get(uid)
     if hit and hit[0] == Rol.ARRENDADOR and (ahora - hit[1]) < _ROL_CACHE_TTL_S:
         return True
     try:
-        rol = await _rol_en_bd(uid)
+        rol = await _rol_en_bd(uid, db)
     except Exception as e:
-        logger.warning("[security] verificación de rol ARRENDADOR falló: %s", exc_resumen(e))
-        return False
+        raise _rol_no_verificable("ARRENDADOR", e)
     if rol != Rol.ARRENDADOR:
         return False
     _ROL_CACHE[uid] = (Rol.ARRENDADOR, ahora)
     return True
 
 
-async def _rol_en_bd(uid: int) -> str | None:
-    """Rol actual del usuario (None si no existe). Propaga los errores de BD."""
+def _rol_no_verificable(rol: str, e: Exception) -> HTTPException:
+    """BD caída al revalidar el rol: 503 fail-closed (se deniega, pero sin
+    disfrazar la caída de "no tienes permiso"), igual que la revocación."""
+    logger.error("[security] verificación de rol %s falló (fail-closed): %s", rol, exc_resumen(e))
+    return HTTPException(status_code=503, detail="Servicio de autenticación no disponible")
+
+
+async def _rol_en_bd(uid: int, db=None) -> str | None:
+    """Rol actual del usuario (None si no existe). Propaga los errores de BD.
+
+    Solo la columna `rol`: no deja un `Usuario` cacheado en la sesión del
+    endpoint (que luego podría leerlo con un FOR UPDATE y verlo rancio).
+    """
     from sqlalchemy import select
     from app.models import Usuario
-    from app.db.session import AsyncSession as SessionFactory
-    async with SessionFactory() as sesion:
-        res = await sesion.execute(select(Usuario).where(Usuario.id == uid))
-        usuario = res.scalars().first()
-        return usuario.rol if usuario is not None else None
+    async with _sesion(db) as s:
+        return (await s.execute(select(Usuario.rol).where(Usuario.id == uid))).scalar()
 
 
 # Revalidación ADMIN para editar avisos ajenos (caché 10s; el negativo no se cachea).
@@ -274,7 +297,7 @@ def clear_admin_revalid_for_tests() -> None:
     _ADMIN_REVALID_MEM.clear()
 
 
-async def es_dueno_o_admin(user: ClaimsUsuario | None, owner_id: int | None) -> bool:
+async def es_dueno_o_admin(user: ClaimsUsuario | None, owner_id: int | None, db=None) -> bool:
     """Dueño por id, o ADMIN revalidado contra BD (anti-stale, caché 10s).
 
     El claim ADMIN del JWT (2h) no basta: un admin democionado no debe seguir
@@ -295,7 +318,7 @@ async def es_dueno_o_admin(user: ClaimsUsuario | None, owner_id: int | None) -> 
     if hit and hit[1] and (ahora - hit[0]) < _ADMIN_REVALID_TTL_S:
         return True
     try:
-        es_admin = await _rol_en_bd(uid) == Rol.ADMIN
+        es_admin = await _rol_en_bd(uid, db) == Rol.ADMIN
     except Exception as e:
         logger.warning("[security] revalidación ADMIN falló (se deniega): %s", exc_resumen(e))
         return False

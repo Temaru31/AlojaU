@@ -3,7 +3,8 @@
 Diseño extensible (ver docs/NOTIFICACIONES.md):
 - Los routers NO hablan con Telegram/email directamente: emiten un evento
   (`notificar_cambio_estado(...)`, a futuro `notificar_nuevo_arriendo(...)`).
-- Cada canal implementa `CanalNotificacion.enviar(chat_o_destino, texto)`.
+- Cada canal implementa `CanalNotificacion`: su `nombre`, cómo resuelve el
+  destino del usuario (`destino_para`) y `enviar(destino, texto)`.
   Hoy: Telegram DM + Log. Futuro: Email (SMTP/Supabase), Web Push.
 - Las preferencias por usuario (`notificacion_preferencias`, futura tabla)
   decidirán qué canal usar; hoy: Telegram si hay chat vinculado, si no
@@ -33,13 +34,24 @@ MENSAJE_ESTADO_DUENO: dict[str, str] = {
 
 
 class CanalNotificacion(Protocol):
-    """Contrato de canal: enviar retorna True si el mensaje salió."""
+    """Contrato de canal. `destino_para` devuelve None si el usuario no es
+    alcanzable por este canal; `enviar` retorna True si el mensaje salió."""
+
+    nombre: str
+
+    async def destino_para(self, db, usuario_id: int) -> str | None: ...
 
     async def enviar(self, destino: str, texto: str) -> bool: ...
 
 
 class CanalTelegram:
     """DM por Bot API (async, sin bloquear el loop). Sin token/chat -> False."""
+
+    nombre = "telegram"
+
+    async def destino_para(self, db, usuario_id: int) -> str | None:
+        # Solo DM vinculado: sin chat el usuario no es alcanzable por Telegram.
+        return await _chat_vinculado(db, usuario_id)
 
     async def enviar(self, destino: str, texto: str) -> bool:
         try:
@@ -54,6 +66,11 @@ class CanalTelegram:
 
 class CanalLog:
     """Canal de respaldo/observabilidad: deja traza en logs (saneada)."""
+
+    nombre = "log"
+
+    async def destino_para(self, db, usuario_id: int) -> str | None:
+        return f"usuario:{usuario_id}"
 
     async def enviar(self, destino: str, texto: str) -> bool:
         logger.info(f"[notificaciones log] para {una_linea(destino, 40)}: {una_linea(texto, 120)}")
@@ -74,23 +91,19 @@ async def _chat_vinculado(db, usuario_id: int) -> str | None:
 
 async def despachar(db, usuario_id: int | None, texto: str,
                     canales: list | None = None) -> dict:
-    """Envía `texto` al usuario por los canales dados. Retorna {canal: ok}.
+    """Envía `texto` al usuario por los canales dados. Retorna {canal.nombre: ok}.
 
-    Nunca lanza: cada canal falla de forma aislada (best-effort).
+    Nunca lanza: cada canal falla de forma aislada (best-effort). Un canal
+    sin destino para el usuario (p. ej. Telegram sin chat vinculado) da False.
     """
     resultado: dict[str, bool] = {}
     if not isinstance(usuario_id, int) or not texto:
         return resultado
-    chat = await _chat_vinculado(db, usuario_id)
     for canal in (canales if canales is not None else [CanalTelegram()]):
-        nombre = type(canal).__name__
+        nombre = canal.nombre
         try:
-            destino = chat or f"usuario:{usuario_id}"
-            # Telegram exige chat vinculado; otros canales usan su destino.
-            if isinstance(canal, CanalTelegram) and not chat:
-                resultado[nombre] = False
-                continue
-            resultado[nombre] = bool(await canal.enviar(destino, texto))
+            destino = await canal.destino_para(db, usuario_id)
+            resultado[nombre] = bool(destino) and bool(await canal.enviar(destino, texto))
         except Exception as e:
             logger.warning(f"[notificaciones {nombre}] falló: {exc_resumen(e)}")
             resultado[nombre] = False
@@ -109,8 +122,8 @@ async def notificar_cambio_estado(db, usuario_id: int | None,
     texto = plantilla.format(titulo=titulo or "tu aviso")
     try:
         res = await despachar(db, usuario_id, texto)
-        if res.get("CanalTelegram"):
-            return "telegram"
+        if res.get(CanalTelegram.nombre):
+            return CanalTelegram.nombre
     except Exception as e:
         logger.warning(f"[notificaciones cambio-estado] falló: {exc_resumen(e)}")
     return "none"
