@@ -10,6 +10,7 @@ from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
 
 import pytest
+from app.core.errores import NoEncontrado
 from fastapi import HTTPException
 from sqlalchemy import select
 
@@ -97,8 +98,10 @@ def test_repo_ciudades_lecturas_y_errores(stores_limpios):
         assert await repo.resolver_ciudad_id(db, None, "popayan") == 1
         with pytest.raises(ValueError):
             await repo.resolver_ciudad_id(db, None, "bogota")
-        assert await repo.leer_ajuste(db, "dias_vigencia_publicacion", "30") == "30"
-        assert await repo.leer_ajuste(db, "clave_inexistente_xyz", "d") == "d"
+        from app.repositories import ajustes_repo
+        ajustes_repo.limpiar_cache()
+        assert await ajustes_repo.leer(db, "dias_vigencia_publicacion") == "30"
+        assert await ajustes_repo.leer_entero(db, "max_reportes_para_pausa_automatica") == 3
         assert isinstance(await repo.vistas_publicas(db), bool)
         conds = repo.lista_conditions(Publicacion, None, None, None, None, None)
         assert await repo.count_total(db, conds, None) >= 6
@@ -133,9 +136,8 @@ def test_repo_q_modos_y_campus(stores_limpios):
         assert total4 >= 0
         dist, lugar = await repo.fetch_detail_campus_ref(db, 1, campus.id)
         assert lugar is not None
-        with pytest.raises(HTTPException) as e:
+        with pytest.raises(NoEncontrado):
             await repo.fetch_detail_campus_ref(db, 1, 999999)
-        assert e.value.status_code == 404
     con_db(main)
 
 
@@ -146,11 +148,11 @@ def test_repo_validar_fks_y_persistir_y_renovar(stores_limpios):
 
         cids, sids = await repo.validate_fks(db, 1, [1, 1], [1])
         assert cids == [1] and sids == [1]
-        with pytest.raises(HTTPException):
+        with pytest.raises(NoEncontrado):
             await repo.validate_fks(db, 999999, [], [1])
-        with pytest.raises(HTTPException):
+        with pytest.raises(NoEncontrado):
             await repo.validate_fks(db, 1, [999999], [1])
-        with pytest.raises(HTTPException):
+        with pytest.raises(NoEncontrado):
             await repo.validate_fks(db, 1, [], [999999])
         payload = SimpleNamespace(
             zona_barrio_id=1, barrio_texto=None, titulo="Directa amplia con título largo",
@@ -162,7 +164,7 @@ def test_repo_validar_fks_y_persistir_y_renovar(stores_limpios):
         trust = view.initial_trust(payload, True)
         nueva = await repo.create_persisted(db, payload, 3, trust, [1], [1])
         assert nueva.estado == "PENDIENTE"
-        datos = await repo.renovar_publicacion(db, nueva.id, 3)
+        datos = await repo.renovar_publicacion(db, nueva, 3)
         assert datos["dias_agregados"] == 30
         # Vencida: renueva desde ahora y EXPIRADO vuelve a ACTIVO.
         from app.models import Publicacion
@@ -170,13 +172,15 @@ def test_repo_validar_fks_y_persistir_y_renovar(stores_limpios):
         p.fecha_expiracion = datetime.now(timezone.utc) - timedelta(days=1)
         p.estado = "EXPIRADO"
         await db.commit()
-        datos2 = await repo.renovar_publicacion(db, nueva.id, 3)
+        datos2 = await repo.renovar_publicacion(db, p, 3)
         assert datos2["estado"] == "ACTIVO"
+        # La regla "solo el dueño renueva" vive en el endpoint, no en el repositorio.
+        from app.routers.publicaciones.edicion import renovar_publicacion as renovar_endpoint
         with pytest.raises(HTTPException) as e403:
-            await repo.renovar_publicacion(db, nueva.id, 1)
+            await renovar_endpoint(nueva.id, db, {"id": 1, "rol": "ARRENDADOR"})
         assert e403.value.status_code == 403
         with pytest.raises(HTTPException) as e404:
-            await repo.renovar_publicacion(db, 999999, 3)
+            await renovar_endpoint(999999, db, {"id": 3, "rol": "ARRENDADOR"})
         assert e404.value.status_code == 404
     con_db(main)
 

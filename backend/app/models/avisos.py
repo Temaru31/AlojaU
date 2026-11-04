@@ -170,7 +170,7 @@ class PublicacionesAudit(Base):
 
 
 class VistaDedup(Base):
-    """v15.2 dedup diaria de vistas: 1 conteo por (aviso, IP, día).
+    """Dedup diaria de vistas: 1 conteo por (aviso, IP, día).
 
     Se guarda el hash SHA256 (nunca la IP en claro). Sin FK (las filas
     sobreviven a la purga del aviso; limpieza por antigüedad).
@@ -188,7 +188,7 @@ class VistaDedup(Base):
 
 
 class IdempotencyKey(Base):
-    """Bloque 2: respuestas guardadas para reintentos seguros (mig 016).
+    """Respuestas guardadas para reintentos seguros (mig 016).
 
     PK compuesta (clave, usuario_id, ruta): cierra la carrera entre lookup
     e insert (UNIQUE -> replay) y evita fugas entre usuarios.

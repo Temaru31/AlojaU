@@ -9,7 +9,7 @@
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.routers import admin_automation
+from app.repositories import ajustes_repo
 
 client = TestClient(app)
 
@@ -45,7 +45,7 @@ def test_settings_rbac():
 
 
 def test_settings_patch_valida_e_invalida_cache():
-    admin_automation.clear_settings_cache()
+    ajustes_repo.limpiar_cache()
     r = client.get("/api/admin/automation/settings", headers=ADMIN)
     assert r.status_code == 200
     # Segunda lectura viene del caché (mismo payload sin tocar DB).

@@ -11,9 +11,7 @@ Paquete por caso de uso; este módulo solo compone los sub-routers bajo
 from fastapi import APIRouter
 
 from app.core.config import settings  # noqa: F401  (tests: auth_router.settings)
-from app.routers.auth.comun import (  # noqa: F401
-    digitos_nacionales,
-)
+from app.core.normalizacion import digitos_nacionales  # noqa: F401
 from app.routers.auth.esquemas import (  # noqa: F401
     CuentaEliminarIn,
     CuentaRestaurarIn,

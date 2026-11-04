@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     # URL el bot responde deshabilitado, NUNCA usa la conexión principal.
     CHAT_ENABLED: bool = False
     CHAT_DATABASE_URL: str = ""
-    # Proveedor LLM (Fase 2): adapter OpenAI-compatible por urllib stdlib.
+    # Proveedor LLM: adapter OpenAI-compatible por urllib stdlib.
     # "fake" (default) = determinista sin red. La llave NUNCA va al repo:
     # solo env / Render dashboard. Sin llave/modelo/base → Fake (fallback).
     CHAT_LLM_PROVIDER: str = "fake"
@@ -128,7 +128,7 @@ class Settings(BaseSettings):
                 raise ValueError("Fail-closed: CORS_ORIGINS no puede contener * en prod")
             if TYPO_PROD_ORIGIN in self.cors_origins_list:
                 raise ValueError(
-                    f"Fail-closed: dominio con typo {TYPO_PROD_ORIGIN}; usa {CANONICAL_PROD_ORIGIN} (OLA2-M3)"
+                    f"Fail-closed: dominio con typo {TYPO_PROD_ORIGIN}; usa {CANONICAL_PROD_ORIGIN}"
                 )
         return self
 

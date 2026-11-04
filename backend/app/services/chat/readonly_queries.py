@@ -166,7 +166,7 @@ def _ordenar(stmt, ordenar: str, campus_id: int | None):
         return (stmt.join(C, C.c.publicacion_id == V.c.id)
                     .where(C.c.campus_id == int(campus_id))
                     .order_by(C.c.distancia_m.asc().nulls_last(), V.c.id.asc()))
-    # recientes (y confianza: el índice se calcula en Python, Fase 2)
+    # recientes (y confianza: el índice se calcula en Python)
     return stmt.order_by(V.c.fecha_renovacion.desc(), V.c.id.asc())
 
 

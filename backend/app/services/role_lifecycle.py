@@ -1,4 +1,4 @@
-"""v13.2 ciclo de vida dinámico de roles (RBAC reactivo).
+"""Ciclo de vida dinámico de roles (RBAC reactivo).
 
 Reglas (ver análisis V13.2):
 - Promoción 0->1: ESTUDIANTE que publica -> ARRENDADOR (ya existía el flujo;

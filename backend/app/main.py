@@ -16,6 +16,7 @@ import uuid
 from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.core.logseguro import exc_resumen
+from app.core.errores import ErrorDeDominio, status_http
 from app.routers import (
     admin, admin_automation, auth, campus, chat, ciudades, housing_types, matching,
     notificaciones, preferencias, publicaciones, publicidad, reportes, uploads, zonas,
@@ -121,7 +122,7 @@ app.add_middleware(
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    # Bloque 2B fix: el frontend envía Idempotency-Key en POST /publicaciones
+    # El frontend envía Idempotency-Key en POST /publicaciones
     # cross-origin (Vercel -> Render); sin allowlist el preflight falla.
     allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Request-ID"],
 )
@@ -194,8 +195,16 @@ def _contar_respuesta_denegada() -> None:
 # HTTPException (401/403/404/...) pasa INTACTA (mismo status/detail/headers):
 # Starlette también la dirigiría a un handler de `Exception` por MRO, así que
 # el passthrough explícito es obligatorio para no romper el contrato API.
+@app.exception_handler(ErrorDeDominio)
+async def error_de_dominio_handler(request: Request, exc: ErrorDeDominio):
+    """Errores de servicios y repositorios -> status según `core/errores.py`."""
+    return JSONResponse(status_code=status_http(exc), content={"detail": exc.mensaje})
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
+    if isinstance(exc, ErrorDeDominio):
+        return await error_de_dominio_handler(request, exc)
     if isinstance(exc, HTTPException):
         return JSONResponse(
             status_code=exc.status_code,

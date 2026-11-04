@@ -5,7 +5,7 @@ from app.core.config import settings
 def _telegram_send_message(chat_id: str, texto: str) -> bool:
     """Envía un DM por Bot API. Retorna True si Telegram respondió 200/ok.
 
-    Bloque 1: usado por el webhook (confirmación) y por OTP (códigos).
+    Usado por el webhook (confirmación) y por OTP (códigos).
     Nunca lanza: ante fallo retorna False y loguea (fallback a email).
     Delega en services/telegram (fuente única; este wrapper conserva el
     contrato para callers sync existentes).

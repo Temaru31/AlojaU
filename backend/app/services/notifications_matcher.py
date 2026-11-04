@@ -1,4 +1,4 @@
-"""Matching engine de alertas (Fase 2): aviso ACTIVO -> notificaciones in-app.
+"""Matching engine de alertas: aviso ACTIVO -> notificaciones in-app.
 
 Diseño (ver docs/ROADMAP_NOTIFICACIONES.md):
 - Set-based: UN solo INSERT..SELECT por aviso (sin N+1, sin loops Python).

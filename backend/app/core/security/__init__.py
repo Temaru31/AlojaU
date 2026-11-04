@@ -8,12 +8,13 @@ endpoints autenticados (exentos: tokens de prueba en dev y tokens sin jti).
 
 Paquete por responsabilidad; este módulo reexporta todo
 (los llamadores usan `app.core.security.X`):
-- claims: `ClaimsUsuario`, `id_propietario`.
+- claims: `ClaimsUsuario`, `id_propietario`, `id_o_none`.
 - passwords: hash/verificación bcrypt.
 - tokens: emisión/decodificación JWT y tokens de prueba.
 - guards: dependencias de autenticación/autorización y cachés de rol."""
 from app.core.security.claims import (  # noqa: F401
     ClaimsUsuario,
+    id_o_none,
     id_propietario,
 )
 from app.core.security.passwords import (  # noqa: F401

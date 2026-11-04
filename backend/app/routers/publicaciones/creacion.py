@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException, status, Header
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_session
+from app.core.errores import ErrorDeDominio
 from app.core.security import get_current_user, ClaimsUsuario, id_propietario
 from app.core.logseguro import exc_resumen
 from app.repositories import publicacion_repo as repo
@@ -198,7 +199,7 @@ async def crear_publicacion(
             if ganador is not None:  # carrera: gana la respuesta ya guardada
                 return ganador["cuerpo"]
         return resp
-    except HTTPException:
+    except (HTTPException, ErrorDeDominio):
         await rollback_seguro(db, "crear_publicacion")
         raise
     except Exception as e:

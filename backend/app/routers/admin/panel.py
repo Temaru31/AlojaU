@@ -25,7 +25,7 @@ async def metricas(
     admin: ClaimsUsuario = Depends(require_admin),
 ):
     """Totales para /admin/dashboard. Sin token 401, no-ADMIN 403.
-    v14.1: excluye cuentas en soft-delete (inventario visible real)."""
+    Excluye cuentas en soft-delete (inventario visible real)."""
     try:
         return MetricasOut(
             total_publicaciones=await repo_metricas.avisos(),
@@ -154,7 +154,7 @@ async def ver_auditoria(
     db: AsyncSession = Depends(get_session),
     admin: ClaimsUsuario = Depends(require_admin),
 ):
-    """v15.2 trazabilidad: por qué se aprobó/rechazó (humano o auto).
+    """Trazabilidad: por qué se aprobó/rechazó (humano o auto).
 
     Filtros opcionales por aviso y evento. Solo lectura.
 

@@ -215,10 +215,16 @@ async def renovar_publicacion(
     - EXPIRADO → pasa a ACTIVO. RECHAZADO/DESACTIVADO conservan su estado.
     - Genera fila en publicaciones_audit con evento='RENEWED'.
     """
+    from app.models import Publicacion
+
     uid = id_propietario(user)
     try:
-        datos = await repo.renovar_publicacion(db, pub_id, uid)
-        return datos
+        p = await db.get(Publicacion, pub_id)
+        if not p:
+            raise HTTPException(status_code=404, detail="Publicación no encontrada")
+        if p.usuario_id != uid:
+            raise HTTPException(status_code=403, detail="No tienes permisos para renovar esta publicación.")
+        return await repo.renovar_publicacion(db, p, uid)
     except HTTPException:
         await rollback_seguro(db, "renovar_publicacion")
         raise
@@ -238,7 +244,7 @@ async def eliminar_publicacion(
     db: AsyncSession = Depends(get_session),
     user: ClaimsUsuario = Depends(get_current_user),
 ):
-    """v13.2: el dueño (o ADMIN) elimina su aviso.
+    """El dueño (o ADMIN) elimina su aviso.
 
     Misma transacción: DELETE + conteo de vigentes + democión a ESTUDIANTE
     si el inventario llega a 0 (row-lock anti-carreras). Responde el rol
@@ -299,7 +305,7 @@ async def cambiar_estado_dueno(
     db: AsyncSession = Depends(get_session),
     user: ClaimsUsuario = Depends(get_current_user),
 ):
-    """v15.2 switch del arrendador. Solo dueño (o ADMIN).
+    """Switch del arrendador. Solo dueño (o ADMIN).
 
     Allowlist: ACTIVO <-> PAUSADO y solo desde esos mismos estados (nunca
     desde PENDIENTE/RECHAZADO: eso eludiría la moderación -> 409).

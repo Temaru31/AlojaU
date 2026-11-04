@@ -184,7 +184,7 @@ async def _tarjetas_desde_turno(db, usadas: list[dict]) -> list[dict]:
 
 
 def ruta_permitida(ruta: str) -> bool:
-    """Allowlist pública de rutas para acciones/tarjetas (Fase 2+)."""
+    """Allowlist pública de rutas para acciones/tarjetas."""
     r = str(ruta or "")
     if r in _RUTAS_PERMITIDAS:
         return True

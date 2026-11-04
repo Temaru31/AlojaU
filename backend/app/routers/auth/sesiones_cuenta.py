@@ -14,13 +14,9 @@ from app.db.session import get_session
 from app.core.dominio import Rol
 from app.core.normalizacion import normalizar_email
 from app.core.dominio import DIAS_GRACIA_CUENTA
-from app.routers.auth.comun import (
-    _emitir_token_con_sesion,
-    _gracia_restante,
-    _intentar_purgar_usuario,
-    _revocar_sesiones_usuario,
-    _verify_password_async,
-)
+from app.routers.auth.contrasenas import verify_password_async
+from app.routers.auth.purga_cuentas import gracia_restante, intentar_purgar_usuario
+from app.routers.auth.sesiones import emitir_token_con_sesion, revocar_sesiones_usuario
 from app.routers.auth.esquemas import CuentaEliminarIn, CuentaRestaurarIn, LoginOut, SesionOut
 
 logger = logging.getLogger("alojau.auth")
@@ -30,7 +26,7 @@ router = APIRouter()
 async def promover_a_arrendador(db: AsyncSession, usuario_id: int) -> Optional[str]:
     """Promueve a ARRENDADOR si era ESTUDIANTE. Retorna el rol final o None si el usuario no existe.
 
-    v13.2: delega en role_lifecycle (row-lock); NO hace commit (lo hace el
+    Delega en role_lifecycle (row-lock); NO hace commit (lo hace el
     endpoint dueño de la transacción).
     """
     from app.services import role_lifecycle as _rl
@@ -87,7 +83,7 @@ async def revocar_sesiones(user: ClaimsUsuario = Depends(get_current_user),
                            db: AsyncSession = Depends(get_session)):
     uid = user.get("id")
     try:
-        n = await _revocar_sesiones_usuario(db, uid)
+        n = await revocar_sesiones_usuario(db, uid)
         await db.commit()
         return {"mensaje": f"Sesiones revocadas: {n}. Vuelve a iniciar sesión.", "revocadas": n}
     except Exception as e:
@@ -132,7 +128,7 @@ async def logout_actual(
     if not jti or not isinstance(uid, int):
         return {"mensaje": "Sesión cerrada.", "revocadas": 0}
     try:
-        n = await _revocar_sesiones_usuario(db, uid, jti)
+        n = await revocar_sesiones_usuario(db, uid, jti)
         await db.commit()
         return {"mensaje": "Sesión cerrada.", "revocadas": n}
     except Exception as e:
@@ -153,7 +149,7 @@ async def logout_todas(
         return {"mensaje": "Sesiones revocadas.", "revocadas": 0}
     uid = claims["id"]
     try:
-        n = await _revocar_sesiones_usuario(db, uid)
+        n = await revocar_sesiones_usuario(db, uid)
         await db.commit()
         return {"mensaje": f"Sesiones revocadas: {n}. Vuelve a iniciar sesión.",
                 "revocadas": n}
@@ -185,10 +181,10 @@ async def eliminar_cuenta(data: CuentaEliminarIn,
             raise HTTPException(status_code=404, detail="Usuario no encontrado")
         prov = getattr(u, "auth_provider", "password") or "password"
         if prov == "password":
-            if not data.password or not await _verify_password_async(data.password, u.password_hash):
+            if not data.password or not await verify_password_async(data.password, u.password_hash):
                 raise HTTPException(status_code=403, detail="Contraseña incorrecta")
         u.eliminado_en = datetime.now(timezone.utc)
-        await _revocar_sesiones_usuario(db, u.id)
+        await revocar_sesiones_usuario(db, u.id)
         # La auto-eliminación queda auditada (misma transacción).
         from app.models import PublicacionesAudit
         db.add(PublicacionesAudit(
@@ -219,17 +215,17 @@ async def restaurar_cuenta(data: CuentaRestaurarIn, request: Request,
         u = res.scalars().first()
         if not u:
             raise HTTPException(status_code=404, detail="Cuenta no encontrada")
-        restan = _gracia_restante(u)
+        restan = gracia_restante(u)
         if restan is None:
             raise HTTPException(status_code=409, detail="La cuenta está activa, inicia sesión normal")
         if restan < 0:
-            await _intentar_purgar_usuario(db, u)
+            await intentar_purgar_usuario(db, u)
             raise HTTPException(status_code=410, detail="Gracia vencida: la cuenta fue purgada")
-        if not await _verify_password_async(data.password, u.password_hash):
+        if not await verify_password_async(data.password, u.password_hash):
             raise HTTPException(status_code=401, detail="Credenciales inválidas")
         u.eliminado_en = None
         await db.commit()
-        token = await _emitir_token_con_sesion(
+        token = await emitir_token_con_sesion(
             db, u, request, bool(getattr(u, "email_verificado", False)))
         return {"access_token": token, "token_type": "bearer",
                 "expires_in_hours": settings.ACCESS_TOKEN_EXPIRE_HOURS, "rol": u.rol, "mock": False}

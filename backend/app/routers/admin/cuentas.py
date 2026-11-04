@@ -18,7 +18,7 @@ async def purgar_cuentas(
     db: AsyncSession = Depends(get_session),
     admin: ClaimsUsuario = Depends(require_admin),
 ):
-    """v13.1: borra físicamente cuentas con eliminado_en > 30 días.
+    """Borra físicamente cuentas con eliminado_en > 30 días.
 
     Diseñado para cron (pg_cron o llamada diaria).
     """

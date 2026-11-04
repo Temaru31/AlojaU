@@ -62,7 +62,6 @@ class RegisterOut(BaseModel):
     id: int
     email: EmailStr
     rol: str
-    mock: bool = False
     email_verificado: bool = False
 
 
@@ -73,7 +72,6 @@ class LoginOut(BaseModel):
     # valor, así el contrato siempre refleja la expiración real (2h).
     expires_in_hours: int = settings.ACCESS_TOKEN_EXPIRE_HOURS
     rol: str
-    mock: bool = False
     # Callbacks Google: True si esta petición creó la cuenta (mostrar
     # "¡Cuenta creada!" en vez de "Bienvenido de nuevo"). Solo informativo.
     es_nuevo: bool = False
@@ -126,7 +124,7 @@ class GoogleCallbackIn(BaseModel):
 
     @model_validator(mode="after")
     def _nombre_nunca_vacio(self):
-        """v13.1: fallback seguro si Google devuelve nombre <2 caracteres
+        """Fallback seguro si Google devuelve nombre <2 caracteres
         (ej. 'a@domain.com'). Nunca 422: sanitiza en vez de rechazar."""
         nombre = (self.nombre_completo or "").strip()
         if len(nombre) < 2:

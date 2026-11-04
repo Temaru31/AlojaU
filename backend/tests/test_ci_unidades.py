@@ -80,7 +80,7 @@ def test_tokenizado_bordes_y_sinonimos():
 
 
 def test_storage_factory_y_cloudinary_sin_red(monkeypatch, tmp_path):
-    from fastapi import HTTPException
+    from app.core.errores import DatoInvalido, ErrorDeProveedor
     from app.core.config import settings as _s
     from app.services import storage as _st
 
@@ -89,9 +89,8 @@ def test_storage_factory_y_cloudinary_sin_red(monkeypatch, tmp_path):
                                               upload_dir=str(tmp_path)), _st.LocalStorageBackend)
     local = _st.LocalStorageBackend(str(tmp_path), "http://x/")
     assert local.save(b"data", "a.jpg", "image/jpeg") == "http://x/uploads/a.jpg"
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises(DatoInvalido):
         local.save(b"data", "../evil.jpg", "image/jpeg")
-    assert e.value.status_code == 400
 
     be = _st.CloudinaryStorageBackend(cloud_name="c", api_key="k", api_secret="s")
     assert be.name == "cloudinary"
@@ -102,18 +101,17 @@ def test_storage_factory_y_cloudinary_sin_red(monkeypatch, tmp_path):
 
     import cloudinary.uploader as _up
     monkeypatch.setattr(_up, "upload", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("red")))
-    with pytest.raises(HTTPException) as e2:
+    with pytest.raises(ErrorDeProveedor):
         be.save(b"data", "a.jpg", "image/jpeg")
-    assert e2.value.status_code == 502
     monkeypatch.setattr(_up, "upload", lambda *a, **k: {"url": "http://x/a.jpg"})
     assert be.save(b"data", "a.jpg", "image/jpeg") == "http://x/a.jpg"
 
 
 def test_cloudinary_sin_credenciales_503():
-    from fastapi import HTTPException
+    from app.core.errores import ServicioNoDisponible, status_http
     from app.services.storage import CloudinaryStorageBackend
 
     be = CloudinaryStorageBackend(cloud_name="", api_key="", api_secret="")
-    with pytest.raises(HTTPException) as e:
+    with pytest.raises(ServicioNoDisponible) as e:
         be.save(b"data", "a.jpg", "image/jpeg")
-    assert e.value.status_code == 503
+    assert status_http(e.value) == 503

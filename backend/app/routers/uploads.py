@@ -149,7 +149,7 @@ async def upload_una_foto(
     user: ClaimsUsuario = Depends(require_arrendador),
     backend: StorageBackend = Depends(get_storage),
 ):
-    """v15.2 paso 1 del gestor: UNA foto (el /upload grupal exige 3-10).
+    """Paso 1 del gestor: UNA foto (el /upload grupal exige 3-10).
 
     Misma validación (MIME+magic+5MB+uuid). Respuesta compatible UploadOut.
     """
@@ -184,7 +184,7 @@ async def eliminar_foto(
     db: AsyncSession = Depends(get_session),
     user: ClaimsUsuario = Depends(get_current_user),
 ):
-    """v15.2 gestión multimedia. Solo dueño o ADMIN. Reordena `orden`
+    """Gestión multimedia. Solo dueño o ADMIN. Reordena `orden`
     contiguamente tras borrar (misma transacción). 401/403/404."""
     from app.models import ImagenPublicacion, Publicacion
 
@@ -240,7 +240,7 @@ async def reordenar_fotos(
     db: AsyncSession = Depends(get_session),
     user: ClaimsUsuario = Depends(get_current_user),
 ):
-    """v15.2 portada = primer id de `orden_ids` (pasa a orden=1).
+    """Portada = primer id de `orden_ids` (pasa a orden=1).
 
     Transacción explícita con orden temporal alto para no violar
     UNIQUE(publicacion_id, orden) a mitad de camino. 401/403/404/422.
@@ -287,7 +287,7 @@ async def vincular_fotos(
     db: AsyncSession = Depends(get_session),
     user: ClaimsUsuario = Depends(get_current_user),
 ):
-    """v15.2 paso 2 del gestor multimedia: tras `POST /upload`, vincula las
+    """Paso 2 del gestor multimedia: tras `POST /upload`, vincula las
     URLs como filas `ImagenPublicacion` (orden consecutivo, máx 10 en total).
     Solo dueño o ADMIN. 401/403/404/422."""
     from app.models import ImagenPublicacion, Publicacion

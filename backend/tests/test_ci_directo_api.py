@@ -9,6 +9,7 @@ import uuid
 from io import BytesIO
 
 import pytest
+from app.core.errores import NoEncontrado
 from fastapi import HTTPException
 from starlette.datastructures import Headers
 from starlette.requests import Request
@@ -44,7 +45,7 @@ def con_db(fn):
 def stores_limpios():
     from app.routers import auth as _a
     from app.routers import reportes as _r
-    from app.routers import admin_automation as _auto
+    from app.repositories import ajustes_repo as _ajustes
     from app.routers import campus as _campus
     from app.routers import ciudades as _ciudades
     from app.routers import zonas as _zonas
@@ -56,7 +57,8 @@ def stores_limpios():
     _a._OTP_VERIFICAR.clear()
     _r._REPORT_ATTEMPTS.clear()
     _s.clear_rol_cache_for_tests()
-    for mod, fn in ((_auto, "clear_settings_cache"), (_campus, "clear_campus_cache"),
+    _ajustes.limpiar_cache()
+    for mod, fn in ((_campus, "clear_campus_cache"),
                     (_ciudades, "clear_ciudades_cache"), (_zonas, "clear_zonas_cache")):
         try:
             getattr(mod, fn)()
@@ -153,7 +155,7 @@ def test_api_list_mias_detail_flujos(stores_limpios):
         assert e404.value.status_code == 404
         ref = await r.get_publicacion(1, 1, db, None)
         assert ref["campus_ref"] is not None and ref["campus_ref"]["campus_id"] == 1
-        with pytest.raises(HTTPException):
+        with pytest.raises(NoEncontrado):  # campus inexistente: el handler global da 404
             await r.get_publicacion(1, 999999, db, None)
     con_db(main)
 
@@ -337,7 +339,7 @@ def test_api_automation_reportes_catalogos(stores_limpios):
             await am.editar_setting("clave_inexistente", SettingPatch(valor="1"), db, admin)
         ev = await am.evaluar_pub(1, db, admin)
         assert ev["evaluado"] is True
-        with pytest.raises(HTTPException):
+        with pytest.raises(NoEncontrado):
             await am.evaluar_pub(999999, db, admin)
 
         creado = await rep.crear_reporte(

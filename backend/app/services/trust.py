@@ -5,22 +5,13 @@ Ej: calcular_indice(..., telefono_verificado=True, num_fotos=4, dias_vigencia=5,
 from datetime import datetime, timezone
 from typing import Optional
 from app.core.config import settings
+from app.services.housing_types import FALLBACK_TIPOS
 
 DISCLAIMER = "Informativo, no garantiza seguridad. Verificar antes de pagar."
 
-_TIPOS_VALIDOS_ESTATICOS = {"HABITACION_FAMILIAR", "HABITACION_INDEPENDIENTE",
-                            "APARTAESTUDIO", "COMPARTIDO",
-                            "APARTAMENTO_COMPLETO", "HABITACION_PISO_COMPARTIDO"}
-
-
-def _tipos_validos() -> set[str]:
-    """Allowlist estática (los del seed) para cálculo sync sin I/O; la validación
-    de escritura usa la tabla housing_types (esta_activo=true) + caché 5min."""
-    try:
-        from app.services.housing_types import FALLBACK_TIPOS
-        return {t["slug"] for t in FALLBACK_TIPOS}
-    except Exception:
-        return _TIPOS_VALIDOS_ESTATICOS
+# Allowlist de los tipos del seed para un cálculo síncrono sin E/S; la validación
+# de escritura usa la tabla housing_types (esta_activo=true) con caché de 5 min.
+_TIPOS_VALIDOS = frozenset(t["slug"] for t in FALLBACK_TIPOS)
 
 
 def _texto_suficiente(texto: Optional[str]) -> bool:
@@ -33,7 +24,7 @@ def _puntos_completitud(*, canon_mensual, deposito_requerido, tipo_inmueble, reg
     crudo = (
         (10 if canon_mensual is not None and canon_mensual > 0 else 0)
         + (5 if deposito_requerido is not None else 0)  # 0 explícito cuenta
-        + (5 if tipo_inmueble in _tipos_validos() else 0)
+        + (5 if tipo_inmueble in _TIPOS_VALIDOS else 0)
         + (5 if _texto_suficiente(reglas_convivencia) else 0)
         + (5 if _texto_suficiente(direccion_referencial) else 0)
         + (10 if servicios_ids and len(servicios_ids) >= 1 else 0)

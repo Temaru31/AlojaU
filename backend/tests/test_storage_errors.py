@@ -9,7 +9,7 @@ import sys
 import types
 
 import pytest
-from fastapi import HTTPException
+from app.core.errores import ErrorDeProveedor, ServicioNoDisponible
 
 from app.core.config import settings
 from app.services.storage import CloudinaryStorageBackend
@@ -48,22 +48,19 @@ def test_cloudinary_sin_credenciales_503(monkeypatch):
     monkeypatch.setattr(settings, "CLOUDINARY_API_KEY", "")
     monkeypatch.setattr(settings, "CLOUDINARY_API_SECRET", "")
     b = CloudinaryStorageBackend(cloud_name="", api_key="", api_secret="")
-    with pytest.raises(HTTPException) as ei:
+    with pytest.raises(ServicioNoDisponible):
         b.save(b"x", "a.jpg", "image/jpeg")
-    assert ei.value.status_code == 503
 
 
 def test_cloudinary_fallo_subida_502(monkeypatch):
     _instalar_fake(monkeypatch, exc=RuntimeError("corte de red"))
     b = CloudinaryStorageBackend(cloud_name="demo", api_key="k", api_secret="s")
-    with pytest.raises(HTTPException) as ei:
+    with pytest.raises(ErrorDeProveedor):
         b.save(b"x", "a.jpg", "image/jpeg")
-    assert ei.value.status_code == 502
 
 
 def test_cloudinary_sin_url_502(monkeypatch):
     _instalar_fake(monkeypatch, upload={})
     b = CloudinaryStorageBackend(cloud_name="demo", api_key="k", api_secret="s")
-    with pytest.raises(HTTPException) as ei:
+    with pytest.raises(ErrorDeProveedor):
         b.save(b"x", "a.jpg", "image/jpeg")
-    assert ei.value.status_code == 502

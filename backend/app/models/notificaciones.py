@@ -21,7 +21,7 @@ from app.models.base import Base
 
 
 class TelegramVinculo(Base):
-    """Bloque 2: nonces HMAC de vinculación persistentes (mig 015).
+    """Nonces HMAC de vinculación persistentes (mig 015).
 
     La memoria (_TELEGRAM_VINCULOS) queda como L1/dev; PG es la fuente de
     verdad que sobrevive redeploys e instancias múltiples.
@@ -44,7 +44,7 @@ class TelegramVinculo(Base):
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-# Notificaciones in-app + búsquedas guardadas (mig 019, Fase 1).
+# Notificaciones in-app + búsquedas guardadas (mig 019).
 # Campanita: bandeja por usuario_id; matcher futuro filtra por precio,
 # campus/tipo/zona y servicios (@>); dedupe por evento_id (reintentos
 # seguros sin prohibir repeticiones futuras del mismo tipo).

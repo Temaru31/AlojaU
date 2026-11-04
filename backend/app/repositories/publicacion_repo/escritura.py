@@ -2,27 +2,26 @@
 from typing import List
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dominio import EstadoPublicacion
+from app.core.errores import NoEncontrado
 
 
 async def validate_fks(db: AsyncSession, zona_id: int | None, campus_ids: List[int], servicios_ids: List[int]):
-    """FK estrictas + dedup (404 si zona/campus inactivo/servicio falta).
+    """FK estrictas + dedup (NoEncontrado si zona/campus inactivo/servicio falta).
     zona_id None = barrio libre (barrio_texto): se omite el chequeo.
     Uso: routers/publicaciones.py::crear_publicacion. Ej: cids, sids = await validate_fks(db, 1, [1, 1], [1])."""
-    from fastapi import HTTPException
-
     from app.models import CampusUniversitario, ServicioCatalogo, ZonaBarrio
 
     campus_ids = list(dict.fromkeys(campus_ids or []))
     servicios_ids = list(dict.fromkeys(servicios_ids))
     if zona_id is not None and not await db.get(ZonaBarrio, zona_id):
-        raise HTTPException(status_code=404, detail=f"zona_barrio_id {zona_id} no existe")
+        raise NoEncontrado(f"zona_barrio_id {zona_id} no existe")
     for cid in campus_ids:
         campus = await db.get(CampusUniversitario, cid)
         if not campus or not campus.activo:
-            raise HTTPException(status_code=404, detail=f"campus_id {cid} no existe o inactivo")
+            raise NoEncontrado(f"campus_id {cid} no existe o inactivo")
     for sid in servicios_ids:
         if not await db.get(ServicioCatalogo, sid):
-            raise HTTPException(status_code=404, detail=f"servicio_id {sid} no existe")
+            raise NoEncontrado(f"servicio_id {sid} no existe")
     return campus_ids, servicios_ids
 
 
@@ -128,31 +127,20 @@ def _detalle_renovacion(fecha_anterior, fecha_nueva, estado_anterior, estado_nue
     }, ensure_ascii=False)
 
 
-async def renovar_publicacion(db: AsyncSession, pub_id: int, user_id: int) -> dict:
-    """Renueva la vigencia de una publicación por exactamente 30 días calendario (PA-01).
+async def renovar_publicacion(db: AsyncSession, p, user_id: int) -> dict:
+    """Renueva la vigencia del aviso `p` por exactamente 30 días calendario (PA-01).
 
-    Reglas de negocio:
-    - Solo el dueño (user_id == publicacion.usuario_id) puede renovar.
+    Quien llama ya comprobó que `user_id` puede renovarlo (el dueño).
     - Si fecha_expiracion > ahora: nueva = fecha_expiracion_actual + 30 días.
     - Si ya venció:               nueva = ahora + 30 días.
     - EXPIRADO → estado pasa a ACTIVO tras la renovación.
     - RECHAZADO / DESACTIVADO → fecha renovada pero estado no cambia.
-    - Genera fila de auditoría con evento 'RENEWED'.
+    - Genera fila de auditoría con evento 'RENEWED' y hace commit.
 
-    Uso: routers/publicaciones.py::renovar.
-    Ej: datos = await renovar_publicacion(db, 25, 1).
     Retorna dict con id, estado, fecha_expiracion_anterior, fecha_expiracion_nueva, dias_agregados, mensaje.
-    Lanza HTTPException 404/403.
     """
     from datetime import datetime, timezone
-    from fastapi import HTTPException
-    from app.models import Publicacion, PublicacionesAudit as PublicacionAudit
-
-    p = await db.get(Publicacion, pub_id)
-    if not p:
-        raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if p.usuario_id != user_id:
-        raise HTTPException(status_code=403, detail="No tienes permisos para renovar esta publicación.")
+    from app.models import PublicacionesAudit as PublicacionAudit
 
     now = datetime.now(timezone.utc)
     fecha_anterior = p.fecha_expiracion
