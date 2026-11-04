@@ -2,7 +2,6 @@
 import logging
 from fastapi import APIRouter
 from fastapi import Depends, Path, HTTPException, status
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_session
 from app.core.security import get_current_user, id_propietario, ClaimsUsuario
@@ -85,7 +84,7 @@ async def editar_publicacion(
         p = await db.get(Publicacion, pub_id)
         if not p:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await es_dueno_o_admin(user, p.usuario_id):
+        if not await es_dueno_o_admin(user, p.usuario_id, db):
             raise HTTPException(status_code=403, detail="Solo el dueño puede editar")
         if servicios_nuevos is not None:
             await _exigir_servicios_existentes(db, servicios_nuevos)
@@ -118,10 +117,7 @@ async def _reconciliar_fotos_urls(db: AsyncSession, pub_id: int, urls: list[str]
     """
     from app.models import ImagenPublicacion
 
-    actuales = (await db.execute(
-        select(ImagenPublicacion).where(
-            ImagenPublicacion.publicacion_id == pub_id)
-    )).scalars().all()
+    actuales = await repo.fotos_de_aviso(db, pub_id)
     por_url = {r.url: r for r in actuales}
     vistas = set(urls)
     for r in actuales:
@@ -139,10 +135,7 @@ async def _reconciliar_fotos_urls(db: AsyncSession, pub_id: int, urls: list[str]
         else:
             db.add(ImagenPublicacion(publicacion_id=pub_id, url=url, orden=i))
     await db.flush()
-    return (await db.execute(
-        select(ImagenPublicacion).where(ImagenPublicacion.publicacion_id == pub_id)
-        .order_by(ImagenPublicacion.orden.asc())
-    )).scalars().all()
+    return await repo.fotos_de_aviso(db, pub_id)
 
 
 class FotosSetIn(BaseModel):
@@ -182,14 +175,11 @@ async def reemplazar_fotos(
         pub = await db.get(Publicacion, pub_id)
         if not pub:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await es_dueno_o_admin(user, pub.usuario_id):
+        if not await es_dueno_o_admin(user, pub.usuario_id, db):
             raise HTTPException(status_code=403, detail="Solo el dueño puede editar fotos")
         await _reconciliar_fotos_urls(db, pub_id, urls)
         await db.commit()
-        filas = (await db.execute(
-            select(ImagenPublicacion).where(ImagenPublicacion.publicacion_id == pub_id)
-            .order_by(ImagenPublicacion.orden.asc())
-        )).scalars().all()
+        filas = await repo.fotos_de_aviso(db, pub_id)
         return {"id": pub_id,
                 "fotos": [r.url for r in filas],
                 "imagenes": [{"id": r.id, "url": r.url, "orden": r.orden} for r in filas],
@@ -263,7 +253,7 @@ async def eliminar_publicacion(
         p = await db.get(Publicacion, pub_id)
         if not p:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await es_dueno_o_admin(user, p.usuario_id):
+        if not await es_dueno_o_admin(user, p.usuario_id, db):
             raise HTTPException(status_code=403, detail="Solo el dueño puede eliminar")
         dueno_id = p.usuario_id
         await db.delete(p)
@@ -292,7 +282,7 @@ async def _aviso_pausable(db: AsyncSession, pub_id: int, user: ClaimsUsuario):
     p = await db.get(Publicacion, pub_id)
     if not p:
         raise HTTPException(status_code=404, detail="Publicación no encontrada")
-    if not await es_dueno_o_admin(user, p.usuario_id):
+    if not await es_dueno_o_admin(user, p.usuario_id, db):
         raise HTTPException(status_code=403, detail="Solo el dueño puede cambiar el estado")
     if p.estado not in (EstadoPublicacion.ACTIVO, EstadoPublicacion.PAUSADO):
         raise HTTPException(

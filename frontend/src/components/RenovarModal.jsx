@@ -4,9 +4,8 @@
 // Uso: <RenovarModal pub={pub} token={token} onClose={() => ...} onRenovada={(upd) => ...} />
 import { useRef, useState } from 'react'
 import { TriangleAlert } from 'lucide-react'
-import { api } from '../services/api'
 import useFocusTrap from '../hooks/useFocusTrap'
-import { authHead } from '../services/authHeaders'
+import { renovarPublicacion } from '../services/publicacionesApi'
 
 /** Formatea un Date o string ISO a texto legible en español. */
 function formatFecha(fechaRaw) {
@@ -56,14 +55,10 @@ export default function RenovarModal({ pub, token, onClose, onRenovada }) {
     setEstado('loading')
     setErrorMsg('')
     try {
-      const res = await api.patch(
-        `/api/publicaciones/${pub.id}/renovar`,
-        {},
-        authHead(token),
-      )
-      setResultado(res.data)
+      const renovada = await renovarPublicacion(pub.id, token)
+      setResultado(renovada)
       setEstado('success')
-      if (onRenovada) onRenovada(res.data)
+      if (onRenovada) onRenovada(renovada)
     } catch (err) {
       const status = err?.response?.status
       const detail = err?.response?.data?.detail

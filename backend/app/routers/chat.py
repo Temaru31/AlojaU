@@ -13,14 +13,14 @@
 import time
 import uuid
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from app.core.config import settings
 from app.core.logseguro import exc_resumen, una_linea
 from app.core.security import get_optional_user
 from app.db.chat_session import chat_configurado, get_chat_session
 from app.services.chat import orchestrator
-from app.services.chat.llm import FakeLLMProvider, HttpLLMProvider, LLMError
+from app.services.chat.llm import FakeLLMProvider, HttpLLMProvider, LLMError, LLMProvider
 from app.core.net import client_ip
 from app.services.chat.prompts import FALLBACK_NO_DISPONIBLE
 from app.services.chat.schemas import AccionOut, ChatIn, ChatOut, TarjetaOut
@@ -52,8 +52,9 @@ def _respuesta_apagado(rid: str) -> ChatOut:
     )
 
 
-def obtener_proveedor():
-    """Fake si no hay proveedor real configurado (tests + sin llave)."""
+def obtener_proveedor() -> LLMProvider:
+    """Dependencia del endpoint: Fake si no hay proveedor real configurado
+    (tests + sin llave). En pruebas: `app.dependency_overrides[obtener_proveedor]`."""
     prov = (settings.CHAT_LLM_PROVIDER or "fake").strip().lower()
     if (prov == "fake" or not settings.CHAT_LLM_API_KEY.strip()
             or not settings.CHAT_LLM_MODEL.strip()
@@ -153,13 +154,13 @@ async def _abrir_sesion_chat(gen, rid: str):
     return None
 
 
-async def _turno(db, body: ChatIn) -> tuple[dict, str]:
+async def _turno(db, body: ChatIn, proveedor: LLMProvider) -> tuple[dict, str]:
     """Llama al orquestador; ante fallo del LLM o interno, salida de respaldo. Devuelve (salida, resultado)."""
     historial = [{"rol": t.rol, "texto": t.texto} for t in body.historial]
     try:
         sal = await orchestrator.conversar(
             db, mensaje=body.mensaje, historial=historial,
-            proveedor=obtener_proveedor(), timeout_s=settings.CHAT_TIMEOUT_S)
+            proveedor=proveedor, timeout_s=settings.CHAT_TIMEOUT_S)
     except LLMError:
         registrar_fallo_llm()
         return _salida_fallback("llm-error"), "fallback-llm"
@@ -185,7 +186,8 @@ async def _cerrar_y_medir(gen, rid: str, t0: float, resultado: str,
 
 @router.post("", response_model=ChatOut, summary="Chatbot (solo lectura)")
 async def conversar_chat(body: ChatIn, request: Request,
-                         authorization: str | None = Header(None)):
+                         authorization: str | None = Header(None),
+                         proveedor: LLMProvider = Depends(obtener_proveedor)):
     rid = _request_id(request)
     t0 = time.monotonic()
     tools: list[str] = []
@@ -206,7 +208,7 @@ async def conversar_chat(body: ChatIn, request: Request,
     if db is None:
         return _respuesta_apagado(rid)
     try:
-        sal, resultado = await _turno(db, body)
+        sal, resultado = await _turno(db, body, proveedor)
         tools = [str(t)[:40] for t in (sal.get("tools_usadas") or [])]
         eventos = [str(e)[:40] for e in (sal.get("eventos") or [])]
         if "llm-error" not in eventos and "error-interno" not in eventos:

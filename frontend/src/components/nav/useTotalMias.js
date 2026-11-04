@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { AUTH_EVENT, MIAS_EVENT } from '../../contexts/AuthContext'
-import { api } from '../../services/api'
-import { bearer } from '../../services/authHeaders'
+import { contarMisPublicaciones } from '../../services/publicacionesApi'
 
 /**
  * Contador de avisos propios: "Mis publicaciones" se oculta con 0 avisos
@@ -19,13 +18,9 @@ export function useTotalMias(sesionActiva, token) {
         return
       }
       try {
-        const r = await api.get('/api/publicaciones/mias', {
-          params: { size: 1 },
-          headers: bearer(token),
-        })
         // Solo un total numérico oculta el enlace; cualquier otra forma
         // (error, contrato futuro) mantiene visible (fail-open).
-        const t = r.data?.total
+        const t = await contarMisPublicaciones(token)
         if (vivo) setTotalMias(typeof t === 'number' ? t : null)
       } catch {
         if (vivo) setTotalMias(null)

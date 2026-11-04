@@ -6,10 +6,9 @@
 // Uso: <AvatarPerfil perfil={perfil} token={token} onCambio={(url) => ...} />
 import { useRef, useState } from 'react'
 import { Eye, Pencil, Trash2 } from 'lucide-react'
-import { api } from '../services/api'
 import { inicialesDe } from '../contexts/AuthContext'
 import useFocusTrap from '../hooks/useFocusTrap'
-import { authHead } from '../services/authHeaders'
+import { quitarAvatar, subirAvatar } from '../services/cuentaApi'
 
 // `tamano="lg"` (w-20) para la tarjeta de identidad del sidebar; el
 // default conserva el tamaño compacto usado en el resto de la app.
@@ -27,20 +26,14 @@ export default function AvatarPerfil({ perfil, token, onCambio, tamano }) {
   useFocusTrap(sheetRef, sheet)
   const foto = perfil?.foto_perfil_url || null
 
-  const configAuth = token ? authHead(token) : {}
 
   const cambiar = async (file) => {
     if (!file || subiendo) return
     setError('')
     setSubiendo(true)
     try {
-      const fd = new FormData()
-      fd.append('file', file)
-      const r = await api.post('/api/auth/avatar', fd, {
-        ...configAuth,
-        headers: { ...(configAuth.headers || {}), 'Content-Type': 'multipart/form-data' },
-      })
-      onCambio?.(r.data?.foto_perfil_url || null)
+      const r = await subirAvatar(file, token)
+      onCambio?.(r?.foto_perfil_url || null)
       setSheet(false)
     } catch (e) {
       setError(e?.response?.data?.detail || 'No se pudo subir la foto (máx 5MB, JPG/PNG/WebP/GIF).')
@@ -54,8 +47,8 @@ export default function AvatarPerfil({ perfil, token, onCambio, tamano }) {
     setError('')
     setSubiendo(true)
     try {
-      const r = await api.delete('/api/auth/avatar', configAuth)
-      onCambio?.(r.data?.foto_perfil_url ?? null)
+      const r = await quitarAvatar(token)
+      onCambio?.(r?.foto_perfil_url ?? null)
       setSheet(false)
     } catch (e) {
       setError(e?.response?.data?.detail || 'No se pudo quitar la foto.')

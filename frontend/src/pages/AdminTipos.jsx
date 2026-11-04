@@ -4,11 +4,10 @@
 // RESTRICT responde 409). Los cambios quedan auditados (evento SETTINGS) y
 // el backend invalida la caché de 5min. Uso: ruta /admin/tipos-vivienda.
 import { useEffect, useState, useCallback } from 'react'
-import { api } from '../services/api'
 import { House } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import BreadcrumbsAdmin from '../components/BreadcrumbsAdmin'
-import { authHead } from '../services/authHeaders'
+import { crearTipoVivienda, editarTipoVivienda, eliminarTipoVivienda, listarTiposVivienda } from '../services/adminApi'
 
 
 export default function AdminTipos() {
@@ -27,8 +26,7 @@ export default function AdminTipos() {
     setLoading(true)
     setError('')
     try {
-      const r = await api.get('/api/admin/housing-types', authHead(token))
-      const lista = Array.isArray(r.data) ? r.data : []
+      const lista = await listarTiposVivienda(token)
       setTipos(lista)
       const e = {}
       for (const t of lista) {
@@ -52,13 +50,13 @@ export default function AdminTipos() {
     setError('')
     setOk('')
     try {
-      await api.post('/api/admin/housing-types', {
+      await crearTipoVivienda({
         slug: nuevo.slug.trim().toUpperCase(),
         nombre_visible: nuevo.nombre_visible.trim(),
         descripcion_tooltip: nuevo.descripcion_tooltip.trim() || null,
         icono: nuevo.icono.trim() || null,
         esta_activo: true,
-      }, authHead(token))
+      }, token)
       setNuevo({ slug: '', nombre_visible: '', descripcion_tooltip: '', icono: '' })
       setOk('Tipo creado y visible en filtros/publicar.')
       await cargar()
@@ -75,12 +73,12 @@ export default function AdminTipos() {
     setOk('')
     try {
       const d = edit[slug] || {}
-      const r = await api.patch(`/api/admin/housing-types/${slug}`, {
+      const actualizado = await editarTipoVivienda(slug, {
         nombre_visible: (d.nombre_visible || '').trim() || undefined,
         descripcion_tooltip: (d.descripcion_tooltip || '').trim(),
         icono: (d.icono || '').trim(),
-      }, authHead(token))
-      setTipos((prev) => prev.map((t) => (t.slug === slug ? r.data : t)))
+      }, token)
+      setTipos((prev) => prev.map((t) => (t.slug === slug ? actualizado : t)))
       setOk(`"${slug}" actualizado.`)
     } catch (err) {
       setError(err?.response?.data?.detail || `No se pudo guardar "${slug}".`)
@@ -94,11 +92,9 @@ export default function AdminTipos() {
     setError('')
     setOk('')
     try {
-      const r = await api.patch(`/api/admin/housing-types/${t.slug}`, {
-        esta_activo: !t.esta_activo,
-      }, authHead(token))
-      setTipos((prev) => prev.map((x) => (x.slug === t.slug ? r.data : x)))
-      setOk(`"${t.slug}" ${r.data.esta_activo ? 'activado' : 'desactivado (lógico, sin romper avisos)'}.`)
+      const actualizado = await editarTipoVivienda(t.slug, { esta_activo: !t.esta_activo }, token)
+      setTipos((prev) => prev.map((x) => (x.slug === t.slug ? actualizado : x)))
+      setOk(`"${t.slug}" ${actualizado.esta_activo ? 'activado' : 'desactivado (lógico, sin romper avisos)'}.`)
     } catch (err) {
       setError(err?.response?.data?.detail || 'No se pudo cambiar el estado.')
     } finally {
@@ -111,7 +107,7 @@ export default function AdminTipos() {
     setError('')
     setOk('')
     try {
-      await api.delete(`/api/admin/housing-types/${slug}`, authHead(token))
+      await eliminarTipoVivienda(slug, token)
       setABorrar(null)
       setOk(`"${slug}" eliminado.`)
       await cargar()

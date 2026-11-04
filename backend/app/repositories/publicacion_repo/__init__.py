@@ -29,10 +29,12 @@ from app.repositories.publicacion_repo.lista import (  # noqa: F401
     lista_conditions,
     query_lista,
     resolver_ciudad_id,
+    select_con_relaciones,
 )
 from app.repositories.publicacion_repo.detalle import (  # noqa: F401
     fetch_detail_bundle,
     fetch_detail_campus_ref,
+    fotos_de_aviso,
 )
 from app.repositories.publicacion_repo.escritura import (  # noqa: F401
     create_persisted,

@@ -5,8 +5,8 @@
 //   const { tipos, nombreDe, cargando } = useTiposVivienda()
 // `tipos` = [{slug, nombre_visible, descripcion_tooltip, icono, esta_activo}]
 import { useEffect, useState } from 'react'
-import { api } from '../services/api'
-import { fetchConfigPublica, leerConfigCache } from '../constants'
+import { leerConfigCache } from '../constants'
+import { obtenerConfigPublica } from '../services/catalogosApi'
 
 // Fallback local (espejo del seed backend, nunca se elimina un slug).
 export const TIPOS_FALLBACK = [
@@ -44,7 +44,7 @@ export default function useTiposVivienda() {
       if (Array.isArray(cfg?.tipos_vivienda) && cfg.tipos_vivienda.length > 0) return () => { vivo = false }
     } catch { /* sigue a fetch */ }
     setCargando(true)
-    fetchConfigPublica(() => api.get('/api/publicaciones/config-publica').then((r) => r.data))
+    obtenerConfigPublica()
       .then((cfg) => {
         if (!vivo) return
         if (Array.isArray(cfg?.tipos_vivienda) && cfg.tipos_vivienda.length > 0) {

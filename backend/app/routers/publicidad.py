@@ -18,13 +18,13 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, status
-from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logseguro import exc_resumen
 from app.core.security import require_admin, require_arrendador, id_propietario, ClaimsUsuario
 from app.db.session import get_session
+from app.repositories.destacados_repo import DestacadosRepo, get_destacados_repo
 from app.services import idempotencia
 from app.schemas.publicidad import (
     AdminDecisionIn,
@@ -62,16 +62,10 @@ def _destacado_out(d, plan_nombre: str | None = None) -> dict:
 
 
 @router.get("/planes", response_model=list[PlanOut], summary="Catálogo público de planes")
-async def listar_planes(db: AsyncSession = Depends(get_session)):
+async def listar_planes(repo: DestacadosRepo = Depends(get_destacados_repo)):
     """Planes activos ordenados por días (7/15/30). Sin auth."""
     try:
-        from app.models import PlanPublicidad
-
-        rows = (await db.execute(
-            select(PlanPublicidad)
-            .where(PlanPublicidad.activo.is_(True))
-            .order_by(PlanPublicidad.dias.asc())
-        )).scalars().all()
+        rows = await repo.planes_activos()
         return [
             {"id": p.id, "nombre": p.nombre, "dias": p.dias,
              "precio_cop": p.precio_cop, "prioridad": p.prioridad, "activo": p.activo}
@@ -79,7 +73,7 @@ async def listar_planes(db: AsyncSession = Depends(get_session)):
         ]
     except Exception as e:
         logger.error(f"[DB fallback] planes falló: {exc_resumen(e)}", exc_info=True)
-        await rollback_seguro(db, "listar_planes")
+        await rollback_seguro(repo.db, "listar_planes")
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
@@ -98,19 +92,6 @@ async def _validar_destacable(db: AsyncSession, payload, uid: int):
     if pub.estado != EstadoPublicacion.ACTIVO:
         raise HTTPException(status_code=409, detail="Solo se puede destacar una publicación ACTIVO")
     return plan, pub
-
-
-async def _tiene_destacado_vigente(db: AsyncSession, pub_id: int, ahora: datetime) -> bool:
-    from app.models import PublicacionDestacado
-
-    vigentes = (await db.execute(
-        select(func.count()).select_from(PublicacionDestacado).where(
-            PublicacionDestacado.publicacion_id == pub_id,
-            PublicacionDestacado.estado.in_([EstadoDestacado.PENDIENTE, EstadoDestacado.ACTIVO]),
-            PublicacionDestacado.vence > ahora,
-        )
-    )).scalar() or 0
-    return bool(vigentes)
 
 
 @router.post("/destacar", response_model=DestacadoOut, status_code=status.HTTP_201_CREATED,
@@ -138,7 +119,7 @@ async def destacar(
 
         plan, pub = await _validar_destacable(db, payload, uid)
         ahora = datetime.now(timezone.utc)
-        if await _tiene_destacado_vigente(db, pub.id, ahora):
+        if await DestacadosRepo(db).tiene_vigente(pub.id, ahora):
             raise HTTPException(status_code=409, detail="La publicación ya tiene un destacado vigente")
         d = PublicacionDestacado(
             publicacion_id=pub.id, plan_id=plan.id,
@@ -167,45 +148,29 @@ async def destacar(
 @router.get("/mias", response_model=list[DestacadoOut], summary="Dueño: mis destacados (historial y estado)")
 async def mis_destacados(
     user: ClaimsUsuario = Depends(require_arrendador),
-    db: AsyncSession = Depends(get_session),
+    repo: DestacadosRepo = Depends(get_destacados_repo),
 ):
     """Destacados creados por el dueño, más recientes primero. Sin token -> 401."""
     uid = id_propietario(user)
     try:
-        from app.models import PlanPublicidad, PublicacionDestacado
-
-        rows = (await db.execute(
-            select(PublicacionDestacado, PlanPublicidad.nombre)
-            .join(PlanPublicidad, PlanPublicidad.id == PublicacionDestacado.plan_id)
-            .where(PublicacionDestacado.created_by == uid)
-            .order_by(PublicacionDestacado.id.desc())
-        )).all()
-        return [_destacado_out(d, nombre) for d, nombre in rows]
+        return [_destacado_out(d, nombre) for d, nombre in await repo.del_dueno(uid)]
     except Exception as e:
         logger.error(f"[DB fallback] mias publicidad falló: {exc_resumen(e)}", exc_info=True)
-        await rollback_seguro(db, "mis_destacados")
+        await rollback_seguro(repo.db, "mis_destacados")
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
 @router_admin.get("/pendientes", response_model=list[DestacadoOut], summary="Admin: destacados PENDIENTE")
 async def pendientes(
     admin: ClaimsUsuario = Depends(require_admin),
-    db: AsyncSession = Depends(get_session),
+    repo: DestacadosRepo = Depends(get_destacados_repo),
 ):
     """Bandeja de aprobación (más antiguos primero). Solo ADMIN (401/403)."""
     try:
-        from app.models import PlanPublicidad, PublicacionDestacado
-
-        rows = (await db.execute(
-            select(PublicacionDestacado, PlanPublicidad.nombre)
-            .join(PlanPublicidad, PlanPublicidad.id == PublicacionDestacado.plan_id)
-            .where(PublicacionDestacado.estado == EstadoDestacado.PENDIENTE)
-            .order_by(PublicacionDestacado.id.asc())
-        )).all()
-        return [_destacado_out(d, nombre) for d, nombre in rows]
+        return [_destacado_out(d, nombre) for d, nombre in await repo.pendientes()]
     except Exception as e:
         logger.error(f"[DB fallback] pendientes publicidad falló: {exc_resumen(e)}", exc_info=True)
-        await rollback_seguro(db, "pendientes")
+        await rollback_seguro(repo.db, "pendientes")
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 

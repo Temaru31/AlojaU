@@ -14,6 +14,7 @@ from app.core.db_utils import rollback_seguro
 from app.core.logseguro import exc_resumen
 from app.core.net import client_ip
 from app.core.dominio import DIAS_GRACIA_CUENTA
+from app.core.normalizacion import digitos_nacionales  # noqa: F401  (reexportada)
 
 logger = logging.getLogger("alojau.auth")
 
@@ -51,22 +52,6 @@ def normalizar_telefono(raw: str | None) -> str | None:
     if not (7 <= len(d) <= 15):
         return None
     return d
-
-
-def digitos_nacionales(raw: str | None) -> str | None:
-    """Últimos 10 dígitos para COMPARAR (no para guardar).
-
-    El canónico de BD sigue siendo E.164 de `normalizar_telefono` (wa.me,
-    CHECKs, migración 009): cambiarlo rompería enlaces y respuestas API.
-    Para verificar se comparan los últimos 10 dígitos, tolerando "con/sin
-    código país" y el formato crudo que devuelve Telegram (tdlib advierte
-    que `contact.phone_number` puede llegar sin normalizar).
-    Retorna None si hay menos de 10 dígitos (no verificable por este medio).
-    """
-    d = re.sub(r"\D", "", str(raw or ""))
-    if len(d) < 10:
-        return None
-    return d[-10:]
 
 
 PREFIJOS_PREFERENCIAS = ("filtros.", "roomie.", "notis.")

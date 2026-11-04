@@ -5,19 +5,17 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Hourglass } from 'lucide-react'
-import { api, isCancelError } from '../services/api'
+import { isCancelError } from '../services/api'
 import { useAuth, emitMiasChange } from '../contexts/AuthContext'
-
 import Paginacion from '../components/Paginacion'
 import ConfirmDialog from '../components/ConfirmDialog'
 import EditarPublicacionModal from '../components/EditarPublicacionModal'
 import RenovarModal from '../components/RenovarModal'
 import HistorialAvisos from '../components/HistorialAvisos'
-
 import useTiposVivienda from '../hooks/useTiposVivienda'
-import { bearer } from '../services/authHeaders'
 import { ESTADO } from '../utils/estados'
 import TarjetaMiAviso from './misPublicaciones/TarjetaMiAviso'
+import { cambiarEstadoPublicacion, eliminarPublicacion, listarMisPublicaciones } from '../services/publicacionesApi'
 
 // Orden del panel (server-side vía ?orden=: ordenar en cliente mentiría
 // con paginación multipágina).
@@ -70,12 +68,10 @@ export default function MisPublicaciones() {
     setCambiandoEstado(p.id)
     setError('')
     try {
-      const r = await api.patch(`/api/publicaciones/${p.id}/estado`, { estado: nuevo }, {
-        headers: bearer(token),
-      })
-      setItems(prev => prev.map(x => x.id === p.id ? { ...x, estado: r.data?.estado || nuevo } : x))
+      const r = await cambiarEstadoPublicacion(p.id, nuevo, token)
+      setItems(prev => prev.map(x => x.id === p.id ? { ...x, estado: r?.estado || nuevo } : x))
       setAPausar(null)
-      if (r.data?.rol_actualizado) {
+      if (r?.rol_actualizado) {
         try { await refresh?.() } catch { /* noop */ }
       }
     } catch (err) {
@@ -90,16 +86,14 @@ export default function MisPublicaciones() {
     setEliminando(true)
     setError('')
     try {
-      const r = await api.delete(`/api/publicaciones/${p.id}`, {
-        headers: bearer(token),
-      })
+      const r = await eliminarPublicacion(p.id, token)
       setItems(prev => prev.filter(x => x.id !== p.id))
       setTotal(t => Math.max(0, t - 1))
       setAEliminar(null)
       // El navbar oculta "Mis publicaciones" al llegar a 0 avisos.
       emitMiasChange()
       // Reactividad de rol: si hubo democión, re-sincroniza el perfil.
-      if (r.data?.rol_actualizado) {
+      if (r?.rol_actualizado) {
         try { await refresh?.() } catch { /* noop */ }
       }
     } catch (err) {
@@ -121,13 +115,10 @@ export default function MisPublicaciones() {
     const controller = new AbortController()
     setLoading(true)
     setError('')
-    api.get('/api/publicaciones/mias', {
-      params: { page, size: PAGE_SIZE, ...(filtro ? { estado: filtro } : {}), orden },
-      headers: bearer(token),
-      signal: controller.signal,
-    })
-      .then(r => {
-        const data = r.data
+    listarMisPublicaciones(token,
+      { page, size: PAGE_SIZE, ...(filtro ? { estado: filtro } : {}), orden },
+      { signal: controller.signal })
+      .then(data => {
         if (Array.isArray(data)) {
           setItems(data); setTotal(data.length); setPages(1)
         } else {

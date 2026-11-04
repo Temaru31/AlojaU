@@ -20,6 +20,8 @@ import logging
 import os
 from abc import ABC, abstractmethod
 
+from fastapi import Request
+
 from app.core.config import settings
 
 logger = logging.getLogger("alojau.storage")
@@ -165,6 +167,12 @@ def borrar_local_si_huerfano(url: str | None, prefijo: str = "avatar-") -> bool:
         return True
     except Exception:
         return False
+
+
+def get_storage(request: Request) -> StorageBackend:
+    """Dependencia FastAPI: el backend de almacenamiento de la petición (las URLs
+    locales usan la base de la request). En pruebas: `app.dependency_overrides`."""
+    return get_storage_backend(base_url=str(request.base_url).rstrip("/"))
 
 
 def get_storage_backend(base_url: str = "", upload_dir: str = "") -> StorageBackend:

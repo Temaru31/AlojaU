@@ -6,9 +6,9 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { FileText, CircleCheck, CircleX, Pause, Play, RotateCw, History } from 'lucide-react'
-import { api, isCancelError } from '../services/api'
+import { isCancelError } from '../services/api'
 import { haceRelativo } from '../constants'
-import { bearer } from '../services/authHeaders'
+import { historialMisAvisos } from '../services/publicacionesApi'
 
 // Fuente única evento -> lenguaje humano (alineada con ESTADO_LABEL de
 // MisPublicaciones y MENSAJE_ESTADO_DUENO del backend).
@@ -47,13 +47,8 @@ export default function HistorialAvisos({ token }) {
     const controller = new AbortController()
     setCargando(true)
     setError('')
-    api.get('/api/publicaciones/mias/historial', {
-      params: { size: 10 },
-      headers: bearer(token),
-      signal: controller.signal,
-    })
-      .then((r) => {
-        const data = r.data || {}
+    historialMisAvisos(token, { signal: controller.signal })
+      .then((data) => {
         const lista = Array.isArray(data.items) ? data.items.filter((i) => i && typeof i.evento === 'string') : []
         setItems(lista)
         setTotal(Number(data.total ?? lista.length) || 0)

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { api } from '../services/api'
+import { obtenerZonas } from '../services/catalogosApi'
 
 // Catálogo inicial de Popayán (v10): los que no traigan id viajan como
 // barrio libre (barrio_texto). Sin tildes duplicadas a propósito: el match
@@ -39,8 +39,8 @@ export default function ZonaSelect({ value, onChange, inputId = 'zona-barrio', e
 
   useEffect(() => {
     let viva = true
-    api.get('/api/zonas')
-      .then((r) => { if (viva && Array.isArray(r.data)) setZonas(r.data) })
+    obtenerZonas()
+      .then((lista) => { if (viva && Array.isArray(lista)) setZonas(lista) })
       .catch(() => { /* catálogo estático basta */ })
     return () => { viva = false }
   }, [])

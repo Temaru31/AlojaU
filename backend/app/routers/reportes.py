@@ -108,7 +108,7 @@ async def crear_reporte(
     para no revelar avisos privados/pendientes por diferencia de respuesta.
     Solo avisos ACTIVO y de dueño activo son reportables.
     """
-    user = await get_optional_user(authorization)
+    user = await get_optional_user(authorization, db)
     try:
         from app.models import Publicacion, ReportePublicacion
 

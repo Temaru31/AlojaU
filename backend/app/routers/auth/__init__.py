@@ -78,7 +78,7 @@ from app.routers.auth.telegram_vinculo import (  # noqa: F401
     validar_token_vinculo,
     validar_token_vinculo_db,
 )
-from app.routers.auth.telegram_webhook import _contacto_coincide  # noqa: F401
+from app.services.verificacion_telefono import contacto_coincide as _contacto_coincide  # noqa: F401
 from app.routers.auth import (
     oauth, otp_recuperacion, perfil, registro_login, sesiones_cuenta, telegram_vinculo, telegram_webhook,
 )

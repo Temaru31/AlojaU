@@ -3,7 +3,6 @@ import logging
 from fastapi import APIRouter
 from fastapi import Depends, HTTPException, Query
 from sqlalchemy import func, select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.security import require_admin, ClaimsUsuario
 from app.core.logseguro import exc_resumen
@@ -13,7 +12,8 @@ from app.repositories import publicacion_repo as repo
 from app.services import publicacion_view as view
 from app.schemas.publicacion import PaginatedPublicaciones
 from app.core.db_utils import rollback_seguro
-from app.core.dominio import EstadoPublicacion, EstadoReporte, Rol
+from app.core.dominio import EstadoPublicacion, EstadoReporte
+from app.repositories.metricas_repo import MetricasRepo, get_metricas_repo
 from app.routers.admin.esquemas import MetricasOut
 
 logger = logging.getLogger("alojau.admin")
@@ -21,70 +21,27 @@ router = APIRouter()
 
 @router.get("/metricas", response_model=MetricasOut, summary="Admin métricas globales")
 async def metricas(
-    db: AsyncSession = Depends(get_session),
+    repo_metricas: MetricasRepo = Depends(get_metricas_repo),
     admin: ClaimsUsuario = Depends(require_admin),
 ):
     """Totales para /admin/dashboard. Sin token 401, no-ADMIN 403.
     v14.1: excluye cuentas en soft-delete (inventario visible real)."""
     try:
-        from app.models import Publicacion, ReportePublicacion, Usuario
-        from app.repositories.publicacion_repo import dueno_activo_clause
-
-        dueno_ok = dueno_activo_clause(Publicacion)
-        total = (await db.execute(select(func.count()).select_from(Publicacion).where(dueno_ok))).scalar() or 0
-        activas = (
-            await db.execute(
-                select(func.count())
-                .select_from(Publicacion)
-                .where(Publicacion.estado == EstadoPublicacion.ACTIVO, dueno_ok)
-            )
-        ).scalar() or 0
-        pendientes = (
-            await db.execute(
-                select(func.count())
-                .select_from(Publicacion)
-                .where(Publicacion.estado == EstadoPublicacion.PENDIENTE, dueno_ok)
-            )
-        ).scalar() or 0
-        rep_act = (
-            await db.execute(
-                select(func.count())
-                .select_from(ReportePublicacion)
-                .where(ReportePublicacion.estado.in_([EstadoReporte.PENDIENTE, EstadoReporte.CONFIRMADO]))
-            )
-        ).scalar() or 0
-        rep_pen = (
-            await db.execute(
-                select(func.count())
-                .select_from(ReportePublicacion)
-                .where(ReportePublicacion.estado == EstadoReporte.PENDIENTE)
-            )
-        ).scalar() or 0
-        # Inmuebles distintos con reportes PENDIENTE (usa idx_reportes_pub_estado).
-        inmuebles_rep = (await db.execute(
-            select(func.count(func.distinct(ReportePublicacion.publicacion_id))).where(
-                ReportePublicacion.estado == EstadoReporte.PENDIENTE)
-        )).scalar() or 0
-        vivos = Usuario.eliminado_en.is_(None)
-        verif = (
-            await db.execute(
-                select(func.count())
-                .select_from(Usuario)
-                .where(Usuario.rol == Rol.ARRENDADOR, Usuario.telefono_verificado.is_(True), vivos)
-            )
-        ).scalar() or 0
-        users = (await db.execute(select(func.count()).select_from(Usuario).where(vivos))).scalar() or 0
         return MetricasOut(
-            total_publicaciones=total, activas=activas, pendientes=pendientes,
-            reportes_activos=rep_act, reportes_pendientes=rep_pen,
-            inmuebles_con_reportes=int(inmuebles_rep),
-            arrendadores_verificados=verif, total_usuarios=users,
+            total_publicaciones=await repo_metricas.avisos(),
+            activas=await repo_metricas.avisos(EstadoPublicacion.ACTIVO),
+            pendientes=await repo_metricas.avisos(EstadoPublicacion.PENDIENTE),
+            reportes_activos=await repo_metricas.reportes(EstadoReporte.PENDIENTE, EstadoReporte.CONFIRMADO),
+            reportes_pendientes=await repo_metricas.reportes(EstadoReporte.PENDIENTE),
+            inmuebles_con_reportes=await repo_metricas.inmuebles_con_reportes_pendientes(),
+            arrendadores_verificados=await repo_metricas.usuarios(solo_arrendadores_verificados=True),
+            total_usuarios=await repo_metricas.usuarios(),
         )
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"[DB fallback] metricas falló: {exc_resumen(e)}", exc_info=True)
-        await rollback_seguro(db, "metricas")
+        await rollback_seguro(repo_metricas.db, "metricas")
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
@@ -99,19 +56,10 @@ async def pendientes(
     try:
         from app.models import Publicacion
 
-        total = (
-            await db.execute(
-                select(func.count()).select_from(Publicacion).where(Publicacion.estado == EstadoPublicacion.PENDIENTE)
-            )
-        ).scalar() or 0
+        total = await MetricasRepo(db).avisos_pendientes_de_moderar()
         offset, size_norm = paginate_params(page, size)
         stmt = (
-            select(Publicacion)
-            .options(
-                selectinload(Publicacion.imagenes),
-                selectinload(Publicacion.servicios),
-                selectinload(Publicacion.zona),
-            )
+            repo.select_con_relaciones()
             .where(Publicacion.estado == EstadoPublicacion.PENDIENTE)
             .order_by(Publicacion.id.desc())
             .limit(size_norm)

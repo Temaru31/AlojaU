@@ -43,11 +43,19 @@ def _hay_pg() -> bool:
     return asyncio.run(_pg_ok())
 
 
+def _usar_proveedor(fabrica):
+    """Inyecta un proveedor LLM falso en el endpoint (se limpia en throttle_limpio)."""
+    from app.routers.chat import obtener_proveedor
+    app.dependency_overrides[obtener_proveedor] = fabrica
+
+
 @pytest.fixture()
 def throttle_limpio():
+    from app.routers.chat import obtener_proveedor
     clear_chat_throttle_for_tests()
     clear_faq_cache_for_tests()
     yield
+    app.dependency_overrides.pop(obtener_proveedor, None)
     clear_chat_throttle_for_tests()
     clear_faq_cache_for_tests()
 
@@ -62,8 +70,7 @@ def test_apagado_responde_controlado_sin_llm_ni_bd(throttle_limpio,
             llamadas["n"] += 1
             return await super().completar(mensajes, herramientas)
 
-    import app.routers.chat as router_chat
-    monkeypatch.setattr(router_chat, "obtener_proveedor", lambda: Espia())
+    _usar_proveedor(lambda: Espia())
     r = _cliente().post("/api/chat", json={"mensaje": "hola, busco arriendo"})
     assert r.status_code == 200
     cuerpo = r.json()
@@ -99,9 +106,7 @@ def test_rate_limit_429_antes_de_bd(throttle_limpio, monkeypatch):
     monkeypatch.setattr(settings, "CHAT_LIMITE_IP_MIN", 2)
     monkeypatch.setenv("CHAT_DATABASE_URL", _dsn_prueba())
     chat_sesion.clear_chat_engine_for_tests()
-    import app.routers.chat as router_chat
-    monkeypatch.setattr(router_chat, "obtener_proveedor",
-                        lambda: FakeLLMProvider())
+    _usar_proveedor(lambda: FakeLLMProvider())
     c = _cliente()
     ok = [c.post("/api/chat", json={"mensaje": "hola"}).status_code
           for _ in range(2)]
@@ -122,9 +127,7 @@ def test_encendido_fake_flujo_busqueda(throttle_limpio, monkeypatch):
         {"texto": "Encontré estas opciones cerca de tu búsqueda.",
          "tools": []},
     ]
-    import app.routers.chat as router_chat
-    monkeypatch.setattr(router_chat, "obtener_proveedor",
-                        lambda: FakeLLMProvider(guion=guion))
+    _usar_proveedor(lambda: FakeLLMProvider(guion=guion))
     r = _cliente().post("/api/chat",
                         json={"mensaje": "busco habitación barata"})
     assert r.status_code == 200
@@ -147,9 +150,7 @@ def test_encendido_faq_y_anonimo_vs_autenticado(throttle_limpio, monkeypatch):
     monkeypatch.setattr(settings, "CHAT_ENABLED", True)
     monkeypatch.setenv("CHAT_DATABASE_URL", _dsn_prueba())
     chat_sesion.clear_chat_engine_for_tests()
-    import app.routers.chat as router_chat
-    monkeypatch.setattr(router_chat, "obtener_proveedor",
-                        lambda: FakeLLMProvider())
+    _usar_proveedor(lambda: FakeLLMProvider())
     c = _cliente()
     r1 = c.post("/api/chat", json={"mensaje": "qué es el índice de confianza"})
     assert r1.status_code == 200

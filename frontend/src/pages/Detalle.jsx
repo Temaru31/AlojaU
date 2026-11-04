@@ -1,7 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { ArrowRight, Pause } from 'lucide-react'
-import { api } from '../services/api'
 import Indice from '../components/IndiceConfianza'
 import MapaZona from '../components/MapaZona'
 import GaleriaFotos from '../components/GaleriaFotos'
@@ -10,12 +9,11 @@ import { useFavoritos } from '../contexts/FavoritosContext'
 import { useComparar } from '../contexts/CompararContext'
 import { useAuth } from '../contexts/AuthContext'
 import EditarPublicacionModal from '../components/EditarPublicacionModal'
-import { haceRelativo, estaDesactualizada, fetchConfigPublica, diasDesactualizadaEfectiva } from '../constants'
+import { haceRelativo, estaDesactualizada, diasDesactualizadaEfectiva } from '../constants'
 import { fotosOrdenadas } from '../utils/portada'
 import { getEtiquetaTipo } from '../utils/tiposVivienda'
 
 import useTiposVivienda from '../hooks/useTiposVivienda'
-import { authHead, bearer } from '../services/authHeaders'
 import { ESTADO } from '../utils/estados'
 import CabeceraMovilDetalle from './detalle/CabeceraMovilDetalle'
 import AccionesAviso from './detalle/AccionesAviso'
@@ -26,29 +24,9 @@ import ContactoArrendador from './detalle/ContactoArrendador'
 import HistorialInmueble from './detalle/HistorialInmueble'
 import SimilaresZona from './detalle/SimilaresZona'
 import BarraContactoMovil from './detalle/BarraContactoMovil'
-
-
-function leerContactos() {
-  try {
-    const raw = localStorage.getItem('alojau_contactos')
-    const parsed = JSON.parse(raw || '[]')
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
-function guardarContacto(id, titulo) {
-  try {
-    const prev = leerContactos()
-    if (prev.some(c => c.id === id)) return prev
-    const next = [...prev, { id, titulo: titulo || '', fecha: new Date().toISOString() }]
-    localStorage.setItem('alojau_contactos', JSON.stringify(next.slice(-100)))
-    return next
-  } catch {
-    return []
-  }
-}
+import { guardarContacto, leerContactos, registrarVisto } from '../utils/actividadLocal'
+import { obtenerCampus, obtenerConfigPublica } from '../services/catalogosApi'
+import { historialDeAviso, obtenerPublicacion, registrarVista, similaresDe } from '../services/publicacionesApi'
 
 export default function Detalle() {
   const { id } = useParams()
@@ -104,9 +82,8 @@ export default function Detalle() {
     setReportOpen(false)
     setEditando(false)
     const qs = campusIdParam ? `?campus_id=${encodeURIComponent(campusIdParam)}` : ''
-    const cfg = authToken ? authHead(authToken) : {}
-    api.get(`/api/publicaciones/${id}${qs}`, cfg)
-      .then(r => { if (!cancelled) setPub(r.data) })
+    obtenerPublicacion(id, { token: authToken, query: qs })
+      .then(datos => { if (!cancelled) setPub(datos) })
       .catch((err) => {
         if (cancelled) return
         setPub(null)
@@ -124,8 +101,7 @@ export default function Detalle() {
     if (!pub || vistaEnviada.current === pub.id) return
     vistaEnviada.current = pub.id
     try {
-      const p = api.post(`/api/publicaciones/${pub.id}/vista`)
-      p?.catch?.(() => { /* métrica best-effort */ })
+      registrarVista(pub.id)
     } catch { /* métrica best-effort */ }
   }, [pub, id])
 
@@ -133,8 +109,8 @@ export default function Detalle() {
   useEffect(() => {
     if (!pub) { setSimilares([]); return }
     let vivo = true
-    api.get(`/api/publicaciones/${pub.id}/similares`, { params: { limit: 4 } })
-      .then(r => { if (vivo) setSimilares(Array.isArray(r.data?.items) ? r.data.items : []) })
+    similaresDe(pub.id, { limit: 4 })
+      .then(lista => { if (vivo) setSimilares(lista) })
       .catch(() => { if (vivo) setSimilares([]) })
     return () => { vivo = false }
   }, [pub, id])
@@ -145,10 +121,8 @@ export default function Detalle() {
   useEffect(() => {
     if (!pub || !authToken) { setHistorial(null); return }
     let vivo = true
-    api.get(`/api/publicaciones/${pub.id}/historial`, {
-      headers: bearer(authToken),
-    })
-      .then(r => { if (vivo) setHistorial(Array.isArray(r.data?.items) ? r.data.items : []) })
+    historialDeAviso(pub.id, authToken)
+      .then(lista => { if (vivo) setHistorial(lista) })
       .catch(() => { if (vivo) setHistorial(null) })
     return () => { vivo = false }
   }, [pub, authToken])
@@ -157,8 +131,8 @@ export default function Detalle() {
   useEffect(() => {
     if (!campusIdParam) return
     let cancelled = false
-    api.get('/api/campus')
-      .then(r => { if (!cancelled && Array.isArray(r.data)) setLugares(r.data) })
+    obtenerCampus()
+      .then(lista => { if (!cancelled && Array.isArray(lista)) setLugares(lista) })
       .catch(() => { /* sin catálogo: se usa campus_ref o fallback legacy */ })
     return () => { cancelled = true }
   }, [campusIdParam])
@@ -167,13 +141,7 @@ export default function Detalle() {
   useEffect(() => {
     if (!pub?.id) return
     setYaContactado(leerContactos().some(c => c.id === pub.id))
-    try {
-      const raw = localStorage.getItem('alojau_historial')
-      const hist = JSON.parse(raw || '[]')
-      const lista = Array.isArray(hist) ? hist.filter(h => h.id !== pub.id) : []
-      lista.unshift({ id: pub.id, titulo: pub.titulo || '', fecha: new Date().toISOString() })
-      localStorage.setItem('alojau_historial', JSON.stringify(lista.slice(0, 30)))
-    } catch { /* historial opcional */ }
+    registrarVisto(pub)
   }, [pub?.id])
 
   // UX: al abrir (o cambiar) una publicación, volver al tope (fotos/título),
@@ -189,7 +157,7 @@ export default function Detalle() {
   // Lee la config pública una vez (cache 5 min en constants.js).
   useEffect(() => {
     let vivo = true
-    fetchConfigPublica(() => api.get('/api/publicaciones/config-publica').then((r) => r.data))
+    obtenerConfigPublica()
       .then((cfg) => { if (vivo && cfg?.dias_desactualizada) setDiasDesact(Number(cfg.dias_desactualizada)) })
       .catch(() => {})
     return () => { vivo = false }

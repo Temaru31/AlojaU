@@ -6,210 +6,36 @@
 // ofrece una simulación de interfaz claramente etiquetada que NUNCA marca la
 // cuenta como vinculada (solo demuestra el flujo visual del PIN de 6).
 // Uso: <TelegramVincular token={token} vinculado={perfil?.telegram_vinculado} />
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { Check } from 'lucide-react'
-import { api } from '../services/api'
-import { notifyToast } from './Toast'
 import ConfirmDialog from './ConfirmDialog'
-import { bearer } from '../services/authHeaders'
+import useVinculoTelegram from '../hooks/useVinculoTelegram'
 
-export function esErrorSinBot(err) {
-  return err?.response?.status === 503
-}
-
-// Guía infalible en 3 pasos: 1) abrir el bot 2) pulsar /start en Telegram
-// 3) comprobar aquí. La confirmación es REAL: re-lee el perfil y solo marca
-// vinculado si el backend ya registró el chat (el bot lo hace al /start).
-// No existe endpoint de "verificar PIN": inventarlo sería placebo.
-// Verificación gratuita: compartir el contacto NATIVO en el bot marca
-// telefono_verificado=true en BD (sin SMS de pago).
-// Enlace pre-generado: el deep link t.me se pide al montar (GET
-// /api/auth/telegram/enlace) y el botón es un <a> nativo con target=_blank:
-// ningún bloqueador lo intercepta ni hay pestañas about:blank ni
-// window.open/location.href en todo el flujo.
-// Polling suave: tras pulsar el enlace se sondea el perfil cada 3s (máx
-// 3min); al detectar telegram_vinculado se avisa con toast y se actualiza.
+// Guía en 3 pasos: 1) abrir el bot 2) pulsar /start en Telegram 3) compartir
+// el contacto NATIVO, que marca telefono_verificado=true en BD (sin SMS de
+// pago). El botón es un <a> nativo con target=_blank al deep link firmado:
+// ningún bloqueador lo intercepta (cero window.open/about:blank).
 // Uso: <TelegramVincular token vinculado onVinculado telefonoGuardado telefonoVerificado />
-export const TELEGRAM_POLL_MS = 3000
-export const TELEGRAM_POLL_MAX = 60 // 3 min
-
 export default function TelegramVincular({
   token, vinculado, onVinculado, onDesvinculado,
   telefonoGuardado = true, telefonoVerificado = false,
 }) {
-  const [cargandoEnlace, setCargandoEnlace] = useState(false)
-  const [comprobando, setComprobando] = useState(false)
-  const [error, setError] = useState('')
-  const [botAbierto, setBotAbierto] = useState(false)
-  const [enlace, setEnlace] = useState('')
-  const [expiraSeg, setExpiraSeg] = useState(0)
-  const [intentos, setIntentos] = useState(0)
-  const [modoLocal, setModoLocal] = useState(false)
+  // Simulación de interfaz (solo dev y sin bot): nunca toca el backend.
   const [pinSim, setPinSim] = useState('')
   const [pinOk, setPinOk] = useState(false)
-  const [confirmaDesvincular, setConfirmaDesvincular] = useState(false)
-  const [desvinculando, setDesvinculando] = useState(false)
-
-  // Guard de desmontaje: los reintentos duermen hasta 3s; sin esto habría
-  // setState sobre componente desmontado al navegar en mitad del check.
-  const vivoRef = useRef(true)
-  useEffect(() => () => { vivoRef.current = false }, [])
-  // Ref al callback (inline en el padre): el polling no debe reiniciarse
-  // en cada render por identidad nueva de la función.
-  const onVinculadoRef = useRef(onVinculado)
-  onVinculadoRef.current = onVinculado
-
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-
-  // Polling suave tras abrir el bot: detecta la verificación sin que el
-  // usuario pulse nada. Se detiene al vincular, al desmontar o a los 3min.
-  useEffect(() => {
-    if (!botAbierto || vinculado) return undefined
-    let cancelado = false
-    const sondear = async () => {
-      for (let i = 0; i < TELEGRAM_POLL_MAX; i += 1) {
-        await sleep(TELEGRAM_POLL_MS)
-        if (cancelado || !vivoRef.current) return
-        try {
-          const r = await api.get('/api/auth/perfil', {
-            headers: bearer(token),
-          })
-          if (cancelado || !vivoRef.current) return
-          if (r.data?.telegram_vinculado) {
-            onVinculadoRef.current?.(true)
-            notifyToast('¡Número verificado con éxito en AlojaU!')
-            return
-          }
-        } catch {
-          // Sigue sondeando hasta el tope (cold start de Render).
-        }
-      }
-    }
-    sondear()
-    return () => { cancelado = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [botAbierto, vinculado, token])
-
-  // Enlace pre-generado (deep link firmado por el backend). Se pide al
-  // montar y se refresca solo antes de expirar: cuando el usuario pulsa,
-  // el <a> ya tiene href válido y el navegador abre Telegram sin
-  // intermediarios (cero window.open, cero about:blank, cero bloqueos).
-  const pedirEnlace = async (silencioso = false) => {
-    if (!token || !telefonoGuardado || vinculado) return
-    if (!silencioso) {
-      setError('')
-      setModoLocal(false)
-      setPinSim('')
-      setPinOk(false)
-      setCargandoEnlace(true)
-    }
-    try {
-      const r = await api.get('/api/auth/telegram/enlace', {
-        headers: bearer(token),
-      })
-      const url = r.data?.bot_url
-      if (!url || !url.startsWith('https://t.me/')) {
-        throw new Error('Respuesta inválida del bot')
-      }
-      if (!vivoRef.current) return
-      setEnlace(url)
-      setExpiraSeg(r.data?.expira_segundos || 600)
-    } catch (e) {
-      if (!vivoRef.current) return
-      if (esErrorSinBot(e)) {
-        setModoLocal(true)
-      } else if (!silencioso) {
-        setError(e?.response?.data?.detail || e?.message || 'No se pudo preparar el enlace. Reintenta.')
-      }
-      // Silencioso: conserva el enlace anterior hasta que expire.
-    } finally {
-      if (vivoRef.current && !silencioso) setCargandoEnlace(false)
-    }
-  }
-
-  // Pedido inicial al montar / cambiar de cuenta o de teléfono.
-  useEffect(() => {
-    setEnlace('')
-    setExpiraSeg(0)
-    pedirEnlace(false)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, telefonoGuardado, vinculado])
-
-  // Refresco transparente 30s antes de expirar (el backend reutiliza el
-  // vínculo vigente, así que normalmente no acuña nada nuevo ni invalida).
-  useEffect(() => {
-    if (!enlace || !expiraSeg || vinculado || !telefonoGuardado) return undefined
-    const ms = Math.max(30000, expiraSeg * 1000 - 30000)
-    const t = window.setTimeout(() => { pedirEnlace(true) }, ms)
-    return () => window.clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enlace, expiraSeg, vinculado, telefonoGuardado])
-
-  // Libera el chat y el número para que otra cuenta pueda usarlos.
-  // La página actual no navega en ningún caso (POST + estado local).
-  const desvincular = async () => {
-    setError('')
-    setDesvinculando(true)
-    try {
-      await api.post('/api/auth/telegram/desvincular', {}, {
-        headers: bearer(token),
-      })
-      setBotAbierto(false)
-      setEnlace('')
-      setExpiraSeg(0)
-      setConfirmaDesvincular(false)
-      onDesvinculado?.()
-      notifyToast('Telegram desvinculado y número liberado.')
-    } catch (e) {
-      setError(e?.response?.data?.detail || e?.message || 'No se pudo desvincular. Intenta de nuevo.')
-      setConfirmaDesvincular(false)
-    } finally {
-      if (vivoRef.current) setDesvinculando(false)
-    }
-  }
+  const {
+    enlace, cargandoEnlace, modoLocal, error, setError, pedirEnlace,
+    abrirBot, comprobando, intentos, comprobarVinculacion,
+    confirmaDesvincular, setConfirmaDesvincular, desvinculando, desvincular,
+  } = useVinculoTelegram({
+    token, vinculado, telefonoGuardado, onVinculado, onDesvinculado,
+    alPedirEnlace: () => { setPinSim(''); setPinOk(false) },
+  })
 
   const probarPinSimulado = (e) => {
     e?.preventDefault()
-    // Simulación de interfaz: acepta cualquier PIN de 6 dígitos solo para
-    // mostrar el estado visual; no toca el backend ni la vinculación real.
+    // Acepta cualquier PIN de 6 dígitos solo para mostrar el estado visual.
     if (/^[0-9]{6}$/.test(pinSim)) setPinOk(true)
-  }
-
-  const comprobarVinculacion = async () => {
-    setComprobando(true)
-    setError('')
-    try {
-      // El webhook de Telegram puede tardar unos segundos en
-      // procesar el /start (cold start de Render). Reintenta con backoff
-      // 3 intentos (~0s, 1s, 2s) antes de mostrar "no detectado".
-      const delays = [0, 1000, 2000]
-      for (let i = 0; i < delays.length; i += 1) {
-        if (delays[i]) await sleep(delays[i])
-        if (!vivoRef.current) return
-        try {
-          const r = await api.get('/api/auth/perfil', {
-            headers: bearer(token),
-          })
-          if (!vivoRef.current) return
-          if (r.data?.telegram_vinculado) {
-            onVinculado?.(true)
-            setIntentos(0)
-            return
-          }
-        } catch {
-          // Sigue al siguiente intento salvo que sea el último.
-          if (i === delays.length - 1) throw new Error('red')
-        }
-        if (vivoRef.current) setIntentos(i + 1)
-      }
-      if (!vivoRef.current) return
-      setError('Aún no detectamos tu /start. Abre el bot, pulsa /start y vuelve a intentarlo. Si el enlace expiró (10 min), genera uno nuevo con «Abrir Bot».')
-    } catch {
-      if (!vivoRef.current) return
-      setError('No se pudo comprobar (el servidor puede estar despertando). Espera unos segundos e intenta de nuevo.')
-    } finally {
-      if (vivoRef.current) setComprobando(false)
-    }
   }
 
   // El simulador solo existe en desarrollo local (nunca en producción).
@@ -280,7 +106,7 @@ export default function TelegramVincular({
                   href={enlace}
                   target="_blank"
                   rel="noopener noreferrer"
-                  onClick={() => { setError(''); setBotAbierto(true); setIntentos(0) }}
+                  onClick={abrirBot}
                   className={`inline-flex items-center justify-center w-full sm:w-auto px-4 py-2 min-h-[44px] text-sm font-semibold text-white bg-navy-800 rounded-lg hover:bg-navy-900 active:bg-navy-900 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-navy-800/40 ${bloqueado ? 'pointer-events-none opacity-50' : ''}`}
                   aria-disabled={bloqueado || undefined}
                 >

@@ -11,13 +11,13 @@ import logging
 import os
 import uuid
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request, Path
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Path
 from pydantic import BaseModel
 
 from app.core.security import get_current_user, require_arrendador, id_propietario, ClaimsUsuario
-from app.services.storage import get_storage_backend
+from app.services.storage import StorageBackend, get_storage
 from app.db.session import get_session
-from sqlalchemy import select
+from app.repositories import publicacion_repo as repo
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db_utils import rollback_seguro
 from app.core.security import es_dueno_o_admin
@@ -98,9 +98,9 @@ def _check_upload_rate_limit(uid: int) -> None:
 
 @router.post("", response_model=UploadOut, summary="HU-005 Upload 3-10 imágenes (solo ARRENDADOR)")
 async def upload_fotos(
-    request: Request,
     files: List[UploadFile] = File(..., description="3-10 imágenes, cada una max 5MB, image/*"),
     user: ClaimsUsuario = Depends(require_arrendador),
+    backend: StorageBackend = Depends(get_storage),
 ):
     uid_t = id_propietario(user)
     _check_upload_rate_limit(uid_t)
@@ -108,10 +108,6 @@ async def upload_fotos(
         raise HTTPException(status_code=422, detail=f"Mínimo {MIN_FILES} fotos (HU-005 C2), recibidas {len(files)}")
     if len(files) > MAX_FILES:
         raise HTTPException(status_code=422, detail=f"Máximo {MAX_FILES} fotos, recibidas {len(files)}")
-
-    # Factory elige Local (dev) o Cloudinary (prod con CLOUDINARY_*).
-    base = str(request.base_url).rstrip("/")
-    backend = get_storage_backend(base_url=base)
 
     urls = []
     for file in files:
@@ -149,9 +145,9 @@ async def upload_fotos(
 
 @router.post("/una", response_model=UploadOut, summary="Dueño: subir 1 imagen (gestor multimedia)")
 async def upload_una_foto(
-    request: Request,
     file: UploadFile = File(..., description="1 imagen, max 5MB, image/*"),
     user: ClaimsUsuario = Depends(require_arrendador),
+    backend: StorageBackend = Depends(get_storage),
 ):
     """v15.2 paso 1 del gestor: UNA foto (el /upload grupal exige 3-10).
 
@@ -177,8 +173,6 @@ async def upload_una_foto(
         chunks.append(chunk)
     if size == 0:
         raise HTTPException(status_code=400, detail=f"Archivo {file.filename} vacío")
-    base = str(request.base_url).rstrip("/")
-    backend = get_storage_backend(base_url=base)
     filename = f"{uuid.uuid4().hex}{ext}"
     url = await asyncio.to_thread(backend.save, b"".join(chunks), filename, mime)
     return {"urls": [url], "count": 1}
@@ -200,16 +194,13 @@ async def eliminar_foto(
         if not img:
             raise HTTPException(status_code=404, detail="Foto no encontrada")
         pub = await db.get(Publicacion, img.publicacion_id)
-        if not pub or not await es_dueno_o_admin(user, pub.usuario_id):
+        if not pub or not await es_dueno_o_admin(user, pub.usuario_id, db):
             raise HTTPException(status_code=403, detail="Solo el dueño puede eliminar fotos")
         pid = img.publicacion_id
         await db.delete(img)
         await db.flush()
         # Compacta orden 1..N para que la portada siga siendo orden=1.
-        restantes = (await db.execute(
-            select(ImagenPublicacion).where(ImagenPublicacion.publicacion_id == pid)
-            .order_by(ImagenPublicacion.orden.asc())
-        )).scalars().all()
+        restantes = await repo.fotos_de_aviso(db, pid)
         for i, r in enumerate(restantes, start=1):
             r.orden = i
         await db.commit()
@@ -263,12 +254,9 @@ async def reordenar_fotos(
         pub = await db.get(Publicacion, data.publicacion_id)
         if not pub:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await es_dueno_o_admin(user, pub.usuario_id):
+        if not await es_dueno_o_admin(user, pub.usuario_id, db):
             raise HTTPException(status_code=403, detail="Solo el dueño puede reordenar fotos")
-        fotos = (await db.execute(
-            select(ImagenPublicacion).where(
-                ImagenPublicacion.publicacion_id == data.publicacion_id)
-        )).scalars().all()
+        fotos = await repo.fotos_de_aviso(db, data.publicacion_id)
         por_id = {f.id: f for f in fotos}
         if set(data.orden_ids) != set(por_id.keys()):
             raise HTTPException(
@@ -315,12 +303,9 @@ async def vincular_fotos(
         pub = await db.get(Publicacion, data.publicacion_id)
         if not pub:
             raise HTTPException(status_code=404, detail="Publicación no encontrada")
-        if not await es_dueno_o_admin(user, pub.usuario_id):
+        if not await es_dueno_o_admin(user, pub.usuario_id, db):
             raise HTTPException(status_code=403, detail="Solo el dueño puede agregar fotos")
-        actuales = (await db.execute(
-            select(ImagenPublicacion).where(
-                ImagenPublicacion.publicacion_id == data.publicacion_id)
-        )).scalars().all()
+        actuales = await repo.fotos_de_aviso(db, data.publicacion_id)
         if len(actuales) + len(urls) > 10:
             raise HTTPException(status_code=422, detail="Máximo 10 fotos por aviso")
         base = max([r.orden for r in actuales], default=0)

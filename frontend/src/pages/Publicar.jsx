@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api, conIdempotencia } from '../services/api'
 import GoogleButton from '../components/GoogleButton'
 import { signInWithGoogle, guardarRedirectPostLogin } from '../services/supabaseClient'
 import { emitAuthChange, emitMiasChange, useAuth } from '../contexts/AuthContext'
@@ -8,12 +7,12 @@ import { LIMITES } from '../constants'
 import useTiposVivienda from '../hooks/useTiposVivienda'
 import { getEtiquetaTipo } from '../utils/tiposVivienda'
 import { ArrowRight, FileText, House, MapPin } from 'lucide-react'
-import { authHead } from '../services/authHeaders'
 import { leerToken } from '../services/tokenStorage'
 import PasoInformacion from './publicar/PasoInformacion'
 import PasoUbicacion from './publicar/PasoUbicacion'
 import PasoServiciosFotos from './publicar/PasoServiciosFotos'
 import { sanitizarTexto, formatearCOP, soloDigitos, leerBorrador, guardarBorrador, limpiarBorrador, validarPublicar, FORM_INICIAL, mezclarBorrador } from '../utils/publicar'
+import { crearPublicacion } from '../services/publicacionesApi'
 
 // ---------------------------------------------------------------------------
 // Helpers exportados (testeables). Bloque 2 + Bloque 5.
@@ -137,15 +136,14 @@ export default function Publicar() {
     // UNA sola capa de reintento (el interceptor de api.js ya
     // reintenta este POST idempotente 2 veces con 2s/4s ante cold start).
     // El borrador persiste hasta el éxito: si la red falla, nada se pierde.
-    const idem = conIdempotencia(authHead(token))
     let exito = false
     try {
       // Clave única por clic; si el POST cae en timeout y axios
       // reintenta, el backend devuelve el replay (sin duplicar el aviso).
-      const r = await api.post('/api/publicaciones', payload, idem)
+      const creada = await crearPublicacion(payload, token)
       if (!vivoRef.current) return
       exito = true
-      setSubmitOk(r.data)
+      setSubmitOk(creada)
       // Limpia borrador Y formulario: sin esto, el efecto de autoguardado
       // re-graba el draft justo después del éxito (resurrección).
       limpiarBorrador()
@@ -155,7 +153,7 @@ export default function Publicar() {
       // El navbar muestra "Mis publicaciones" tras el primer aviso.
       emitMiasChange()
       // Reactividad de rol: si hubo promoción, re-sincroniza el perfil.
-      if (r.data?.rol_actualizado) {
+      if (creada?.rol_actualizado) {
         try { await refresh?.() } catch { /* noop */ }
         emitAuthChange()
       }

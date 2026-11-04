@@ -12,10 +12,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { CircleCheck, CircleAlert } from 'lucide-react'
-import { api } from '../services/api'
 import { parseAuthCallbackHash, getCallbackCode, exchangeCodeForSession, leerRedirectPostLogin } from '../services/supabaseClient'
 import { emitAuthChange } from '../contexts/AuthContext'
 import { guardarToken } from '../services/tokenStorage'
+import { loginConGoogle } from '../services/cuentaApi'
 
 function decodeJwtPayload(token) {
   try {
@@ -109,21 +109,21 @@ export default function AuthCallback() {
         return
       }
       try {
-        const r = await api.post('/api/auth/oauth/google/callback', {
+        const r = await loginConGoogle({
           email,
           nombre_completo: String(nombre).slice(0, 150),
           supabase_id: supabaseId,
           supabase_jwt: supabaseJwt,
           foto_perfil_url: foto,
         })
-        guardarToken(r.data.access_token)
+        guardarToken(r.access_token)
         emitAuthChange()
         if (vivo && !resuelto) {
           resuelto = true
           window.clearTimeout(watchdogTimer.current)
           // Login y registro con Google son el mismo flujo (crea-o-vincula):
           // el backend dice si la cuenta nació ahora para el mensaje correcto.
-          setEsNuevo(!!r.data?.es_nuevo)
+          setEsNuevo(!!r?.es_nuevo)
           setEstado('ok')
           // Vuelve a donde estaba (ej. /publicar) o al inicio.
           const destino = leerRedirectPostLogin()

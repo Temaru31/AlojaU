@@ -62,11 +62,11 @@ def test_despachar_nunca_rompe_y_respeta_vinculo():
             assert await nt.notificar_cambio_estado(db, None, "x", "ACTIVO") == "none"
             # Usuario real sin chat vinculado -> telegram False, sin lanzar.
             res = await nt.despachar(db, 1, "hola", canales=[nt.CanalTelegram()])
-            assert res == {"CanalTelegram": False}
+            assert res == {"telegram": False}
             assert await nt.notificar_cambio_estado(db, 1, "Aviso", "ACTIVO") == "none"
             # Canal Log siempre traza (observabilidad).
             res2 = await nt.despachar(db, 1, "hola", canales=[nt.CanalLog()])
-            assert res2 == {"CanalLog": True}
+            assert res2 == {"log": True}
             # Estado desconocido -> none.
             assert await nt.notificar_cambio_estado(db, 1, "Aviso", "INVENTADO") == "none"
 

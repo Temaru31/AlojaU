@@ -3,17 +3,16 @@ import logging
 from fastapi import APIRouter
 import asyncio
 from typing import Optional
-from fastapi import File, HTTPException, Depends, Request, UploadFile
+from fastapi import File, HTTPException, Depends, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 from app.core.security import get_current_user, id_propietario, ClaimsUsuario
-from app.core.config import settings
 from app.core.db_utils import rollback_seguro
 from app.core.logseguro import exc_resumen
 from app.core.rate_limit import registrar_intento, registrar_intento_persistente, verificar_intentos_fallidos
 from app.db.session import get_session
-from app.services.storage import borrar_local_si_huerfano
+from app.services.storage import StorageBackend, borrar_local_si_huerfano, get_storage
 from app.core.normalizacion import normalizar_email
 from app.routers.auth.comun import (
     _hash_password_async,
@@ -181,17 +180,17 @@ AVATAR_WINDOW_S = 3600.0
 
 @router.post("/avatar", summary="M3: subir avatar (cualquier rol autenticado, 5MB, imagen)")
 async def subir_avatar(
-    request: Request,
     file: UploadFile = File(..., description="Imagen de perfil, max 5MB, JPEG/PNG/WebP/GIF"),
     user: ClaimsUsuario = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
+    storage: StorageBackend = Depends(get_storage),
 ):
     """M3 endpoint dedicado (no reutiliza /upload/una que exige ARRENDADOR).
 
     Requiere solo sesión activa (ESTUDIANTE incluido). Valida MIME + 5MB y
     actualiza `foto_perfil_url` en la misma transacción.
     """
-    return await _avatar_guardar(request, file, user, db)
+    return await _avatar_guardar(storage, file, user, db)
 
 
 # Firma mínima del contenido por MIME (misma política que uploads.py, sin Pillow).
@@ -232,20 +231,16 @@ async def _leer_avatar(file, mime: str) -> bytes:
     return b"".join(chunks)
 
 
-async def _subir_avatar(request, content: bytes, ext: str, mime: str) -> str:
-    """Guarda en el storage configurado (disco/Cloudinary) y devuelve la URL pública."""
+async def _subir_avatar(storage: StorageBackend, content: bytes, ext: str, mime: str) -> str:
+    """Guarda en el storage inyectado (disco/Cloudinary) y devuelve la URL pública.
+
+    El aviso de disco efímero en prod lo deja `get_storage_backend`.
+    """
     import uuid as _uuid
     try:
-        from app.services.storage import get_storage_backend
-        base = str(request.base_url).rstrip("/") if request is not None else ""
-        backend = get_storage_backend(base_url=base or "http://localhost")
-        # Disco local en prod = EFÍMERO (Render lo borra al redeploy). No se
-        # rompe, pero se advierte: para avatares durables configura CLOUDINARY_*.
-        if getattr(backend, "name", "") == "local" and getattr(settings, "ENV", "dev") == "prod":
-            logger.warning("[avatar] prod con disco EFÍMERO (sin CLOUDINARY_*): el avatar se perderá al redeploy")
         filename = f"avatar-{_uuid.uuid4().hex}{ext}"
         # Subida fuera del event loop: puede tardar segundos.
-        return await asyncio.to_thread(backend.save, content, filename, mime)
+        return await asyncio.to_thread(storage.save, content, filename, mime)
     except HTTPException:
         raise
     except Exception as e:
@@ -280,7 +275,7 @@ async def _persistir_avatar(db: AsyncSession, uid: int, url: str) -> dict:
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
 
-async def _avatar_guardar(request, file, user: ClaimsUsuario, db: AsyncSession) -> dict:
+async def _avatar_guardar(storage: StorageBackend, file, user: ClaimsUsuario, db: AsyncSession) -> dict:
     uid = id_propietario(user)
     mime, ext = _validar_formato_avatar(file)
     # Throttle tras validar forma (los 400 no queman cuota ni
@@ -289,7 +284,7 @@ async def _avatar_guardar(request, file, user: ClaimsUsuario, db: AsyncSession) 
                       "Demasiadas subidas de avatar, espera 1 hora")
     await verificar_intentos_fallidos(db, f"avatar:{uid}", limite=AVATAR_LIMIT, ventana_s=int(AVATAR_WINDOW_S))
     content = await _leer_avatar(file, mime)
-    url = await _subir_avatar(request, content, ext, mime)
+    url = await _subir_avatar(storage, content, ext, mime)
     return await _persistir_avatar(db, uid, url)
 
 
