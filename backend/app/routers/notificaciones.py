@@ -10,13 +10,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, Field, model_validator
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user, id_propietario, ClaimsUsuario
 from app.core.logseguro import exc_resumen
 from app.core.pagination import paginate_params
-from app.db.session import get_session
+from app.repositories.notificaciones_repo import NotificacionesRepo, get_notificaciones_repo
 
 import logging
 from app.core.db_utils import rollback_seguro
@@ -120,33 +118,21 @@ async def listar(
     size: int = Query(9, ge=1, le=50),
     solo_no_leidas: bool = Query(False),
     user: ClaimsUsuario = Depends(get_current_user),
-    db: AsyncSession = Depends(get_session),
+    repo: NotificacionesRepo = Depends(get_notificaciones_repo),
 ):
     """Paginado ≤50 + conteo de no leídas. Sin escrituras (ni purga)."""
     uid = id_propietario(user)
     try:
-        from app.models import Notificacion
         offset, size = paginate_params(page, size)
-        conds = [Notificacion.usuario_id == uid]
-        if solo_no_leidas:
-            conds.append(Notificacion.leida.is_(False))
-        total = (await db.execute(
-            select(func.count()).select_from(Notificacion).where(*conds))).scalar() or 0
-        rows = (await db.execute(
-            select(Notificacion).where(*conds)
-            .order_by(Notificacion.created_at.desc()).offset(offset).limit(size)
-        )).scalars().all()
-        no_leidas = (await db.execute(
-            select(func.count()).select_from(Notificacion).where(
-                Notificacion.usuario_id == uid, Notificacion.leida.is_(False))
-        )).scalar() or 0
+        total, rows = await repo.pagina(uid, offset, size, solo_no_leidas)
+        no_leidas = await repo.no_leidas(uid)
         pages = (total + size - 1) // size if size else 1
         return {"items": [_a_out(n) for n in rows], "total": total,
                 "no_leidas": no_leidas, "page": page, "size": size, "pages": pages}
     except HTTPException:
         raise
     except Exception as e:
-        await rollback_seguro(db, "listar")
+        await rollback_seguro(repo.db, "listar")
         logger.error(f"[notificaciones listar] DB falló: {exc_resumen(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
@@ -154,25 +140,18 @@ async def listar(
 @router.patch("/leer-todas", summary="Marcar toda la bandeja como leída")
 async def leer_todas(
     user: ClaimsUsuario = Depends(get_current_user),
-    db: AsyncSession = Depends(get_session),
+    repo: NotificacionesRepo = Depends(get_notificaciones_repo),
 ):
     """Un UPDATE por usuario. Declarada ANTES de /{id}/leer (orden de rutas)."""
     uid = id_propietario(user)
     try:
-        from app.models import Notificacion
-        ahora = datetime.now(timezone.utc)
-        res = await db.execute(
-            Notificacion.__table__.update().where(
-                Notificacion.usuario_id == uid,
-                Notificacion.leida.is_(False),
-            ).values(leida=True, leida_en=ahora)
-        )
-        await db.commit()
-        return {"actualizadas": res.rowcount or 0}
+        actualizadas = await repo.marcar_todas_leidas(uid)
+        await repo.db.commit()
+        return {"actualizadas": actualizadas}
     except HTTPException:
         raise
     except Exception as e:
-        await rollback_seguro(db, "leer_todas")
+        await rollback_seguro(repo.db, "leer_todas")
         logger.error(f"[notificaciones leer-todas] DB falló: {exc_resumen(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
@@ -181,27 +160,26 @@ async def leer_todas(
 async def leer_una(
     nid: int = Path(..., ge=1),
     user: ClaimsUsuario = Depends(get_current_user),
-    db: AsyncSession = Depends(get_session),
+    repo: NotificacionesRepo = Depends(get_notificaciones_repo),
 ):
     """404 si no existe, 403 si es ajena (IDOR)."""
     uid = id_propietario(user)
     try:
-        from app.models import Notificacion
-        n = await db.get(Notificacion, nid)
+        n = await repo.notificacion(nid)
         if n is None:
             raise HTTPException(status_code=404, detail="Notificación no encontrada")
         if int(n.usuario_id) != uid:
             raise HTTPException(status_code=403, detail="No puedes leer avisos ajenos")
         n.leida = True
         n.leida_en = datetime.now(timezone.utc)
-        await db.commit()
-        await db.refresh(n)
+        await repo.db.commit()
+        await repo.db.refresh(n)
         return _a_out(n)
     except HTTPException:
-        await rollback_seguro(db, "leer_una")
+        await rollback_seguro(repo.db, "leer_una")
         raise
     except Exception as e:
-        await rollback_seguro(db, "leer_una")
+        await rollback_seguro(repo.db, "leer_una")
         logger.error(f"[notificaciones leer] DB falló: {exc_resumen(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
@@ -212,7 +190,7 @@ async def leer_una(
 async def crear_busqueda(
     data: BusquedaIn,
     user: ClaimsUsuario = Depends(get_current_user),
-    db: AsyncSession = Depends(get_session),
+    repo: NotificacionesRepo = Depends(get_notificaciones_repo),
 ):
     """Valida tope anti-abuso + FKs de catálogo. 422 con guía si algo falla."""
     uid = id_propietario(user)
@@ -220,25 +198,16 @@ async def crear_busqueda(
         raise HTTPException(status_code=422, detail=MENSAJE_SIN_FILTROS)
     try:
         from app.models import BusquedaGuardada
-        n_activas = (await db.execute(
-            select(func.count()).select_from(BusquedaGuardada).where(
-                BusquedaGuardada.usuario_id == uid,
-                BusquedaGuardada.activa.is_(True))
-        )).scalar() or 0
-        if n_activas >= MAX_ALERTAS_ACTIVAS:
+        if await repo.alertas_activas(uid) >= MAX_ALERTAS_ACTIVAS:
             raise HTTPException(
                 status_code=422,
                 detail=f"Has alcanzado el límite de {MAX_ALERTAS_ACTIVAS} alertas activas. "
                        f"Gestiona o elimina una existente para crear una nueva.",
             )
-        if data.campus_id is not None:
-            from app.models import CampusUniversitario
-            if await db.get(CampusUniversitario, data.campus_id) is None:
-                raise HTTPException(status_code=422, detail="campus_id no existe")
-        if data.zona_barrio_id is not None:
-            from app.models import ZonaBarrio
-            if await db.get(ZonaBarrio, data.zona_barrio_id) is None:
-                raise HTTPException(status_code=422, detail="zona_barrio_id no existe")
+        if data.campus_id is not None and not await repo.existe_campus(data.campus_id):
+            raise HTTPException(status_code=422, detail="campus_id no existe")
+        if data.zona_barrio_id is not None and not await repo.existe_zona(data.zona_barrio_id):
+            raise HTTPException(status_code=422, detail="zona_barrio_id no existe")
         b = BusquedaGuardada(
             usuario_id=uid, nombre=(data.nombre or "").strip() or None,
             precio_min=data.precio_min, precio_max=data.precio_max,
@@ -246,15 +215,15 @@ async def crear_busqueda(
             tipo=(data.tipo.strip().upper() if data.tipo else None) or None,
             servicios_ids=[int(s) for s in (data.servicios_ids or [])],
         )
-        db.add(b)
-        await db.commit()
-        await db.refresh(b)
+        repo.db.add(b)
+        await repo.db.commit()
+        await repo.db.refresh(b)
         return _b_out(b)
     except HTTPException:
-        await rollback_seguro(db, "crear_busqueda")
+        await rollback_seguro(repo.db, "crear_busqueda")
         raise
     except Exception as e:
-        await rollback_seguro(db, "crear_busqueda")
+        await rollback_seguro(repo.db, "crear_busqueda")
         logger.error(f"[busquedas crear] DB falló: {exc_resumen(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
@@ -262,21 +231,16 @@ async def crear_busqueda(
 @router_busquedas.get("", summary="Listar mis alertas")
 async def listar_busquedas(
     user: ClaimsUsuario = Depends(get_current_user),
-    db: AsyncSession = Depends(get_session),
+    repo: NotificacionesRepo = Depends(get_notificaciones_repo),
 ):
     """Todas las mías (≤10 activas + inactivas), recientes primero."""
     uid = id_propietario(user)
     try:
-        from app.models import BusquedaGuardada
-        rows = (await db.execute(
-            select(BusquedaGuardada).where(BusquedaGuardada.usuario_id == uid)
-            .order_by(BusquedaGuardada.id.desc())
-        )).scalars().all()
-        return [_b_out(b) for b in rows]
+        return [_b_out(b) for b in await repo.alertas(uid)]
     except HTTPException:
         raise
     except Exception as e:
-        await rollback_seguro(db, "listar_busquedas")
+        await rollback_seguro(repo.db, "listar_busquedas")
         logger.error(f"[busquedas listar] DB falló: {exc_resumen(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="Base de datos no disponible")
 
@@ -285,25 +249,24 @@ async def listar_busquedas(
 async def eliminar_busqueda(
     bid: int = Path(..., ge=1),
     user: ClaimsUsuario = Depends(get_current_user),
-    db: AsyncSession = Depends(get_session),
+    repo: NotificacionesRepo = Depends(get_notificaciones_repo),
 ):
     """Borrado físico (config propia, sin auditoría): 404/403. Las
     notificaciones ya creadas se conservan (busqueda_id pasa a NULL)."""
     uid = id_propietario(user)
     try:
-        from app.models import BusquedaGuardada
-        b = await db.get(BusquedaGuardada, bid)
+        b = await repo.alerta(bid)
         if b is None:
             raise HTTPException(status_code=404, detail="Alerta no encontrada")
         if int(b.usuario_id) != uid:
             raise HTTPException(status_code=403, detail="No puedes borrar alertas ajenas")
-        await db.delete(b)
-        await db.commit()
+        await repo.db.delete(b)
+        await repo.db.commit()
         return {"eliminada": True, "id": bid}
     except HTTPException:
-        await rollback_seguro(db, "eliminar_busqueda")
+        await rollback_seguro(repo.db, "eliminar_busqueda")
         raise
     except Exception as e:
-        await rollback_seguro(db, "eliminar_busqueda")
+        await rollback_seguro(repo.db, "eliminar_busqueda")
         logger.error(f"[busquedas eliminar] DB falló: {exc_resumen(e)}", exc_info=True)
         raise HTTPException(status_code=503, detail="Base de datos no disponible")

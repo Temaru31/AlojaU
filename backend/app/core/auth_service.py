@@ -1,6 +1,6 @@
 """v13 AuthService: abstracción de identidad desacoplada del proveedor.
 
-Clean Architecture: el resto de la app (routers) habla con AuthService,
+Clean Architecture: `get_current_user` valida tokens con AuthService,
 nunca con SDKs de Supabase directamente. Cambiar de proveedor (Auth0,
 Cognito, Firebase...) = implementar esta interfaz, sin tocar routers.
 
@@ -29,42 +29,33 @@ import jwt as pyjwt
 
 from app.core.config import settings
 from app.core.logseguro import exc_resumen
-from app.core.normalizacion import normalizar_email
 
 logger = logging.getLogger("alojau.auth_service")
 
 
 class AuthService(ABC):
-    """Interfaz de identidad. Todo router depende de esto, no de SDKs."""
+    """Verificador de tokens de identidad (lo único que pide `get_current_user`).
 
-    @abstractmethod
-    def create_token(self, data: dict) -> str:
-        ...
+    La emisión de tokens propios vive en `core.security.create_token`: no
+    todos los proveedores emiten (Supabase solo se valida).
+    """
+
+    # Si el token no es de este proveedor (401), ¿probar con el local HS256?
+    # Permite convivir con sesiones locales durante una migración de proveedor.
+    admite_respaldo_local: bool = False
 
     @abstractmethod
     def decode_token(self, token: str) -> dict:
-        ...
-
-    @abstractmethod
-    def normalize_email(self, email: str) -> str:
         ...
 
 
 class LocalAuthService(AuthService):
     """Proveedor local HS256 (cero dependencias externas, free-tier forever)."""
 
-    def create_token(self, data: dict) -> str:
-        from app.core.security import create_token as _create
-
-        return _create(data)
-
     def decode_token(self, token: str) -> dict:
         from app.core.security import decode_token as _decode
 
         return _decode(token)
-
-    def normalize_email(self, email: str) -> str:
-        return normalizar_email(email)
 
 
 # --- Caché en memoria del JWKS (evita 1 fetch por request en free tier) ---
@@ -141,20 +132,14 @@ class SupabaseAuthService(AuthService):
     aud (SUPABASE_AUD, default "authenticated") y exp.
     """
 
+    admite_respaldo_local = True
+
     def __init__(self, jwks_url: str = "", audience: str = "authenticated",
                  issuer: str = "") -> None:
         self.jwks_url = jwks_url or settings.jwks_url
         self.audience = audience or settings.SUPABASE_AUD
         base = (settings.SUPABASE_URL or "").rstrip("/")
         self.issuer = issuer or (f"{base}/auth/v1" if base else "")
-
-    def create_token(self, data: dict) -> str:
-        # Supabase emite sus propios tokens; este proveedor es solo validación.
-        # La creación local sigue siendo HS256 para sesiones propias.
-        return LocalAuthService().create_token(data)
-
-    def normalize_email(self, email: str) -> str:
-        return normalizar_email(email)
 
     def decode_token(self, token: str) -> dict:
         from fastapi import HTTPException
@@ -228,7 +213,7 @@ def decode_token_provider_agnostic(token: str) -> dict:
     from fastapi import HTTPException
 
     svc = get_auth_service()
-    if isinstance(svc, SupabaseAuthService):
+    if svc.admite_respaldo_local:
         try:
             return svc.decode_token(token)
         except HTTPException as e:

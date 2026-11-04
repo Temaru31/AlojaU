@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { getCandidatosRoomies, api } from '../services/api'
-import { authHead } from '../services/authHeaders'
+import { getCandidatosRoomies } from '../services/api'
 import { calcularCompletitudRoomie, obtenerBandaCompatibilidad } from '../utils/preferenciasRoomie'
 import { Users, Sparkles, SlidersHorizontal, ChevronRight, AlertCircle } from 'lucide-react'
 import TarjetaCandidato from './roomies/TarjetaCandidato'
 import ModalCompatibilidad from './roomies/ModalCompatibilidad'
 import { CANDIDATOS_DEMO } from './roomies/candidatosDemo'
+import { obtenerPerfil } from '../services/cuentaApi'
 
 export default function Roomies() {
   const { user, token } = useAuth()
@@ -29,14 +29,14 @@ export default function Roomies() {
         // Cargar candidatos y perfil fresco en paralelo
         const [resCandidatos, resPerfil] = await Promise.allSettled([
           getCandidatosRoomies(token, { limite: 20 }),
-          api.get('/api/auth/perfil', authHead(token)),
+          obtenerPerfil(token),
         ])
 
         if (!vivo) return
 
         // Actualizar preferencias con datos frescos del servidor
-        if (resPerfil.status === 'fulfilled' && resPerfil.value?.data?.preferencias) {
-          setMisPreferencias(resPerfil.value.data.preferencias)
+        if (resPerfil.status === 'fulfilled' && resPerfil.value?.preferencias) {
+          setMisPreferencias(resPerfil.value.preferencias)
         }
 
         if (resCandidatos.status === 'fulfilled') {

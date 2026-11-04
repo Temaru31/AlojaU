@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Check, Lock } from 'lucide-react'
-import { api } from '../../services/api'
-import { authHead, bearer } from '../../services/authHeaders'
 import { emitAuthChange, limpiarSesionLocal } from '../../contexts/AuthContext'
 import { formatearSesionFecha, etiquetaDispositivo } from '../../utils/sesion'
 import { fortalezaPassword } from '../../utils/perfil'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import { notifyToast } from '../../components/Toast'
+import { cambiarPassword, eliminarCuenta, listarSesiones, revocarTodasLasSesiones } from '../../services/cuentaApi'
 
 // Pestaña Seguridad: contraseña, sesiones activas y borrado de cuenta.
 // `onCuentaCerrada` se llama cuando este token deja de valer (revocación o borrado).
@@ -39,12 +38,7 @@ export default function SeguridadTab({ token, perfil, onError, onCuentaCerrada }
     setEliminando(true)
     setError('')
     try {
-      await api.request({
-        method: 'delete',
-        url: '/api/auth/cuenta',
-        data: { confirm_email: delEmail, password: delPass || undefined },
-        headers: bearer(token),
-      })
+      await eliminarCuenta(delEmail, delPass, token)
       // Limpieza total compartida (no solo el token).
       limpiarSesionLocal()
       onCuentaCerrada()
@@ -58,10 +52,7 @@ export default function SeguridadTab({ token, perfil, onError, onCuentaCerrada }
 
   const cargarSesiones = async (authToken) => {
     try {
-      const r = await api.get('/api/auth/sesiones', {
-        headers: bearer(authToken),
-      })
-      setSesiones(Array.isArray(r.data) ? r.data : [])
+      setSesiones(await listarSesiones(authToken))
     } catch {
       setSesiones(null)
     }
@@ -76,9 +67,7 @@ export default function SeguridadTab({ token, perfil, onError, onCuentaCerrada }
     setRevocando(true)
     setError('')
     try {
-      await api.post('/api/auth/sesiones/revocar-todas', {}, {
-        headers: bearer(token),
-      })
+      await revocarTodasLasSesiones(token)
       // Este token también murió -> limpieza total + raíz (sin fantasma).
       setARevocar(false)
       limpiarSesionLocal()
@@ -99,10 +88,7 @@ export default function SeguridadTab({ token, perfil, onError, onCuentaCerrada }
     setPwSaving(true)
     setError('')
     try {
-      await api.patch('/api/auth/perfil/password',
-        { actual: pwActual, nueva: pwNueva },
-        authHead(token)
-      )
+      await cambiarPassword(pwActual, pwNueva, token)
       notifyToast('Contraseña actualizada con éxito')
       setPwActual('')
       setPwNueva('')

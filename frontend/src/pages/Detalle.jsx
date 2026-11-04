@@ -26,29 +26,7 @@ import ContactoArrendador from './detalle/ContactoArrendador'
 import HistorialInmueble from './detalle/HistorialInmueble'
 import SimilaresZona from './detalle/SimilaresZona'
 import BarraContactoMovil from './detalle/BarraContactoMovil'
-
-
-function leerContactos() {
-  try {
-    const raw = localStorage.getItem('alojau_contactos')
-    const parsed = JSON.parse(raw || '[]')
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
-}
-
-function guardarContacto(id, titulo) {
-  try {
-    const prev = leerContactos()
-    if (prev.some(c => c.id === id)) return prev
-    const next = [...prev, { id, titulo: titulo || '', fecha: new Date().toISOString() }]
-    localStorage.setItem('alojau_contactos', JSON.stringify(next.slice(-100)))
-    return next
-  } catch {
-    return []
-  }
-}
+import { guardarContacto, leerContactos, registrarVisto } from '../utils/actividadLocal'
 
 export default function Detalle() {
   const { id } = useParams()
@@ -167,13 +145,7 @@ export default function Detalle() {
   useEffect(() => {
     if (!pub?.id) return
     setYaContactado(leerContactos().some(c => c.id === pub.id))
-    try {
-      const raw = localStorage.getItem('alojau_historial')
-      const hist = JSON.parse(raw || '[]')
-      const lista = Array.isArray(hist) ? hist.filter(h => h.id !== pub.id) : []
-      lista.unshift({ id: pub.id, titulo: pub.titulo || '', fecha: new Date().toISOString() })
-      localStorage.setItem('alojau_historial', JSON.stringify(lista.slice(0, 30)))
-    } catch { /* historial opcional */ }
+    registrarVisto(pub)
   }, [pub?.id])
 
   // UX: al abrir (o cambiar) una publicación, volver al tope (fotos/título),

@@ -10,14 +10,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Bell } from 'lucide-react'
-import { api } from '../services/api'
+import { crearAlerta, eliminarAlerta, listarAlertas, listarCampus } from '../services/alertasApi'
 import { useAuth } from '../contexts/AuthContext'
 import { notifyToast } from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { SERVICIOS_OPCIONES } from '../components/Filtros'
 import useTiposVivienda from '../hooks/useTiposVivienda'
 import { MAX_ALERTAS, MENSAJE_SIN_FILTROS, alertaTieneFiltros, filtrosABusqueda } from '../utils/alertas'
-import { bearer } from '../services/authHeaders'
 
 export function GuardarAlerta({ filtros, campusId }) {
   const { token } = useAuth()
@@ -37,9 +36,7 @@ export function GuardarAlerta({ filtros, campusId }) {
     }
     setGuardando(true)
     try {
-      await api.post('/api/busquedas-guardadas', body, {
-        headers: bearer(token),
-      })
+      await crearAlerta(body, token)
       notifyToast('Alerta guardada: te avisaremos de nuevos arriendos.')
     } catch (e) {
       const d = e?.response?.data?.detail
@@ -78,20 +75,16 @@ export default function Alertas() {
   const vivoRef = useRef(true)
   useEffect(() => () => { vivoRef.current = false }, [])
 
-  const head = bearer(token)
   const activas = alertas.filter((a) => a.activa).length
   const topeAlcanzado = activas >= MAX_ALERTAS
 
   const cargar = async () => {
     if (!token) return
     try {
-      const [rAlertas, rCampus] = await Promise.all([
-        api.get('/api/busquedas-guardadas', { headers: head }),
-        api.get('/api/campus').catch(() => ({ data: [] })),
-      ])
+      const [lista, lugares] = await Promise.all([listarAlertas(token), listarCampus()])
       if (!vivoRef.current) return
-      setAlertas(Array.isArray(rAlertas.data) ? rAlertas.data : [])
-      if (Array.isArray(rCampus.data)) setCampus(rCampus.data)
+      setAlertas(lista)
+      setCampus(lugares)
       setError('')
     } catch {
       if (vivoRef.current) setError('No se pudieron cargar tus alertas.')
@@ -121,9 +114,9 @@ export default function Alertas() {
     setCreando(true)
     setError('')
     try {
-      const r = await api.post('/api/busquedas-guardadas', body, { headers: head })
+      const nueva = await crearAlerta(body, token)
       if (!vivoRef.current) return
-      setAlertas((cur) => [r.data, ...cur])
+      setAlertas((cur) => [nueva, ...cur])
       setForm(FORM_INICIAL)
       notifyToast('Alerta creada.')
     } catch (err) {
@@ -148,7 +141,7 @@ export default function Alertas() {
     if (!aEliminar || eliminando) return
     setEliminando(true)
     try {
-      await api.delete(`/api/busquedas-guardadas/${aEliminar}`, { headers: head })
+      await eliminarAlerta(aEliminar, token)
       if (!vivoRef.current) return
       setAlertas((cur) => cur.filter((a) => a.id !== aEliminar))
       setAEliminar(null)

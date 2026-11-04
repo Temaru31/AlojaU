@@ -8,10 +8,9 @@
 // Uso: <TelegramVincular token={token} vinculado={perfil?.telegram_vinculado} />
 import { useEffect, useRef, useState } from 'react'
 import { Check } from 'lucide-react'
-import { api } from '../services/api'
 import { notifyToast } from './Toast'
 import ConfirmDialog from './ConfirmDialog'
-import { bearer } from '../services/authHeaders'
+import { desvincularTelegram, enlaceTelegram, obtenerPerfil } from '../services/cuentaApi'
 
 export function esErrorSinBot(err) {
   return err?.response?.status === 503
@@ -71,11 +70,9 @@ export default function TelegramVincular({
         await sleep(TELEGRAM_POLL_MS)
         if (cancelado || !vivoRef.current) return
         try {
-          const r = await api.get('/api/auth/perfil', {
-            headers: bearer(token),
-          })
+          const perfil = await obtenerPerfil(token)
           if (cancelado || !vivoRef.current) return
-          if (r.data?.telegram_vinculado) {
+          if (perfil?.telegram_vinculado) {
             onVinculadoRef.current?.(true)
             notifyToast('¡Número verificado con éxito en AlojaU!')
             return
@@ -104,16 +101,14 @@ export default function TelegramVincular({
       setCargandoEnlace(true)
     }
     try {
-      const r = await api.get('/api/auth/telegram/enlace', {
-        headers: bearer(token),
-      })
-      const url = r.data?.bot_url
+      const datos = await enlaceTelegram(token)
+      const url = datos?.bot_url
       if (!url || !url.startsWith('https://t.me/')) {
         throw new Error('Respuesta inválida del bot')
       }
       if (!vivoRef.current) return
       setEnlace(url)
-      setExpiraSeg(r.data?.expira_segundos || 600)
+      setExpiraSeg(datos?.expira_segundos || 600)
     } catch (e) {
       if (!vivoRef.current) return
       if (esErrorSinBot(e)) {
@@ -151,9 +146,7 @@ export default function TelegramVincular({
     setError('')
     setDesvinculando(true)
     try {
-      await api.post('/api/auth/telegram/desvincular', {}, {
-        headers: bearer(token),
-      })
+      await desvincularTelegram(token)
       setBotAbierto(false)
       setEnlace('')
       setExpiraSeg(0)
@@ -187,11 +180,9 @@ export default function TelegramVincular({
         if (delays[i]) await sleep(delays[i])
         if (!vivoRef.current) return
         try {
-          const r = await api.get('/api/auth/perfil', {
-            headers: bearer(token),
-          })
+          const perfil = await obtenerPerfil(token)
           if (!vivoRef.current) return
-          if (r.data?.telegram_vinculado) {
+          if (perfil?.telegram_vinculado) {
             onVinculado?.(true)
             setIntentos(0)
             return

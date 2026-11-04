@@ -292,7 +292,8 @@ def test_api_admin_directo(stores_limpios):
         from app.models import Publicacion
 
         admin = {"id": 2, "rol": "ADMIN"}
-        m = await a.metricas(db, admin)
+        from app.repositories.metricas_repo import MetricasRepo
+        m = await a.metricas(MetricasRepo(db), admin)
         assert m.total_publicaciones >= 6
         pen = await a.pendientes(1, 12, db, admin)
         assert pen["total"] >= 0

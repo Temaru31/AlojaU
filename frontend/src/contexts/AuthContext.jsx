@@ -6,9 +6,8 @@
 // además se escucha 'storage' (multi-pestaña). El perfil se valida contra
 // GET /api/auth/perfil; si el token es inválido (401) se limpia solo.
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react'
-import { api } from '../services/api'
-import { bearer } from '../services/authHeaders'
 import { TOKEN_KEY, borrarToken, guardarToken, leerToken } from '../services/tokenStorage'
+import { cerrarSesion, obtenerPerfil } from '../services/cuentaApi'
 
 export { TOKEN_KEY }
 
@@ -72,10 +71,7 @@ export function AuthProvider({ children }) {
     }
     setLoading(true)
     try {
-      const r = await api.get('/api/auth/perfil', {
-        headers: bearer(t),
-      })
-      setUser(r.data || null)
+      setUser((await obtenerPerfil(t)) || null)
     } catch (err) {
       // Token inválido/expirado (401) o backend caído: no hay sesión válida.
       if (err?.response?.status === 401) {
@@ -119,9 +115,7 @@ export function AuthProvider({ children }) {
     const t = leerToken()
     if (t) {
       try {
-        await api.post('/api/auth/logout', {}, {
-          headers: bearer(t),
-        })
+        await cerrarSesion(t)
       } catch { /* best-effort: el estado local se limpia igual */ }
     }
     limpiarSesionLocal()

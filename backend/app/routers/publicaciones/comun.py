@@ -3,6 +3,7 @@ import logging
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.rate_limit import registrar_intento
+from app.repositories.publicacion_repo import select_con_relaciones  # noqa: F401  (reexportada)
 
 logger = logging.getLogger("alojau.publicaciones")
 
@@ -35,17 +36,3 @@ async def _exigir_tipo_activo(db: AsyncSession, tipo: str, campo: str) -> None:
     from app.services import housing_types
     if tipo not in await housing_types.slugs_activos(db):
         raise HTTPException(status_code=422, detail=f"{campo} '{tipo}' no válido o inactivo")
-
-
-def select_con_relaciones():
-    """SELECT de avisos con fotos, servicios y zona precargados (lo que pide la tarjeta)."""
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
-
-    from app.models import Publicacion
-
-    return select(Publicacion).options(
-        selectinload(Publicacion.imagenes),
-        selectinload(Publicacion.servicios),
-        selectinload(Publicacion.zona),
-    )

@@ -314,3 +314,17 @@ async def query_lista(
     pubs = await fetch_page(db, conds, campus_id, size_norm, offset)
     reportes_map, users_map, dist_map = await fetch_page_aggregates(db, pubs, campus_id)
     return total, pubs, reportes_map, users_map, dist_map, size_norm
+
+
+def select_con_relaciones():
+    """SELECT de avisos con fotos, servicios y zona precargados (lo que pide la tarjeta)."""
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from app.models import Publicacion
+
+    return select(Publicacion).options(
+        selectinload(Publicacion.imagenes),
+        selectinload(Publicacion.servicios),
+        selectinload(Publicacion.zona),
+    )

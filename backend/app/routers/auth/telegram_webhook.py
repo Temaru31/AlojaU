@@ -7,14 +7,15 @@ import secrets
 import time
 from datetime import datetime, timezone
 from fastapi import HTTPException, Depends, Request
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db_utils import rollback_seguro
 from app.core.logseguro import exc_resumen
 from app.core.net import ip_para_limites
 from app.db.session import get_session
-from app.routers.auth.comun import digitos_nacionales
+from app.core.normalizacion import digitos_nacionales
+from app.services import verificacion_telefono as verificacion
 from app.routers.auth.telegram_envio import _telegram_send_message_async
 from app.routers.auth.telegram_vinculo import (
     _TELEGRAM_PENDIENTES,
@@ -61,8 +62,6 @@ def _extraer_start_payload(texto: str | None) -> str | None:
     return resto or ""
 
 
-
-
 # Respuestas del bot cuando el contacto compartido no permite verificar.
 _RECHAZOS_CONTACTO = {
     "contacto-ajeno": ("No pudimos confirmar que ese contacto sea tuyo. Usa el botón "
@@ -95,15 +94,11 @@ async def _procesar_contacto(db: AsyncSession, chat_id: str, from_id, contacto: 
     usuario = await _usuario_por_id(db, uid)
     if usuario is None:
         return await _rechazar_contacto(db, chat_id, "sin-usuario", pend)
-    whatsapp, _ = _telefono_verificado_de(usuario)
-    if not whatsapp:
-        return await _rechazar_contacto(db, chat_id, "sin-telefono", pend)
-    digitos10 = digitos_nacionales(contacto.get("phone_number"))
-    if await _telefono_o_chat_en_uso(db, digitos10, str(chat_id), uid) is not None:
-        return await _rechazar_contacto(db, chat_id, "duplicado", pend)
-    if not _contacto_coincide(contacto.get("phone_number"), whatsapp):
-        ultimos = (digitos10 or "")[-4:] or "????"
-        return await _rechazar_contacto(db, chat_id, "numero-distinto", pend, ultimos=ultimos)
+    telefono = contacto.get("phone_number")
+    motivo = await verificacion.motivo_rechazo(db, usuario, telefono, str(chat_id))
+    if motivo is not None:
+        ultimos = (digitos_nacionales(telefono) or "")[-4:] or "????"
+        return await _rechazar_contacto(db, chat_id, motivo, pend, ultimos=ultimos)
     if not await _vincular_telefono(db, usuario, pend, chat_id):
         return {"ok": True, "vinculado": False, "motivo": "persistencia"}
     from app.services import telegram as servicio_telegram
@@ -140,8 +135,7 @@ async def _rechazar_contacto(db: AsyncSession, chat_id: str, motivo: str,
 async def _vincular_telefono(db: AsyncSession, usuario, pend: dict, chat_id: str) -> bool:
     """Verifica el teléfono, vincula el chat y quema el vínculo en una transacción."""
     try:
-        usuario.telegram_chat_id = str(chat_id)
-        usuario.telefono_verificado = True
+        verificacion.marcar_verificado(usuario, chat_id)
         try:
             from app.services import notifications_matcher
             await notifications_matcher.notificar_telegram_vinculado(db, usuario_id=int(pend["user_id"]))
@@ -230,8 +224,7 @@ async def _atender_start(db: AsyncSession, chat_id: str, payload: str) -> dict:
     if usuario is None:
         await rollback_seguro(db, "_atender_start")
         return {"ok": True, "vinculado": False, "motivo": "sin-usuario"}
-    whatsapp, _ = _telefono_verificado_de(usuario)
-    if not whatsapp:
+    if not getattr(usuario, "telefono_whatsapp", None):
         await rollback_seguro(db, "_atender_start")
         await _telegram_send_message_async(
             chat_id,
@@ -274,65 +267,6 @@ async def _registrar_chat_pendiente(db: AsyncSession, chat_id: str, payload: str
         await rollback_seguro(db, "_registrar_chat_pendiente")
         logger.warning(f"[telegram webhook] no se pudo registrar pendiente: {exc_resumen(e)}")
         return False
-
-
-def _telefono_verificado_de(usuario) -> tuple:
-    """(whatsapp, verificado) del usuario."""
-    return getattr(usuario, "telefono_whatsapp", None), bool(getattr(usuario, "telefono_verificado", False))
-
-
-def _contacto_coincide(contact_phone, whatsapp) -> bool:
-    """True si el contacto de Telegram corresponde al guardado en AlojaU.
-
-    La prueba de titularidad LA DA Telegram (el servidor garantiza que un
-    `contact` con `user_id == remitente` es el número real de esa cuenta,
-    verificado por SMS al crearla). Aquí solo se compara contra el número
-    que el usuario guardó en su perfil, por últimos 10 dígitos.
-    """
-    if not whatsapp:
-        return False
-    a = digitos_nacionales(contact_phone)
-    b = digitos_nacionales(whatsapp)
-    return bool(a) and a == b
-
-
-async def _telefono_o_chat_en_uso(db: AsyncSession, digitos10: str | None,
-                                  chat_id: str, excluir_uid: int) -> str | None:
-    """Detecta reuso por OTRA cuenta activa. Retorna "telefono", "telegram" o None.
-
-    - Teléfono: otro usuario activo cuyo número termine en los mismos 10
-      dígitos (cubre variantes con/sin 57) vía SQL RIGHT().
-    - Telegram: otro usuario con el mismo `telegram_chat_id`.
-    Cuentas en soft-delete (`eliminado_en`) no cuentan (su número se libera).
-    Si la BD falla, propaga el error (fail-closed: nunca se vincula sin
-    comprobar unicidad).
-    """
-    try:
-        from app.models import Usuario
-        if digitos10:
-            res = await db.execute(
-                select(Usuario).where(
-                    Usuario.id != excluir_uid,
-                    Usuario.eliminado_en.is_(None),
-                    Usuario.telefono_whatsapp.is_not(None),
-                    func.right(Usuario.telefono_whatsapp, 10) == digitos10,
-                ).limit(1)
-            )
-            if res.scalars().first() is not None:
-                return "telefono"
-        res = await db.execute(
-            select(Usuario).where(
-                Usuario.id != excluir_uid,
-                Usuario.eliminado_en.is_(None),
-                Usuario.telegram_chat_id == str(chat_id),
-            ).limit(1)
-        )
-        if res.scalars().first() is not None:
-            return "telegram"
-    except Exception as e:
-        logger.error("[telegram] comprobación de unicidad falló: %s", exc_resumen(e))
-        raise
-    return None
 
 
 async def _usuario_por_id(db: AsyncSession, uid: int):

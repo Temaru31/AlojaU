@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { api } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
 import ConfirmDialog from '../components/ConfirmDialog'
 import Icono from '../components/Icono'
 import { notifyToast } from '../components/Toast'
 import PreferenciasRoomie from '../components/PreferenciasRoomie'
-import { authHead, bearer } from '../services/authHeaders'
 import { leerToken } from '../services/tokenStorage'
 import { checklistPerfil } from '../utils/perfil'
 import AccesoPerfil from './perfil/AccesoPerfil'
@@ -17,6 +15,7 @@ import ResumenCuenta from './perfil/ResumenCuenta'
 import SeguridadTab from './perfil/SeguridadTab'
 import { useBorradorPerfil } from './perfil/useBorradorPerfil'
 import { useMisStats } from './perfil/useMisStats'
+import { actualizarPerfil, obtenerPerfil } from '../services/cuentaApi'
 
 // Iconos del set propio (aria-hidden): misma gramática que PreferenceChip.
 const TABS = [
@@ -160,11 +159,9 @@ export default function Perfil() {
     setLoading(true)
     setError('')
     try {
-      const res = await api.get('/api/auth/perfil', {
-        headers: bearer(authToken)
-      })
-      setPerfil(res.data)
-      borrador.cargarDesde(res.data)
+      const datos = await obtenerPerfil(authToken)
+      setPerfil(datos)
+      borrador.cargarDesde(datos)
     } catch {
       setError('No se pudo cargar el perfil. Por favor inicia sesión nuevamente.')
       setPerfil(null)
@@ -188,9 +185,9 @@ export default function Perfil() {
     setSaving(true)
     setError('')
     try {
-      const res = await api.patch('/api/auth/perfil', borrador.cuerpo(), authHead(token))
-      setPerfil(res.data)
-      borrador.cargarDesde(res.data, { conNombre: false })
+      const datos = await actualizarPerfil(borrador.cuerpo(), token)
+      setPerfil(datos)
+      borrador.cargarDesde(datos, { conNombre: false })
       // Toast flotante (visible sin importar el scroll) en vez de banner fijo.
       notifyToast('Cambios guardados en tu perfil')
     } catch (err) {
