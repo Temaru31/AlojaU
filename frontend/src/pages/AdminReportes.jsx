@@ -2,7 +2,10 @@
 // Uso: ruta /admin/reportes. Ej: confirmar -> CONFIRMADO, descartar -> DESCARTADO.
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api } from '../services/api'
+import BreadcrumbsAdmin from '../components/BreadcrumbsAdmin'
+import { leerToken } from '../services/tokenStorage'
+import { listarReportesPendientes, resolverReporte } from '../services/adminApi'
+import { mensajeDeError } from '../services/erroresApi'
 
 const MOTIVO_LABEL = {
   POSIBLE_ESTAFA: 'Posible estafa',
@@ -22,10 +25,7 @@ export default function AdminReportes() {
     setLoading(true)
     setError('')
     try {
-      const token = localStorage.getItem('alojau_token') || ''
-      const headers = token ? { Authorization: `Bearer ${token}` } : {}
-      const r = await api.get('/api/reportes', { params: { estado: 'PENDIENTE' }, headers, signal })
-      setItems(r.data)
+      setItems(await listarReportesPendientes(leerToken(), { signal }))
     } catch (err) {
       if (err?.code === 'ERR_CANCELED') return
       const status = err?.response?.status
@@ -40,7 +40,7 @@ export default function AdminReportes() {
     }
   }
 
-  // OLA4: AbortController — desmontar aborta la carga en curso (sin setState tardío).
+  // AbortController — desmontar aborta la carga en curso (sin setState tardío).
   useEffect(() => {
     const controller = new AbortController()
     cargar(controller.signal)
@@ -51,13 +51,11 @@ export default function AdminReportes() {
     setActing(id)
     setError('')
     try {
-      const token = localStorage.getItem('alojau_token') || ''
-      await api.patch(`/api/reportes/${id}`, { accion }, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      })
+      const token = leerToken()
+      await resolverReporte(id, accion, token)
       setItems((prev) => prev.filter((x) => x.id !== id))
     } catch (err) {
-      setError(err?.response?.data?.detail || 'No se pudo actualizar el reporte.')
+      setError(mensajeDeError(err, 'No se pudo actualizar el reporte.'))
     } finally {
       setActing(null)
     }
@@ -65,11 +63,7 @@ export default function AdminReportes() {
 
   return (
     <div className="container-main py-6 md:py-8">
-      <nav className="flex items-center gap-2 text-xs text-neutral-400 mb-4">
-        <Link to="/" className="hover:text-navy-600">Buscar</Link>
-        <span>›</span>
-        <span className="text-neutral-600">Reportes pendientes</span>
-      </nav>
+      <BreadcrumbsAdmin actual="Reportes" volverA="/admin/dashboard" volverTexto="Panel" />
       <div className="flex items-center justify-between gap-3 mb-4">
         <h1 className="font-display text-xl md:text-2xl font-bold text-navy-900">
           Reportes pendientes {items.length > 0 && <span className="text-sm font-normal text-neutral-400">({items.length})</span>}
@@ -96,8 +90,14 @@ export default function AdminReportes() {
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-navy-800">
                   #{r.id} · {MOTIVO_LABEL[r.motivo] || r.motivo}
-                  <Link to={`/publicacion/${r.publicacion_id}`} className="ml-2 text-xs font-normal text-navy-600 hover:underline">
-                    ver aviso #{r.publicacion_id}
+                  <Link
+                    to={`/publicacion/${r.publicacion_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={`Abrir aviso #${r.publicacion_id} en nueva pestaña`}
+                    className="ml-2 text-xs font-medium text-navy-600 underline decoration-navy-300 underline-offset-2 hover:text-navy-800 hover:decoration-navy-600 transition"
+                  >
+                    ver aviso #{r.publicacion_id} ↗
                   </Link>
                 </p>
                 {r.detalle && <p className="text-xs text-neutral-500 mt-1 break-words">{r.detalle}</p>}
@@ -109,18 +109,18 @@ export default function AdminReportes() {
                 <button type="button"
                   onClick={() => actuar(r.id, 'descartar')}
                   disabled={acting === r.id}
-                  aria-label={`Descartar reporte ${r.id}`}
+                  aria-label={`Desestimar reporte ${r.id}`}
                   className="px-3 py-1.5 text-xs font-medium rounded-md border border-neutral-200 hover:bg-neutral-50 disabled:opacity-50"
                 >
-                  Descartar
+                  Desestimar Reporte
                 </button>
                 <button type="button"
                   onClick={() => actuar(r.id, 'confirmar')}
                   disabled={acting === r.id}
-                  aria-label={`Confirmar reporte ${r.id}`}
-                  className="px-3 py-1.5 text-xs font-medium rounded-md bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                  aria-label={`Aceptar y pausar anuncio del reporte ${r.id}`}
+                  className="px-3 py-1.5 text-xs font-semibold rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
                 >
-                  {acting === r.id ? '…' : 'Confirmar'}
+                  {acting === r.id ? '…' : 'Aceptar y Pausar Anuncio'}
                 </button>
               </div>
             </article>

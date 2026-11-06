@@ -6,14 +6,25 @@ Persistencia (Strategy via services/storage.py):
 - Dev/test sin CLOUDINARY_*: disco local `backend/uploads/` (efímero en Render).
 - Prod con CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET: Cloudinary `secure_url` persistente.
 """
+import asyncio
+import logging
 import os
 import uuid
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Request
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Path
 from pydantic import BaseModel
 
-from app.core.security import require_arrendador
-from app.services.storage import get_storage_backend
+from app.core.security import get_current_user, require_arrendador, id_propietario, ClaimsUsuario
+from app.services.storage import StorageBackend, get_storage
+from app.db.session import get_session
+from app.repositories import publicacion_repo as repo
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.db_utils import rollback_seguro
+from app.core.security import es_dueno_o_admin
+from app.core.rate_limit import registrar_intento
+from app.core.logseguro import exc_resumen
+
+logger = logging.getLogger("alojau.uploads")
 
 router = APIRouter(prefix="/api/publicaciones/upload", tags=["uploads"])
 
@@ -44,7 +55,9 @@ def _validate_mime_ext(file: UploadFile):
     # MIME exacto en lista blanca (sin startswith("image/"): colaba SVG).
     mime = (file.content_type or "").lower()
     if mime not in ALLOWED_MIME:
-        raise HTTPException(status_code=400, detail=f"Archivo {file.filename} no permitido (solo JPEG/PNG/WebP/GIF, SVG bloqueado)")
+        raise HTTPException(
+            status_code=400, detail=f"Archivo {file.filename} no permitido (solo JPEG/PNG/WebP/GIF, SVG bloqueado)"
+        )
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in ALLOWED_MIME[mime]:
         raise HTTPException(status_code=400, detail=f"Extensión {ext or '(sin extensión)'} no coincide con {mime}")
@@ -65,20 +78,36 @@ class UploadOut(BaseModel):
     count: int
 
 
+# Anti-flood de almacenamiento/cómputo: 30 subidas/hora por usuario
+# (una publicación exige 3-10 fotos; el avatar ya tiene su propio 10/h).
+# Memoria por worker (Render free = 1 instancia); PG no aplica aquí porque
+# la tabla rate_limit_attempts solo cuenta fallidos, no intentos.
+_UPLOAD_ATTEMPTS: dict[str, list[float]] = {}
+UPLOAD_LIMIT = 30
+UPLOAD_WINDOW_S = 3600.0
+
+
+def clear_upload_rate_limit_for_tests() -> None:
+    _UPLOAD_ATTEMPTS.clear()
+
+
+def _check_upload_rate_limit(uid: int) -> None:
+    registrar_intento(_UPLOAD_ATTEMPTS, f"upload:{uid}", UPLOAD_LIMIT, UPLOAD_WINDOW_S,
+                      "Demasiadas subidas, espera 1 hora")
+
+
 @router.post("", response_model=UploadOut, summary="HU-005 Upload 3-10 imágenes (solo ARRENDADOR)")
 async def upload_fotos(
-    request: Request,
     files: List[UploadFile] = File(..., description="3-10 imágenes, cada una max 5MB, image/*"),
-    user: dict = Depends(require_arrendador),
+    user: ClaimsUsuario = Depends(require_arrendador),
+    backend: StorageBackend = Depends(get_storage),
 ):
+    uid_t = id_propietario(user)
+    _check_upload_rate_limit(uid_t)
     if len(files) < MIN_FILES:
         raise HTTPException(status_code=422, detail=f"Mínimo {MIN_FILES} fotos (HU-005 C2), recibidas {len(files)}")
     if len(files) > MAX_FILES:
         raise HTTPException(status_code=422, detail=f"Máximo {MAX_FILES} fotos, recibidas {len(files)}")
-
-    # F3: Factory elige Local (dev) o Cloudinary (prod con CLOUDINARY_*).
-    base = str(request.base_url).rstrip("/")
-    backend = get_storage_backend(base_url=base)
 
     urls = []
     for file in files:
@@ -107,7 +136,193 @@ async def upload_fotos(
 
         # Nombre seguro uuid (evita path traversal y colisiones).
         filename = f"{uuid.uuid4().hex}{ext}"
-        url = backend.save(content, filename, mime)
+        # Subida (disco/Cloudinary, red de segundos) fuera del event loop.
+        url = await asyncio.to_thread(backend.save, content, filename, mime)
         urls.append(url)
 
     return {"urls": urls, "count": len(urls)}
+
+
+@router.post("/una", response_model=UploadOut, summary="Dueño: subir 1 imagen (gestor multimedia)")
+async def upload_una_foto(
+    file: UploadFile = File(..., description="1 imagen, max 5MB, image/*"),
+    user: ClaimsUsuario = Depends(require_arrendador),
+    backend: StorageBackend = Depends(get_storage),
+):
+    """Paso 1 del gestor: UNA foto (el /upload grupal exige 3-10).
+
+    Misma validación (MIME+magic+5MB+uuid). Respuesta compatible UploadOut.
+    """
+    uid_1 = id_propietario(user)
+    _check_upload_rate_limit(uid_1)
+    ext = _validate_mime_ext(file)
+    mime = (file.content_type or "").lower()
+    size = 0
+    chunks: list[bytes] = []
+    first = True
+    while True:
+        chunk = await file.read(CHUNK_SIZE)
+        if not chunk:
+            break
+        if first:
+            _check_magic(mime, chunk)
+            first = False
+        size += len(chunk)
+        if size > MAX_SIZE:
+            raise HTTPException(status_code=413, detail=f"Archivo {file.filename} excede 5MB")
+        chunks.append(chunk)
+    if size == 0:
+        raise HTTPException(status_code=400, detail=f"Archivo {file.filename} vacío")
+    filename = f"{uuid.uuid4().hex}{ext}"
+    url = await asyncio.to_thread(backend.save, b"".join(chunks), filename, mime)
+    return {"urls": [url], "count": 1}
+
+
+@router.delete("/{foto_id}", summary="Dueño: eliminar una foto del aviso")
+async def eliminar_foto(
+    foto_id: int = Path(..., ge=1),
+    db: AsyncSession = Depends(get_session),
+    user: ClaimsUsuario = Depends(get_current_user),
+):
+    """Gestión multimedia. Solo dueño o ADMIN. Reordena `orden`
+    contiguamente tras borrar (misma transacción). 401/403/404."""
+    from app.models import ImagenPublicacion, Publicacion
+
+    uid = id_propietario(user)
+    try:
+        img = await db.get(ImagenPublicacion, foto_id)
+        if not img:
+            raise HTTPException(status_code=404, detail="Foto no encontrada")
+        pub = await db.get(Publicacion, img.publicacion_id)
+        if not pub or not await es_dueno_o_admin(user, pub.usuario_id, db):
+            raise HTTPException(status_code=403, detail="Solo el dueño puede eliminar fotos")
+        pid = img.publicacion_id
+        await db.delete(img)
+        await db.flush()
+        # Compacta orden 1..N para que la portada siga siendo orden=1.
+        restantes = await repo.fotos_de_aviso(db, pid)
+        for i, r in enumerate(restantes, start=1):
+            r.orden = i
+        await db.commit()
+        # Borrado físico best-effort solo en disco local (Cloudinary: huérfana
+        # aceptada; el destroy remoto vive en el panel de Cloudinary).
+        try:
+            from urllib.parse import urlparse as _up
+            path = _up(img.url).path or ""
+            if path.startswith("/uploads/"):
+                local = os.path.join(UPLOAD_DIR, os.path.basename(path))
+                if os.path.isfile(local):
+                    os.remove(local)
+        except Exception as e:
+            logger.warning("[uploads] no se pudo borrar el archivo local: %s", exc_resumen(e))
+        return {"id": foto_id, "eliminada": True, "fotos_restantes": len(restantes)}
+    except HTTPException:
+        await rollback_seguro(db, "eliminar_foto")
+        raise
+    except Exception:
+        await rollback_seguro(db, "eliminar_foto")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
+
+
+class OrdenIn(BaseModel):
+    publicacion_id: int
+    orden_ids: list[int]
+
+
+class VincularIn(BaseModel):
+    publicacion_id: int
+    urls: list[str]
+
+
+@router.patch("/orden", summary="Dueño: reordenar fotos / cambiar portada")
+async def reordenar_fotos(
+    data: OrdenIn,
+    db: AsyncSession = Depends(get_session),
+    user: ClaimsUsuario = Depends(get_current_user),
+):
+    """Portada = primer id de `orden_ids` (pasa a orden=1).
+
+    Transacción explícita con orden temporal alto para no violar
+    UNIQUE(publicacion_id, orden) a mitad de camino. 401/403/404/422.
+    """
+    from app.models import ImagenPublicacion, Publicacion
+
+    uid = id_propietario(user)
+    if not data.orden_ids:
+        raise HTTPException(status_code=422, detail="orden_ids vacío")
+    try:
+        pub = await db.get(Publicacion, data.publicacion_id)
+        if not pub:
+            raise HTTPException(status_code=404, detail="Publicación no encontrada")
+        if not await es_dueno_o_admin(user, pub.usuario_id, db):
+            raise HTTPException(status_code=403, detail="Solo el dueño puede reordenar fotos")
+        fotos = await repo.fotos_de_aviso(db, data.publicacion_id)
+        por_id = {f.id: f for f in fotos}
+        if set(data.orden_ids) != set(por_id.keys()):
+            raise HTTPException(
+                status_code=422,
+                detail="orden_ids debe contener exactamente las fotos del aviso",
+            )
+        # Paso 1: orden temporal fuera de rango (evita colisión UNIQUE).
+        for i, fid in enumerate(data.orden_ids):
+            por_id[fid].orden = 1000 + i
+        await db.flush()
+        # Paso 2: orden final 1..N (portada = primero).
+        for i, fid in enumerate(data.orden_ids, start=1):
+            por_id[fid].orden = i
+        await db.commit()
+        return {"publicacion_id": data.publicacion_id, "orden": data.orden_ids,
+                "portada_id": data.orden_ids[0]}
+    except HTTPException:
+        await rollback_seguro(db, "reordenar_fotos")
+        raise
+    except Exception:
+        await rollback_seguro(db, "reordenar_fotos")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")
+
+
+@router.post("/vincular", summary="Dueño: vincular URLs subidas como fotos del aviso")
+async def vincular_fotos(
+    data: VincularIn,
+    db: AsyncSession = Depends(get_session),
+    user: ClaimsUsuario = Depends(get_current_user),
+):
+    """Paso 2 del gestor multimedia: tras `POST /upload`, vincula las
+    URLs como filas `ImagenPublicacion` (orden consecutivo, máx 10 en total).
+    Solo dueño o ADMIN. 401/403/404/422."""
+    from app.models import ImagenPublicacion, Publicacion
+
+    uid = id_propietario(user)
+    urls = [str(u or "").strip()[:500] for u in (data.urls or []) if str(u or "").strip()]
+    if not urls:
+        raise HTTPException(status_code=422, detail="urls vacío")
+    for u in urls:
+        if not (u.startswith("https://") or u.startswith("http://")):
+            raise HTTPException(status_code=422, detail="URLs deben ser http(s)")
+    try:
+        pub = await db.get(Publicacion, data.publicacion_id)
+        if not pub:
+            raise HTTPException(status_code=404, detail="Publicación no encontrada")
+        if not await es_dueno_o_admin(user, pub.usuario_id, db):
+            raise HTTPException(status_code=403, detail="Solo el dueño puede agregar fotos")
+        actuales = await repo.fotos_de_aviso(db, data.publicacion_id)
+        if len(actuales) + len(urls) > 10:
+            raise HTTPException(status_code=422, detail="Máximo 10 fotos por aviso")
+        base = max([r.orden for r in actuales], default=0)
+        nuevas = []
+        for i, url in enumerate(urls, start=1):
+            row = ImagenPublicacion(publicacion_id=data.publicacion_id,
+                                    url=url, orden=base + i)
+            db.add(row)
+            nuevas.append(row)
+        await db.flush()
+        ids = [r.id for r in nuevas]
+        await db.commit()
+        return {"publicacion_id": data.publicacion_id, "ids": ids,
+                "total": len(actuales) + len(nuevas)}
+    except HTTPException:
+        await rollback_seguro(db, "vincular_fotos")
+        raise
+    except Exception:
+        await rollback_seguro(db, "vincular_fotos")
+        raise HTTPException(status_code=503, detail="Base de datos no disponible")

@@ -4,28 +4,19 @@
 // Uso: ruta /admin/dashboard. Ej: métricas {total_publicaciones, pendientes, ...}.
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { api } from '../services/api'
 import { useAuth } from '../contexts/AuthContext'
+import BreadcrumbsAdmin from '../components/BreadcrumbsAdmin'
+import { Flag, House, Megaphone, ScrollText, Settings, ShieldCheck } from 'lucide-react'
+import AjustesSistema from './admin/AjustesSistema'
+import HistorialAdmin from './admin/HistorialAdmin'
+import PublicidadPendientes from './admin/PublicidadPendientes'
+import Stat from './admin/Stat'
+import { eliminarPublicacionAdmin, listarPendientes, moderarPublicacion, obtenerMetricas } from '../services/adminApi'
 
-const authHead = (token) => ({ headers: { Authorization: `Bearer ${token}` } })
-
-function Stat({ label, value, tone }) {
-  const tones = {
-    navy: 'bg-navy-50 border-navy-100 text-navy-800',
-    amber: 'bg-amber-50 border-amber-200 text-amber-700',
-    red: 'bg-red-50 border-red-200 text-red-700',
-    emerald: 'bg-emerald-50 border-emerald-200 text-emerald-700',
-  }
-  return (
-    <div className={`rounded-xl border p-4 text-center ${tones[tone] || tones.navy}`}>
-      <p className="text-2xl font-extrabold">{value ?? '—'}</p>
-      <p className="text-[11px] font-medium opacity-80 mt-0.5">{label}</p>
-    </div>
-  )
-}
 
 export default function AdminDashboard() {
   const { token } = useAuth()
+  const [tab, setTab] = useState('moderacion')
   const [metricas, setMetricas] = useState(null)
   const [pendientes, setPendientes] = useState([])
   const [totalPen, setTotalPen] = useState(0)
@@ -40,12 +31,12 @@ export default function AdminDashboard() {
     setError('')
     try {
       const [m, p] = await Promise.all([
-        api.get('/api/admin/metricas', authHead(token)),
-        api.get('/api/admin/pendientes', { params: { size: 10 }, ...authHead(token) }),
+        obtenerMetricas(token),
+        listarPendientes(token, { size: 10 }),
       ])
-      setMetricas(m.data)
-      setPendientes(p.data.items || [])
-      setTotalPen(p.data.total || 0)
+      setMetricas(m)
+      setPendientes(p.items || [])
+      setTotalPen(p.total || 0)
     } catch (err) {
       setError(err?.response?.status === 401 || err?.response?.status === 403
         ? 'Sin permiso de administrador.'
@@ -61,7 +52,7 @@ export default function AdminDashboard() {
     setActing(id)
     setError('')
     try {
-      await api.patch(`/api/admin/publicaciones/${id}`, { estado }, authHead(token))
+      await moderarPublicacion(id, estado, token)
       await cargar()
     } catch {
       setError('No se pudo cambiar el estado.')
@@ -74,7 +65,7 @@ export default function AdminDashboard() {
     setActing(id)
     setError('')
     try {
-      await api.delete(`/api/admin/publicaciones/${id}`, authHead(token))
+      await eliminarPublicacionAdmin(id, token)
       setConfirmDel(null)
       await cargar()
     } catch {
@@ -84,36 +75,90 @@ export default function AdminDashboard() {
     }
   }
 
+  const TAB_LABEL = { moderacion: 'Moderación', publicidad: 'Publicidad', ajustes: 'Ajustes del Sistema', historial: 'Historial' }
   return (
     <div className="container-main py-6 md:py-8">
-      <nav className="flex items-center gap-2 text-xs text-neutral-400 mb-4">
-        <Link to="/" className="hover:text-navy-600">Buscar</Link>
-        <span>›</span>
-        <span className="text-neutral-600">Panel admin</span>
-      </nav>
-      <h1 className="font-display text-xl md:text-2xl font-bold text-navy-900 mb-1">
-        🛡️ Panel Administrador
+      <BreadcrumbsAdmin actual={TAB_LABEL[tab] || 'Moderación'} volverA="/" volverTexto="Inicio" />
+      <h1 className="font-display text-xl md:text-2xl font-bold text-navy-900 mb-1 flex items-center gap-2">
+        <ShieldCheck aria-hidden="true" className="w-5 h-5" /> Panel Administrador
       </h1>
-      <p className="text-xs text-neutral-400 mb-5">Métricas, moderación y control maestro de avisos.</p>
+      <p className="text-xs text-neutral-400 mb-5">Métricas, moderación, avisos y ajustes del sistema.</p>
 
       {error && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2 mb-4" role="alert">{error}</p>}
 
-      {loading ? (
+      <div className="flex gap-1 border-b border-neutral-150 mb-5" role="tablist" aria-label="Secciones del panel">
+        {[
+          { id: 'moderacion', label: 'Moderación', icono: ShieldCheck },
+          { id: 'publicidad', label: 'Publicidad', icono: Megaphone },
+          { id: 'ajustes', label: 'Ajustes del Sistema', icono: Settings },
+          { id: 'historial', label: 'Historial', icono: ScrollText },
+        ].map((t) => {
+          const IconoTab = t.icono
+          return (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.id}
+              onClick={() => setTab(t.id)}
+              className={`px-4 py-2.5 min-h-[44px] text-xs sm:text-sm font-semibold border-b-2 -mb-px transition inline-flex items-center gap-1.5 ${tab === t.id
+                ? 'border-gold-400 text-navy-900'
+                : 'border-transparent text-neutral-400 hover:text-navy-700'
+                }`}
+            >
+              {IconoTab && <IconoTab aria-hidden="true" className="w-4 h-4" />}{t.label}
+            </button>
+          )
+        })}
+      </div>
+
+      {tab === 'ajustes' ? (
+        <AjustesSistema token={token} />
+      ) : tab === 'publicidad' ? (
+        <PublicidadPendientes token={token} />
+      ) : tab === 'historial' ? (
+        <HistorialAdmin token={token} />
+      ) : loading ? (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 animate-pulse">
           {[1, 2, 3, 4].map(i => <div key={i} className="h-20 bg-neutral-150 rounded-xl" />)}
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <Stat label="Alojamientos" value={metricas?.total_publicaciones} tone="navy" />
-            <Stat label="Pendientes" value={metricas?.pendientes} tone="amber" />
-            <Stat label="Reportes activos" value={metricas?.reportes_activos} tone="red" />
-            <Stat label="Verificados" value={metricas?.arrendadores_verificados} tone="emerald" />
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+            <Stat label="Alojamientos" value={metricas?.total_publicaciones} tone="navy"
+              ayuda="Avisos totales en plataforma (todos los estados, sin cuentas eliminadas)." />
+            <Stat label="Usuarios" value={metricas?.total_usuarios} tone="navy"
+              ayuda="Cuentas activas registradas (excluye eliminadas)." />
+            <Stat
+              label="Pendientes de revisión"
+              value={metricas?.pendientes}
+              tone="amber"
+              ayuda={`Avisos en cola de moderación esperando aprobación o rechazo. Denuncias totales acumuladas: ${metricas?.reportes_activos ?? '—'} (pendientes o confirmadas) · Inmuebles con reportes pendientes: ${metricas?.inmuebles_con_reportes ?? '—'} (un mismo aviso puede tener varias denuncias).`}
+            />
+            <Stat label="Reportes activos" value={metricas?.reportes_activos} tone="red"
+              ayuda={`Denuncias pendientes o confirmadas de la comunidad. Inmuebles distintos con pendientes: ${metricas?.inmuebles_con_reportes ?? '—'}.`} />
+            <Stat label="Verificados" value={metricas?.arrendadores_verificados} tone="emerald"
+              ayuda="Arrendadores con teléfono verificado por un administrador." />
           </div>
 
           <div className="flex flex-wrap gap-2 mb-6">
-            <Link to="/admin/reportes" className="btn-ghost text-xs">
-              🚩 Bandeja de reportes{metricas?.reportes_pendientes ? ` (${metricas.reportes_pendientes})` : ''}
+            <Link
+              to="/admin/reportes"
+              className="btn-ghost text-xs inline-flex items-center gap-2"
+              aria-label={metricas?.reportes_pendientes ? `Bandeja de reportes, ${metricas.reportes_pendientes} pendientes` : 'Bandeja de reportes'}
+            >
+              <Flag aria-hidden="true" className="w-4 h-4" /> Bandeja de reportes
+              {(metricas?.reportes_pendientes ?? 0) > 0 && (
+                <span
+                  className="inline-flex items-center justify-center min-w-6 h-6 px-2 rounded-full bg-red-600 text-white text-[11px] font-extrabold shadow"
+                  aria-label={`${metricas.reportes_pendientes} reportes pendientes`}
+                >
+                  {metricas.reportes_pendientes}
+                </span>
+              )}
+            </Link>
+            <Link to="/admin/tipos-vivienda" className="btn-ghost text-xs inline-flex items-center gap-1.5">
+              <House aria-hidden="true" className="w-4 h-4" /> Tipos de vivienda
             </Link>
             <button type="button" onClick={cargar} className="btn-ghost text-xs">Recargar</button>
           </div>
@@ -123,7 +168,7 @@ export default function AdminDashboard() {
           </h2>
           {pendientes.length === 0 ? (
             <div className="card p-8 text-center">
-              <p className="text-sm font-medium text-neutral-700">Sin pendientes 🎉</p>
+              <p className="text-sm font-medium text-neutral-700">Sin pendientes</p>
               <p className="text-xs text-neutral-400">No hay avisos por revisar.</p>
             </div>
           ) : (

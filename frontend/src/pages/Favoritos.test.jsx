@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import Favoritos from './Favoritos'
 import { FavoritosProvider } from '../contexts/FavoritosContext'
 import { api } from '../services/api'
+import { limpiarConfigCache } from '../constants'
 
 vi.mock('../services/api', () => ({
   api: {
@@ -15,6 +16,9 @@ afterEach(() => cleanup())
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
+  // El hook useTiposVivienda cachea config en memoria del módulo: sin esto,
+  // el primer test envenena a los siguientes (piden /config-publica una vez).
+  limpiarConfigCache()
 })
 
 const renderWithProvider = (initialFavorites = []) => {
@@ -41,6 +45,7 @@ describe('Página de Favoritos (HU Estudiante)', () => {
     const ahora = new Date()
     const fechaFutura = new Date(ahora.getTime() + 15 * 86_400_000).toISOString()
 
+    api.get.mockResolvedValueOnce({ data: {} })
     api.get.mockResolvedValueOnce({
       data: {
         id: 10,
@@ -75,6 +80,7 @@ describe('Página de Favoritos (HU Estudiante)', () => {
     const ahora = new Date()
     const fechaPasada = new Date(ahora.getTime() - 3 * 86_400_000).toISOString()
 
+    api.get.mockResolvedValueOnce({ data: {} })
     api.get.mockResolvedValueOnce({
       data: {
         id: 20,
@@ -143,10 +149,8 @@ describe('Página de Favoritos (HU Estudiante)', () => {
 
     await waitFor(() => {
       expect(screen.queryByText('Vivienda 1')).not.toBeInTheDocument()
+      expect(screen.getByText('Vivienda 2')).toBeInTheDocument()
     })
-
-    // Vivienda 2 sigue presente
-    expect(screen.getByText('Vivienda 2')).toBeInTheDocument()
 
     // localStorage actualizado
     const stored = JSON.parse(localStorage.getItem('favoritos'))
@@ -154,9 +158,10 @@ describe('Página de Favoritos (HU Estudiante)', () => {
     expect(stored.some((f) => f.publicacionId === 2)).toBe(true)
   })
 
-  it('cuando el usuario selecciona "Limpiar favoritos", se eliminan todos los favoritos', async () => {
-    window.confirm = vi.fn().mockReturnValue(true)
+  it('limpiar favoritos exige confirmación explícita en 2 pasos (sin window.confirm)', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm')
 
+    api.get.mockResolvedValueOnce({ data: {} })
     api.get.mockResolvedValueOnce({
       data: { id: 5, titulo: 'Casa Estudiantil 5', estado: 'ACTIVO' },
     })
@@ -165,16 +170,20 @@ describe('Página de Favoritos (HU Estudiante)', () => {
 
     expect(await screen.findByText('Casa Estudiantil 5')).toBeInTheDocument()
 
-    const btnLimpiar = screen.getByRole('button', { name: /Limpiar favoritos/i })
-    fireEvent.click(btnLimpiar)
+    // Paso 1: arma la confirmación (no borra todavía).
+    fireEvent.click(screen.getByRole('button', { name: /Limpiar favoritos/i }))
+    expect(confirmSpy).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /Confirmar limpieza/i })).toBeInTheDocument()
+    expect(screen.queryByText(/No tienes favoritos guardados/i)).not.toBeInTheDocument()
 
-    expect(window.confirm).toHaveBeenCalled()
-
+    // Paso 2: confirma y borra todo.
+    fireEvent.click(screen.getByRole('button', { name: /Confirmar limpieza/i }))
     await waitFor(() => {
       expect(screen.getByText(/No tienes favoritos guardados/i)).toBeInTheDocument()
     })
 
     const stored = JSON.parse(localStorage.getItem('favoritos') || '[]')
     expect(stored).toHaveLength(0)
+    confirmSpy.mockRestore()
   })
 })

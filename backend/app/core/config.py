@@ -1,22 +1,33 @@
-"""Config central - lee .env. SECRET_KEY para JWT HS256 8h (Tabla18 NFR + 5.6)."""
+"""Config central - lee .env. SECRET_KEY para JWT HS256 2h (T2) + Tabla18 NFR."""
 import os
 from pydantic_settings import BaseSettings
 from pydantic import field_validator, model_validator
 
-# OLA2-M3: dominio prod canónico confirmado en dashboard Vercel (con guion).
+# Dominio prod canónico confirmado en dashboard Vercel (con guion).
 # render.yaml y .env.example deben usar exactamente este valor.
 CANONICAL_PROD_ORIGIN = "https://aloja-u.vercel.app"
 TYPO_PROD_ORIGIN = "https://alojau.vercel.app"  # sin guion: typo histórico, rechazar en prod
+
+# Versión vigente de la política de tratamiento de datos (Ley 1581/2012).
+POLITICA_VERSION_VIGENTE = "v1.0-ley1581-2026"
+
 
 class Settings(BaseSettings):
     ENV: str = "dev"  # dev|test|prod - prod activa fail-closed RLS/SEC
     DATABASE_URL: str = "postgresql+asyncpg://alojau:alojau123@localhost:5432/alojau"
     SECRET_KEY: str = "cambia_esto_en_produccion_muy_largo_32_chars_min"
     ALGORITHM: str = "HS256"  # HS256 fijo para Sprint1 (Tabla18)
-    ACCESS_TOKEN_EXPIRE_HOURS: int = 8  # 8h expiración (p22)
+    # 2h: acorta la ventana de exposición de un Bearer token comprometido
+    # en localStorage. Sin refresh/revocación por alcance.
+    ACCESS_TOKEN_EXPIRE_HOURS: int = 2
 
-    # Sprint1: permite funcionar sin PG (mock en memoria) si no hay DB
+    # Habilita los tokens fijos de prueba (MOCK_TOKENS) y el dev_token de
+    # recuperación. Nunca en prod (lo valida el arranque). No hay datos en memoria.
     USE_MOCK_FALLBACK: bool = True
+
+    # Proxies de confianza delante de la app (Render = 1). Con 0 los límites de
+    # intentos usan la IP de la conexión; ver core/net.py::ip_para_limites.
+    TRUSTED_PROXY_HOPS: int = 0
 
     # CORS restringido por env (DoD-5) - prod solo Vercel
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
@@ -28,13 +39,65 @@ class Settings(BaseSettings):
     TRUST_WEIGHT_VIGENCIA: int = 15
     TRUST_WEIGHT_REPORTES: int = 10
 
-    # F3 Cloudinary (persistencia prod). Si están vacíos -> storage local efímero (dev).
+    # Cloudinary (persistencia prod). Si están vacíos -> storage local efímero (dev).
     # En Render/Supabase prod: setear CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET.
     CLOUDINARY_CLOUD_NAME: str = ""
     CLOUDINARY_API_KEY: str = ""
     CLOUDINARY_API_SECRET: str = ""
     CLOUDINARY_FOLDER: str = "alojau"
 
+    # Enterprise Auth (Supabase Auth / Google OAuth / JWKS).
+    # Vacío = proveedor local HS256 (dev sin configuración externa).
+    # En prod con Supabase: SUPABASE_URL + SUPABASE_JWKS_URL (o se deriva
+    # como {SUPABASE_URL}/auth/v1/.well-known/jwks.json) + SUPABASE_AUD.
+    SUPABASE_URL: str = ""
+    SUPABASE_JWKS_URL: str = ""
+    SUPABASE_AUD: str = "authenticated"
+    SUPABASE_ANON_KEY: str = ""
+
+    # Frontend canónico para redirecciones OAuth (dev + prod).
+    FRONTEND_URL: str = "http://localhost:5173"
+    FRONTEND_PROD_URL: str = CANONICAL_PROD_ORIGIN
+
+    # OTP alternativo gratuito (Telegram Bot webhook opcional).
+    # Vacío = solo Email-code (log en dev). Con token se intenta Telegram
+    # SOLO por DM al telegram_chat_id vinculado del usuario (M5 privacidad:
+    # NUNCA a canales/grupos globales).
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID: str = ""
+    # Vinculación $0: username público del bot (sin @) para bot_url t.me.
+    # Ej. TELEGRAM_BOT_USERNAME=AlojaU_bot -> https://t.me/AlojaU_bot?start=TOKEN
+    TELEGRAM_BOT_USERNAME: str = ""
+    # Fix: webhook productivo del bot.
+    # TELEGRAM_WEBHOOK_SECRET se valida contra el header
+    # X-Telegram-Bot-Api-Secret-Token que envía Telegram en cada update.
+    # Vacío = se acepta sin verificar (solo dev); en prod configurarlo.
+    TELEGRAM_WEBHOOK_SECRET: str = ""
+    # URL pública del webhook (informativa, para `setWebhook` manual).
+    # Ej. https://alojau-api.onrender.com/api/auth/telegram/webhook
+    TELEGRAM_WEBHOOK_URL: str = ""
+
+    # Versión de política de datos vigente (Ley 1581/2012).
+    POLITICA_VERSION: str = POLITICA_VERSION_VIGENTE
+
+    # Chatbot MVP (solo lectura, mig 021). Apagado por defecto.
+    # CHAT_ENABLED=true exige CHAT_DATABASE_URL (rol chatbot_ro); sin esa
+    # URL el bot responde deshabilitado, NUNCA usa la conexión principal.
+    CHAT_ENABLED: bool = False
+    CHAT_DATABASE_URL: str = ""
+    # Proveedor LLM: adapter OpenAI-compatible por urllib stdlib.
+    # "fake" (default) = determinista sin red. La llave NUNCA va al repo:
+    # solo env / Render dashboard. Sin llave/modelo/base → Fake (fallback).
+    CHAT_LLM_PROVIDER: str = "fake"
+    CHAT_LLM_BASE_URL: str = ""
+    CHAT_LLM_API_KEY: str = ""
+    CHAT_LLM_MODEL: str = ""
+    CHAT_TIMEOUT_S: float = 20.0
+    CHAT_MAX_TOKENS_SALIDA: int = 600
+    # Abuso: throttle por IP/usuario (ventana 60 s) + tope diario global.
+    CHAT_LIMITE_IP_MIN: int = 30
+    CHAT_LIMITE_USUARIO_MIN: int = 60
+    CHAT_TOPE_DIARIO: int = 2000
 
     @field_validator("ENV")
     @classmethod
@@ -65,7 +128,7 @@ class Settings(BaseSettings):
                 raise ValueError("Fail-closed: CORS_ORIGINS no puede contener * en prod")
             if TYPO_PROD_ORIGIN in self.cors_origins_list:
                 raise ValueError(
-                    f"Fail-closed: dominio con typo {TYPO_PROD_ORIGIN}; usa {CANONICAL_PROD_ORIGIN} (OLA2-M3)"
+                    f"Fail-closed: dominio con typo {TYPO_PROD_ORIGIN}; usa {CANONICAL_PROD_ORIGIN}"
                 )
         return self
 
@@ -83,13 +146,41 @@ class Settings(BaseSettings):
         )
 
     @property
+    def supabase_configured(self) -> bool:
+        """v13: True si hay URL de Supabase (habilita JWKS/OAuth, nunca rompe local)."""
+        return bool(self.SUPABASE_URL.strip())
+
+    @property
+    def jwks_url(self) -> str:
+        """v13: URL JWKS efectiva (explícita o derivada del SUPABASE_URL)."""
+        if self.SUPABASE_JWKS_URL.strip():
+            return self.SUPABASE_JWKS_URL.strip()
+        if self.SUPABASE_URL.strip():
+            return self.SUPABASE_URL.strip().rstrip("/") + "/auth/v1/.well-known/jwks.json"
+        return ""
+
+    @property
+    def oauth_redirect_urls(self) -> list[str]:
+        """v13: redirect URLs válidas para Google OAuth (dev + prod)."""
+        return [self.FRONTEND_URL.rstrip("/"), self.FRONTEND_PROD_URL.rstrip("/")]
+
+    @property
     def mock_enabled(self) -> bool:
-        # B0-2: mock solo si flag True Y ENV!=prod (doble check settings + entorno).
+        # Credenciales de prueba solo si flag True Y ENV!=prod (doble check).
         return bool(self.USE_MOCK_FALLBACK) and self.ENV != "prod" and os.getenv("ENV", "dev") != "prod"
+
+    @property
+    def chat_configurado(self) -> bool:
+        """Chatbot listo: habilitado por flag Y con conexión de solo lectura.
+
+        Sin CHAT_DATABASE_URL el bot está deshabilitado (fail-closed): el
+        código NUNCA cae a DATABASE_URL principal."""
+        return bool(self.CHAT_ENABLED) and bool(self.CHAT_DATABASE_URL.strip())
 
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
         extra = "ignore"
+
 
 settings = Settings()

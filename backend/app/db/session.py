@@ -1,10 +1,10 @@
 """
 db/session.py - Sesión async SQLAlchemy 2.0 + asyncpg -> PostgreSQL 16 (Sección 5.10)
 No tocar si no eres de BD. Lee DATABASE_URL del .env
-Sprint1: fallback mock si PG no disponible para que frontend no se bloquee.
 """
 import os
 import sys
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.pool import NullPool
 from dotenv import load_dotenv
@@ -12,16 +12,39 @@ from dotenv import load_dotenv
 load_dotenv()
 _RAW_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://alojau:alojau123@localhost:5432/alojau")
 
+_ESQUEMAS_PG = ("postgresql", "postgresql+asyncpg")
+
+
+def dsn_asyncpg_a_psycopg(dsn: str) -> str:
+    """Convierte DSN asyncpg -> driver síncrono (scripts/tests con asyncpg
+    directo o psycopg). Valida el esquema con allowlist y reconstruye por
+    partes: nunca substring-replace ciego (CodeQL)."""
+    partes = urlsplit(str(dsn or ""))
+    if partes.scheme not in _ESQUEMAS_PG or not partes.hostname:
+        raise ValueError("DSN postgres inválido")
+    return urlunsplit(("postgresql",) + tuple(partes[1:]))
+
+
 # Normaliza para Supabase pooler + asyncpg
 # Supabase requiere ssl y pgbouncer handling para asyncpg
 def _normalize_supabase_url(url: str) -> str:
-    # Asegura prefijo asyncpg
-    if url.startswith("postgresql://") and "+asyncpg" not in url:
-        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    # Si es Supabase y no tiene ssl, añadir ssl=require
-    if "supabase.com" in url and "ssl" not in url.lower():
-        url += ("&" if "?" in url else "?") + "ssl=require"
-    return url
+    # Parseo estricto (CodeQL): decisiones por esquema/host exactos, nunca
+    # por substring ("supabase.com" matcheaba p. ej. "notsupabase.com.evil").
+    partes = urlsplit(str(url or ""))
+    if partes.scheme not in _ESQUEMAS_PG or not partes.hostname:
+        raise ValueError("DATABASE_URL inválida: esquema postgres requerido")
+    esquema = "postgresql+asyncpg" if partes.scheme == "postgresql" else partes.scheme
+    host = (partes.hostname or "").lower()
+    params = [(k, v) for k, v in parse_qsl(partes.query, keep_blank_values=True)]
+    nombres = {k.lower() for k, _ in params}
+    # Solo host Supabase real (dominio exacto o subdominio .supabase.co/.com,
+    # este último cubre el pooler *.pooler.supabase.com) y sin ssl ya dado.
+    es_supabase = host in ("supabase.co", "supabase.com") or host.endswith(
+        (".supabase.co", ".supabase.com"))
+    if es_supabase and "ssl" not in nombres:
+        params.append(("ssl", "require"))
+    netloc = partes.netloc  # conserva usuario/clave/puerto tal cual
+    return urlunsplit((esquema, netloc, partes.path, urlencode(params), partes.fragment))
 
 DATABASE_URL = _normalize_supabase_url(_RAW_URL)
 
@@ -38,7 +61,7 @@ _connect_args = {
 }
 
 # pool 5-20 para 50-100 concurrentes Tabla18 (NFR)
-# Sprint1: pool_pre_ping evita "cold start" + silent disconnect en Render
+# Pool_pre_ping evita "cold start" + silent disconnect en Render
 # B0 fix (<=3 líneas): bajo pytest usa NullPool (cada TestClient request corre en
 # loop distinto; el pool persistente reutiliza conexiones atadas a loops cerrados
 # -> RuntimeError "attached to a different loop"). Prod/dev intactos.

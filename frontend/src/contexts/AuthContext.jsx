@@ -5,11 +5,13 @@
 // Sincronización: Perfil/Publicar emiten 'alojau:auth-change' tras login/logout;
 // además se escucha 'storage' (multi-pestaña). El perfil se valida contra
 // GET /api/auth/perfil; si el token es inválido (401) se limpia solo.
-import { createContext, useContext, useState, useEffect, useCallback } from 'react'
-import { api } from '../services/api'
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react'
+import { TOKEN_KEY, borrarToken, guardarToken, leerToken } from '../services/tokenStorage'
+import { cerrarSesion, obtenerPerfil } from '../services/cuentaApi'
+
+export { TOKEN_KEY }
 
 const AuthContext = createContext(null)
-export const TOKEN_KEY = 'alojau_token'
 export const AUTH_EVENT = 'alojau:auth-change'
 
 export const emitAuthChange = () => {
@@ -20,18 +22,58 @@ export const emitAuthChange = () => {
   }
 }
 
-const readToken = () => {
+// Crear, pausar o eliminar un aviso puede promover o degradar el rol en el
+// backend (`rol_actualizado`): se relee el perfil y se avisa al resto de la app.
+export async function sincronizarRolSiCambio(respuesta, refresh) {
+  if (!respuesta?.rol_actualizado) return
   try {
-    return localStorage.getItem(TOKEN_KEY) || ''
+    await refresh?.()
   } catch {
-    return ''
+    // Sin red: el próximo refresh() revalida el rol.
+  }
+  emitAuthChange()
+}
+
+// Contador de avisos propios para el navbar ("Mis publicaciones" se oculta
+// con 0 avisos). Evento dedicado — no reutilizar AUTH_EVENT (ese resincroniza
+// tokens en Perfil/Publicar y no debe dispararse por cada mutación de avisos).
+export const MIAS_EVENT = 'alojau:mias-change'
+
+export const emitMiasChange = () => {
+  try {
+    window.dispatchEvent(new Event(MIAS_EVENT))
+  } catch {
+    // SSR/tests sin window: noop
   }
 }
 
+// Efecto fantasma: claves de sesión/datos locales de AlojaU. Centralizar
+// aquí evita que un logout deje favoritos, comparador, historial o perfil
+// de otro usuario visibles. No toca claves ajenas a la app ni cachés
+// geográficos impersonales (ej. geocode).
+export const SESION_KEYS = [
+  TOKEN_KEY,
+  'favoritos',
+  'alojau_favoritos',
+  'alojau_comparar',
+  'alojau_contactos',
+  'alojau_historial',
+  'alojau_config_publica',
+]
+
+export function limpiarSesionLocal() {
+  for (const k of SESION_KEYS) {
+    try { localStorage.removeItem(k) } catch { /* noop */ }
+  }
+  // Selectivo (no clear()): otra pestaña duplicada podría estar a mitad de
+  // un retorno OAuth con su redirect pendiente.
+  try { sessionStorage.removeItem('alojau_post_login_redirect') } catch { /* noop */ }
+}
+
 export function AuthProvider({ children }) {
-  const [token, setToken] = useState(() => readToken())
+  const [token, setToken] = useState(() => leerToken())
   const [user, setUser] = useState(null) // {email, nombre_completo, rol} o null
-  const [loading, setLoading] = useState(() => !!readToken())
+  const [loading, setLoading] = useState(() => !!leerToken())
 
   const sync = useCallback(async (t) => {
     if (!t) {
@@ -41,14 +83,11 @@ export function AuthProvider({ children }) {
     }
     setLoading(true)
     try {
-      const r = await api.get('/api/auth/perfil', {
-        headers: { Authorization: `Bearer ${t}` },
-      })
-      setUser(r.data || null)
+      setUser((await obtenerPerfil(t)) || null)
     } catch (err) {
       // Token inválido/expirado (401) o backend caído: no hay sesión válida.
       if (err?.response?.status === 401) {
-        try { localStorage.removeItem(TOKEN_KEY) } catch { /* noop */ }
+        borrarToken()
         setToken('')
         setUser(null)
       } else {
@@ -61,9 +100,9 @@ export function AuthProvider({ children }) {
 
   // Carga inicial + re-sincroniza cuando Perfil/Publicar cambian la sesión.
   useEffect(() => {
-    sync(readToken())
+    sync(leerToken())
     const onChange = () => {
-      const t = readToken()
+      const t = leerToken()
       setToken(t)
       sync(t)
     }
@@ -76,22 +115,50 @@ export function AuthProvider({ children }) {
   }, [sync])
 
   const login = useCallback((t) => {
-    try { localStorage.setItem(TOKEN_KEY, t) } catch { /* noop */ }
+    guardarToken(t)
     setToken(t)
     sync(t)
     emitAuthChange()
   }, [sync])
 
-  const logout = useCallback(() => {
-    try { localStorage.removeItem(TOKEN_KEY) } catch { /* noop */ }
+  // Cierre total: revoca en BD (best-effort), limpia todo rastro local,
+  // resetea el usuario y reemplaza la ruta para no dejar estados en memoria.
+  const logout = useCallback(async () => {
+    const t = leerToken()
+    if (t) {
+      try {
+        await cerrarSesion(t)
+      } catch { /* best-effort: el estado local se limpia igual */ }
+    }
+    limpiarSesionLocal()
     setToken('')
     setUser(null)
     setLoading(false)
     emitAuthChange()
+    try {
+      window.location.replace('/')
+    } catch { /* SSR/tests sin location */ }
   }, [])
 
+  const refresh = useCallback(() => sync(leerToken()), [sync])
+
+  // Parche local del usuario (ej. avatar recién subido) sin refetch.
+  // Fusiona sobre el usuario actual para que Nav/Perfil se actualicen al
+  // instante; el próximo refresh() revalida contra el backend.
+  const actualizarUsuario = useCallback((parche) => {
+    if (!parche || typeof parche !== 'object') return
+    setUser((prev) => (prev ? { ...prev, ...parche } : prev))
+  }, [])
+
+  // Value memoizado — sin esto cada setLoading crea objeto nuevo y
+  // re-renderiza a todos los consumidores (Nav, Perfil, MisPublicaciones…).
+  const value = useMemo(
+    () => ({ token, user, loading, login, logout, refresh, actualizarUsuario }),
+    [token, user, loading, login, logout, refresh, actualizarUsuario],
+  )
+
   return (
-    <AuthContext.Provider value={{ token, user, loading, login, logout, refresh: () => sync(readToken()) }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   )
@@ -101,7 +168,7 @@ export function useAuth() {
   const ctx = useContext(AuthContext)
   if (!ctx) {
     // Fallback seguro para tests o rendering sin provider (sesión anónima).
-    return { token: '', user: null, loading: false, login: () => {}, logout: () => {}, refresh: () => {} }
+    return { token: '', user: null, loading: false, login: () => {}, logout: () => {}, refresh: () => {}, actualizarUsuario: () => {} }
   }
   return ctx
 }

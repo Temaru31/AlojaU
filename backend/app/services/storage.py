@@ -16,10 +16,16 @@ Buenas prácticas:
 - Nombres uuid fuera (el router los genera); aquí solo persiste.
 - Sin secretos en código: todo vía `settings` (.env).
 """
+import logging
 import os
 from abc import ABC, abstractmethod
 
+from fastapi import Request
+
 from app.core.config import settings
+from app.core.errores import DatoInvalido, ErrorDeProveedor, ServicioNoDisponible
+
+logger = logging.getLogger("alojau.storage")
 
 
 class StorageBackend(ABC):
@@ -29,27 +35,40 @@ class StorageBackend(ABC):
 
     @abstractmethod
     def save(self, content: bytes, filename: str, mime: str) -> str:
-        """Persiste `content` y retorna URL pública. Lanza HTTPException en fallo."""
+        """Persiste `content` y retorna URL pública. Lanza ErrorDeDominio en fallo."""
         raise NotImplementedError
 
 
 class LocalStorageBackend(StorageBackend):
-    """Dev/test: disco local + URL `{base}/uploads/{filename}`."""
+    """Dev/test: disco local + URL `{base}/uploads/{filename}`.
+
+    En Render el disco es EFÍMERO (se borra
+    al redeploy/reiniciar). Solo para dev/test; en prod se exige Cloudinary
+    (ver `get_storage_backend` + aviso en logs). El `makedirs` es tolerante
+    para no tumbar el arranque en contenedores con FS de solo lectura: si
+    falla, el `save` posterior responde 503 graceful (nunca 500 crudo).
+    """
 
     name = "local"
 
     def __init__(self, upload_dir: str, base_url: str):
         self.upload_dir = os.path.abspath(upload_dir)
         self.base_url = base_url.rstrip("/")
-        os.makedirs(self.upload_dir, exist_ok=True)
+        try:
+            os.makedirs(self.upload_dir, exist_ok=True)
+        except Exception:
+            # Contenedor serverless con FS read-only: no se tumba el import;
+            # `save` fallará graceful con 503 y el avatar no se persiste.
+            logger.warning(
+                "[storage] upload_dir no escribible (FS efímero/solo-lectura): %s",
+                self.upload_dir,
+            )
 
     def save(self, content: bytes, filename: str, mime: str) -> str:
         # Defensa path traversal aunque el router ya usa uuid.
         dest = os.path.abspath(os.path.join(self.upload_dir, filename))
         if not dest.startswith(self.upload_dir):
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=400, detail="Nombre de archivo inválido")
+            raise DatoInvalido("Nombre de archivo inválido")
         with open(dest, "wb") as f:
             f.write(content)
         return f"{self.base_url}/uploads/{filename}"
@@ -74,16 +93,11 @@ class CloudinaryStorageBackend(StorageBackend):
             import cloudinary
             import cloudinary.uploader
         except ImportError as e:
-            from fastapi import HTTPException
-
-            raise HTTPException(
-                status_code=503,
-                detail="Cloudinary configurado pero lib 'cloudinary' no instalada (pip install cloudinary)",
+            raise ServicioNoDisponible(
+                "Cloudinary configurado pero lib 'cloudinary' no instalada (pip install cloudinary)"
             ) from e
         if not (self.cloud_name and self.api_key and self.api_secret):
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=503, detail="Cloudinary sin credenciales (CLOUDINARY_*)")
+            raise ServicioNoDisponible("Cloudinary sin credenciales (CLOUDINARY_*)")
         cloudinary.config(
             cloud_name=self.cloud_name,
             api_key=self.api_key,
@@ -101,15 +115,54 @@ class CloudinaryStorageBackend(StorageBackend):
                 overwrite=False,
             )
         except Exception as e:
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=502, detail=f"Cloudinary falló: {type(e).__name__}") from e
+            raise ErrorDeProveedor(f"Cloudinary falló: {type(e).__name__}") from e
         url = result.get("secure_url") or result.get("url") or ""
         if not url:
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=502, detail="Cloudinary sin secure_url")
+            raise ErrorDeProveedor("Cloudinary sin secure_url")
         return url
+
+
+def es_persistente() -> bool:
+    """True si el backend efectivo es persistente (Cloudinary)."""
+    return bool(settings.cloudinary_configured)
+
+
+def borrar_local_si_huerfano(url: str | None, prefijo: str = "avatar-") -> bool:
+    """Borrado best-effort de un archivo huérfano del storage local.
+
+    Solo actúa si `url` apunta al storage local (`/uploads/<prefijo>*`);
+    URLs Cloudinary/externas se ignoran siempre. Incluye defensa
+    anti-traversal (el destino debe quedar dentro de `backend/uploads/`).
+    Retorna True si borró algo. Nunca lanza.
+    """
+    try:
+        if not url:
+            return False
+        from urllib.parse import urlparse as _up
+        path = _up(str(url)).path or ""
+        if not path.startswith("/uploads/"):
+            return False
+        nombre = os.path.basename(path)
+        if not nombre or not nombre.startswith(prefijo):
+            return False
+        base = get_storage_backend(base_url="http://localhost")
+        upload_dir = getattr(base, "upload_dir", None)
+        if not upload_dir:
+            return False  # Backend persistente (Cloudinary): nada que borrar.
+        upload_dir = os.path.abspath(upload_dir)
+        dest = os.path.abspath(os.path.join(upload_dir, nombre))
+        if not dest.startswith(upload_dir) or not os.path.isfile(dest):
+            return False
+        os.remove(dest)
+        return True
+    except Exception:
+        return False
+
+
+def get_storage(request: Request) -> StorageBackend:
+    """Dependencia FastAPI: el backend de almacenamiento de la petición (las URLs
+    locales usan la base de la request). En pruebas: `app.dependency_overrides`."""
+    return get_storage_backend(base_url=str(request.base_url).rstrip("/"))
 
 
 def get_storage_backend(base_url: str = "", upload_dir: str = "") -> StorageBackend:
@@ -118,9 +171,18 @@ def get_storage_backend(base_url: str = "", upload_dir: str = "") -> StorageBack
     Args:
         base_url: base para URLs locales (ej `str(request.base_url)`).
         upload_dir: override solo tests (default `backend/uploads/`).
+
+    Si `ENV=prod` y no hay Cloudinary, se usa disco
+    EFÍMERO y se deja warning explícito (el avatar/foto se pierde al
+    redeploy; el endpoint responde igual 200 pero no es durable).
     """
     if settings.cloudinary_configured:
         return CloudinaryStorageBackend()
+    if getattr(settings, "ENV", "dev") == "prod":
+        logger.warning(
+            "[storage] prod sin CLOUDINARY_*: se usa disco EFÍMERO "
+            "(Render lo borra al redeploy). Configura CLOUDINARY_*."
+        )
     default_dir = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "../../uploads")
     )

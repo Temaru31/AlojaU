@@ -47,7 +47,7 @@ def test_b0_lat_lng_both_or_none_422():
     assert r3.status_code in (201, 404)
 
 def test_b0_fk_zona_404():
-    # Requiere DB viva; si cae a mock dev (201) se acepta pero se documenta.
+    # Requiere DB viva: la FK inexistente responde 404.
     p = {**BASE_PAYLOAD, "zona_barrio_id": 999999}
     r = client.post("/api/publicaciones", json=p, headers=auth_header())
     assert r.status_code in (404, 201)
@@ -63,20 +63,21 @@ def test_b0_fk_servicio_404():
     assert r.status_code in (404, 201)
 
 def test_b0_require_admin():
+    import asyncio
     from app.core.security import require_admin
     from fastapi import HTTPException
     # arrendador -> 403
     try:
-        require_admin("Bearer mock-token-arrendador")
+        asyncio.run(require_admin("Bearer mock-token-arrendador"))
         assert False, "arrendador debe dar 403 en require_admin"
     except HTTPException as e:
         assert e.status_code == 403
     # admin -> ok
-    u = require_admin("Bearer mock-token-admin")
+    u = asyncio.run(require_admin("Bearer mock-token-admin"))
     assert u["rol"] == "ADMIN"
     # sin token -> 401
     try:
-        require_admin(None)
+        asyncio.run(require_admin(None))
         assert False, "sin token debe dar 401"
     except HTTPException as e:
         assert e.status_code == 401

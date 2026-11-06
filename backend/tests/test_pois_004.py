@@ -20,8 +20,8 @@ def _items(data):
 
 # --- Puro -----------------------------------------------------------------
 def test_tiempo_pie_min_factor_ruta():
-    # 320 m línea recta -> ~5 min a pie (x1.3 / 80, mínimo 1).
-    assert tiempo_pie_min(320) == 5
+    # 320 m línea recta -> ~6 min a pie (x1.28 / 66, mínimo 1).
+    assert tiempo_pie_min(320) == 6
     assert tiempo_pie_min(111) == 2
     assert tiempo_pie_min(0) == 1
     assert tiempo_pie_min(None) is None
@@ -29,7 +29,9 @@ def test_tiempo_pie_min_factor_ruta():
 
 def test_build_detail_incluye_campus_ref():
     class Img:
+        id = 1
         url = "https://a.com/1.jpg"
+        orden = 1
 
     class Svc:
         id = 1
@@ -37,6 +39,8 @@ def test_build_detail_incluye_campus_ref():
 
     class Pub:
         id = 1
+        usuario_id = 1
+        vistas = 0
         titulo = "Habitación cerca Tulcán - 320m"
         descripcion = "Amoblada con baño privado y cocina compartida amplia"
         tipo_inmueble = "HABITACION_INDEPENDIENTE"
@@ -52,6 +56,7 @@ def test_build_detail_incluye_campus_ref():
         imagenes = [Img(), Img(), Img()]
 
         from datetime import datetime, timezone
+        fecha_publicacion = datetime.now(timezone.utc)
         fecha_renovacion = datetime.now(timezone.utc)
         fecha_expiracion = datetime.now(timezone.utc)
 
