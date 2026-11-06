@@ -222,7 +222,8 @@ def test_bulk_y_auditoria(limpieza):
 # --- Auto-moderación: OFF no-op, unidad de reglas ---------------------------------
 def test_automod_off_noop_y_reglas():
     from app.services import auto_moderation as am
-    cfg = am._cfg_valores(None)
+    from app.repositories import ajustes_repo
+    cfg = ajustes_repo.valores_por_defecto()
     assert cfg["moderacion_automatica"] == "false"
     assert am.validar_texto("Habitación amplia cerca al campus con buena luz",
                             "Descripción suficientemente larga y coherente para pasar",

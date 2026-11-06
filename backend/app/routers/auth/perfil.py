@@ -7,6 +7,7 @@ from fastapi import File, HTTPException, Depends, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
+from app.core.errores import ErrorDeDominio
 from app.core.security import get_current_user, id_propietario, ClaimsUsuario
 from app.core.db_utils import rollback_seguro
 from app.core.logseguro import exc_resumen
@@ -14,13 +15,8 @@ from app.core.rate_limit import registrar_intento, registrar_intento_persistente
 from app.db.session import get_session
 from app.services.storage import StorageBackend, borrar_local_si_huerfano, get_storage
 from app.core.normalizacion import normalizar_email
-from app.routers.auth.comun import (
-    _hash_password_async,
-    _verify_password_async,
-    normalizar_telefono,
-    validar_foto_url,
-    validar_preferencias,
-)
+from app.routers.auth.contrasenas import hash_password_async, verify_password_async
+from app.routers.auth.validacion_perfil import normalizar_telefono, validar_foto_url, validar_preferencias
 from app.routers.auth.esquemas import PasswordChangeIn, PerfilOut, PerfilUpdateIn
 from app.routers.auth.limites import _check_password_rate_limit
 
@@ -138,9 +134,9 @@ async def cambiar_password(
             res = await db.execute(select(Usuario).where(Usuario.email == normalizar_email(email)))
             u = res.scalars().first()
         if u:
-            if not await _verify_password_async(data.actual, u.password_hash):
+            if not await verify_password_async(data.actual, u.password_hash):
                 raise HTTPException(status_code=403, detail="La contraseña actual no coincide")
-            u.password_hash = await _hash_password_async(data.nueva)
+            u.password_hash = await hash_password_async(data.nueva)
             await db.commit()
             return {"mensaje": "Contraseña actualizada con éxito."}
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -241,7 +237,7 @@ async def _subir_avatar(storage: StorageBackend, content: bytes, ext: str, mime:
         filename = f"avatar-{_uuid.uuid4().hex}{ext}"
         # Subida fuera del event loop: puede tardar segundos.
         return await asyncio.to_thread(storage.save, content, filename, mime)
-    except HTTPException:
+    except (HTTPException, ErrorDeDominio):
         raise
     except Exception as e:
         logger.error(f"[avatar storage] falló: {exc_resumen(e)}", exc_info=True)
@@ -295,7 +291,7 @@ async def quitar_avatar(
 ):
     """Setea foto_perfil_url=null (el frontend muestra iniciales).
 
-    Bloque 1: también borra el archivo local anterior (quitar dejaba el
+    También borra el archivo local anterior (quitar dejaba el
     archivo huérfano ocupando disco para siempre).
     """
     uid = id_propietario(user)

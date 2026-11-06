@@ -20,7 +20,7 @@ logger = logging.getLogger("alojau.publicaciones.repo")
 
 
 def dueno_activo_clause(Publicacion):
-    """v14.1 Ley 1581: excluye avisos de cuentas en soft-delete.
+    """Ley 1581: excluye avisos de cuentas en soft-delete.
 
     NOT EXISTS correlacionado (sin JOIN: no altera forma de COUNT/página).
     Excepción documentada: cola de moderación admin (pendientes) SÍ los
@@ -111,7 +111,7 @@ async def fetch_page(
 ):
     """Página en SQL con orden determinista (distancia NULLS LAST + id).
 
-    Fase 2: con q tokenizada ordena por nº de tokens que matchean (mayoría
+    Con q tokenizada ordena por nº de tokens que matchean (mayoría
     primero) y luego fecha_renovacion; en modo FTS usa ts_rank sobre la query
     limpia + desempate por relevancia tokenizada.
     """
@@ -266,7 +266,7 @@ async def query_lista(
 
     Uso: routers/publicaciones.py::list_publicaciones.
     Ej: total, pubs, *_map, size = await query_lista(db, 1, None, None, None, None).
-    Fase 2: q tokenizada (stop-words ES fuera); FTS con query limpia primero,
+    La q tokenizada (stop-words ES fuera); FTS con query limpia primero,
     fallback tokenizado OR (parciales incluidos, mayoría primero).
     q de 1-2 chars -> directo a fallback. q vacía o solo stop-words -> sin filtro.
     Multiciudad: ciudad_id o ciudad_slug filtran por zona.ciudad_id (AND con POIs).

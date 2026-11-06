@@ -24,7 +24,7 @@ def decode_token(token: str):
             token,
             settings.SECRET_KEY,
             algorithms=[settings.ALGORITHM],
-            options={"require": ["exp", "sub"]},  # OLA1: rechaza tokens sin expiración ni sujeto
+            options={"require": ["exp", "sub"]},  # Rechaza tokens sin expiración ni sujeto
         )
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token inválido o expirado")

@@ -49,7 +49,8 @@ def db_muerta(request, monkeypatch):
     """BD caída en dev y en prod: el comportamiento debe ser idéntico."""
     from app.core import security
     from app.core.config import settings
-    from app.routers import admin_automation, campus, ciudades, zonas
+    from app.repositories import ajustes_repo
+    from app.routers import campus, ciudades, zonas
     from app.services import housing_types
 
     if request.param == "prod":
@@ -57,7 +58,7 @@ def db_muerta(request, monkeypatch):
         monkeypatch.setattr(settings, "USE_MOCK_FALLBACK", False)
         monkeypatch.setattr(settings, "ENV", "prod")
     app.dependency_overrides[get_session] = _muerta_gen
-    for limpiar in (admin_automation.clear_settings_cache, campus.clear_campus_cache,
+    for limpiar in (ajustes_repo.limpiar_cache, campus.clear_campus_cache,
                     ciudades.clear_ciudades_cache, zonas.clear_zonas_cache,
                     housing_types.clear_cache, security.clear_rol_cache_for_tests):
         limpiar()

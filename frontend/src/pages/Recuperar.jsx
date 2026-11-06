@@ -4,6 +4,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { solicitarRecuperacion } from '../services/cuentaApi'
+import { mensajeDeError } from '../services/erroresApi'
 
 export default function Recuperar() {
   const [email, setEmail] = useState('')
@@ -23,7 +24,7 @@ export default function Recuperar() {
       setEstado('ok')
     } catch (err) {
       setEstado('error')
-      setMensaje(err?.response?.data?.detail || 'No se pudo procesar la solicitud.')
+      setMensaje(mensajeDeError(err, 'No se pudo procesar la solicitud.'))
     }
   }
 

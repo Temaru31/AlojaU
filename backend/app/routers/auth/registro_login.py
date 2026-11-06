@@ -15,16 +15,10 @@ from app.core.rate_limit import registrar_intento_persistente, verificar_intento
 from app.db.session import get_session
 from app.core.dominio import Rol
 from app.core.normalizacion import normalizar_email
-from app.routers.auth.comun import (
-    _emitir_token_con_sesion,
-    _gracia_restante,
-    _hash_password_async,
-    _intentar_purgar_usuario,
-    _password_fuerte_v13,
-    _respuesta_login,
-    _verify_password_async,
-    normalizar_telefono,
-)
+from app.routers.auth.contrasenas import hash_password_async, motivo_password_debil, verify_password_async
+from app.routers.auth.purga_cuentas import gracia_restante, intentar_purgar_usuario
+from app.routers.auth.sesiones import emitir_token_con_sesion, respuesta_login
+from app.routers.auth.validacion_perfil import normalizar_telefono
 from app.routers.auth.esquemas import LoginIn, LoginOut, RegisterIn, RegisterOut
 from app.routers.auth.limites import _check_login_rate_limit
 from app.routers.auth.otp_recuperacion import _crear_otp
@@ -68,7 +62,7 @@ def _exigir_consentimiento(data: RegisterIn) -> None:
 
 def _exigir_password_registrable(password: str) -> None:
     """Mínimo letras + números (compatibilidad); el mensaje guía hacia la política v13."""
-    debil = _password_fuerte_v13(password)
+    debil = motivo_password_debil(password)
     tiene_letras_y_numeros = (len(password) >= 8 and re.search(r"[A-Za-z]", password)
                               and re.search(r"[0-9]", password))
     if debil and not tiene_letras_y_numeros:
@@ -94,7 +88,7 @@ async def _liberar_email_para_registro(db: AsyncSession, email: str) -> None:
     existente = await _releer_usuario(db, email, propagar_errores=True)
     if existente is None:
         return
-    restan = _gracia_restante(existente)
+    restan = gracia_restante(existente)
     if restan is None:
         raise HTTPException(status_code=400, detail="Email ya registrado")
     if restan >= 0:
@@ -104,7 +98,7 @@ async def _liberar_email_para_registro(db: AsyncSession, email: str) -> None:
                     f"(quedan {restan} días). Restáuralo en "
                     f"/api/auth/cuenta/restaurar."),
         )
-    await _intentar_purgar_usuario(db, existente)
+    await intentar_purgar_usuario(db, existente)
 
 
 async def _crear_estudiante(db: AsyncSession, data: RegisterIn, email: str,
@@ -114,7 +108,7 @@ async def _crear_estudiante(db: AsyncSession, data: RegisterIn, email: str,
     nuevo = Usuario(
         nombre_completo=data.nombre_completo.strip(),
         email=email,
-        password_hash=await _hash_password_async(data.password),
+        password_hash=await hash_password_async(data.password),
         telefono_whatsapp=telefono,
         rol=Rol.ESTUDIANTE,
         telefono_verificado=False,
@@ -187,7 +181,7 @@ async def _usuario_vigente_por_email(db: AsyncSession, email: str):
     from app.models import Usuario
     res = await db.execute(select(Usuario).where(Usuario.email == email))
     usuario = res.scalars().first()
-    restan = _gracia_restante(usuario) if usuario is not None else None
+    restan = gracia_restante(usuario) if usuario is not None else None
     if restan is None:
         return usuario
     if restan >= 0:
@@ -197,7 +191,7 @@ async def _usuario_vigente_por_email(db: AsyncSession, email: str):
                     f"(quedan {restan} días). Restáurala en "
                     f"/api/auth/cuenta/restaurar o crea una nueva tras la purga."),
         )
-    await _intentar_purgar_usuario(db, usuario)
+    await intentar_purgar_usuario(db, usuario)
     return None
 
 
@@ -208,13 +202,13 @@ async def _login_con_usuario(db: AsyncSession, usuario, password: str, request: 
     Una revocación global invalida los jti viejos, pero el login con
     credenciales sigue permitido.
     """
-    exito = await _verify_password_async(password, usuario.password_hash)
+    exito = await verify_password_async(password, usuario.password_hash)
     for clave in claves_intento:
         await registrar_intento_persistente(db, clave, exito)
     if not exito:
         raise HTTPException(status_code=401, detail="Credenciales inválidas")
-    token = await _emitir_token_con_sesion(
+    token = await emitir_token_con_sesion(
         db, usuario, request, bool(getattr(usuario, "email_verificado", False)))
-    return _respuesta_login(token, usuario.rol, mock=False)
+    return respuesta_login(token, usuario.rol)
 
 

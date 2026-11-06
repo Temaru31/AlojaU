@@ -16,7 +16,7 @@ from datetime import datetime
 from app.models.base import Base
 
 
-# Publicidad: planes + destacados de publicaciones (mig 022, Fase 1).
+# Publicidad: planes + destacados de publicaciones (mig 022).
 # Un destacado = una compra de visibilidad por días con pago manual v1
 # (pago_ref + aprobación admin). El historial nunca se borra: PENDIENTE
 # vencido -> VENCIDO vía job vencer_destacados(); el unique parcial

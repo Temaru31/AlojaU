@@ -16,6 +16,7 @@ import { parseAuthCallbackHash, getCallbackCode, exchangeCodeForSession, leerRed
 import { emitAuthChange } from '../contexts/AuthContext'
 import { guardarToken } from '../services/tokenStorage'
 import { loginConGoogle } from '../services/cuentaApi'
+import { mensajeDeError } from '../services/erroresApi'
 
 function decodeJwtPayload(token) {
   try {
@@ -133,7 +134,7 @@ export default function AuthCallback() {
         if (e?.code === 'OAUTH_TIMEOUT') {
           fallar(e?.message || AUTH_CALLBACK_TIMEOUT_MENSAJE)
         } else {
-          fallar(e?.response?.data?.detail || 'No se pudo vincular tu cuenta de Google.')
+          fallar(mensajeDeError(e, 'No se pudo vincular tu cuenta de Google.'))
         }
       }
     }

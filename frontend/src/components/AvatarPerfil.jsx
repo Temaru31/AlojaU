@@ -9,6 +9,7 @@ import { Eye, Pencil, Trash2 } from 'lucide-react'
 import { inicialesDe } from '../contexts/AuthContext'
 import useFocusTrap from '../hooks/useFocusTrap'
 import { quitarAvatar, subirAvatar } from '../services/cuentaApi'
+import { mensajeDeError } from '../services/erroresApi'
 
 // `tamano="lg"` (w-20) para la tarjeta de identidad del sidebar; el
 // default conserva el tamaño compacto usado en el resto de la app.
@@ -36,7 +37,7 @@ export default function AvatarPerfil({ perfil, token, onCambio, tamano }) {
       onCambio?.(r?.foto_perfil_url || null)
       setSheet(false)
     } catch (e) {
-      setError(e?.response?.data?.detail || 'No se pudo subir la foto (máx 5MB, JPG/PNG/WebP/GIF).')
+      setError(mensajeDeError(e, 'No se pudo subir la foto (máx 5MB, JPG/PNG/WebP/GIF).'))
     } finally {
       setSubiendo(false)
       try { if (fileRef.current) fileRef.current.value = '' } catch { /* noop */ }
@@ -51,7 +52,7 @@ export default function AvatarPerfil({ perfil, token, onCambio, tamano }) {
       onCambio?.(r?.foto_perfil_url ?? null)
       setSheet(false)
     } catch (e) {
-      setError(e?.response?.data?.detail || 'No se pudo quitar la foto.')
+      setError(mensajeDeError(e, 'No se pudo quitar la foto.'))
     } finally {
       setSubiendo(false)
     }

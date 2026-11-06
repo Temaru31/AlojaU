@@ -37,7 +37,7 @@ def _dsn_test() -> str:
 def generar_password_prueba() -> str:
     """Password fuerte ALEATORIA para usuarios temporales de tests.
 
-    Cumple _password_fuerte_v13 (8+, mayúscula, número, especial) sin quemar
+    Cumple motivo_password_debil (8+, mayúscula, número, especial) sin quemar
     credenciales en el código (CodeQL/higiene de secretos).
     """
     import secrets
@@ -160,6 +160,9 @@ def _memoria_hermetica():
 
 
 def _limpiar_memoria() -> None:
+    # Caché de system_settings: cada test parte del seed, no de lo que leyó el anterior.
+    from app.repositories import ajustes_repo
+    ajustes_repo.limpiar_cache()
     try:
         from app.routers import reportes as _rep
         _rep.clear_report_rate_limit_for_tests()

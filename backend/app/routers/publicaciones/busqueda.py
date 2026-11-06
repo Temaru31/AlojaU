@@ -15,7 +15,7 @@ from app.schemas.publicacion import PaginatedPublicaciones
 from app.core.pagination import paginate_params, build_paginated
 from app.core.db_utils import rollback_seguro
 from app.core.dominio import EstadoPublicacion
-from app.services.config_sistema import DEFAULTS
+from app.repositories import ajustes_repo
 from app.routers.publicaciones.comun import _exigir_tipo_activo, select_con_relaciones
 
 logger = logging.getLogger("alojau.publicaciones")
@@ -44,7 +44,7 @@ async def list_publicaciones(
         None,
         min_length=2,
         max_length=100,
-        description="Texto libre tokenizado: stop-words ES fuera, OR parcial + relevancia (Fase 2)",
+        description="Texto libre tokenizado: stop-words ES fuera, OR parcial + relevancia",
     ),
     ciudad_id: Optional[int] = Query(
         None, ge=1, le=1000000, description="Fase 4 multiciudad: filtra por Ciudad.id vía zona"
@@ -130,11 +130,7 @@ def _orden_mis_publicaciones(orden: str) -> list:
     summary="UX Mis publicaciones del dueño (todos los estados, paginado)",
 )
 async def mis_publicaciones(
-    estado: Optional[str] = Query(
-        None,
-        pattern="^(ACTIVO|PENDIENTE|PAUSADO|PAUSADO_POR_REPORTE|REVISION_REQUERIDA|RECHAZADO|ARRENDADO|EXPIRADO|DESACTIVADO)$",
-        description="Filtra por estado (default todos)",
-    ),
+    estado: Optional[EstadoPublicacion] = Query(None, description="Filtra por estado (default todos)"),
     page: int = Query(1, ge=1, le=1000, description="Página 1-indexed"),
     size: int = Query(12, ge=1, le=50, description="Tamaño página"),
     orden: str = Query(
@@ -230,50 +226,32 @@ async def mi_historial(
 
 @router.get("/config-publica", summary="Config pública de validación y frescura (sin auth)")
 async def config_publica(db: AsyncSession = Depends(get_session)):
-    """Detalle #3: expone los settings que el frontend hardcodeaba.
+    """Expone los settings que el frontend hardcodeaba.
 
     GET /api/publicaciones/config-publica -> {dias_desactualizada,
     titulo_min/max, descripcion_min/max, direccion_min/max, reglas_min/max,
     fotos_min/max, canon_max, vistas_visibles_publico}. Públicos (sin auth),
-    1 query a system_settings con fallback a DEFAULTS si no hay PG. El
+    ajustes desde `ajustes_repo` (caché 5 min, DEFAULTS si no hay PG). El
     frontend lo lee una vez y cachea (ver constants.js fetchConfigPublica);
     si falla, usa LIMITES locales (divergencia aceptada y documentada).
     NOTA: declarada ANTES de /{pub_id} para no caer en el path param.
     """
-    _KEYS = ["dias_desactualizada", "titulo_min", "titulo_max",
-             "descripcion_min", "descripcion_max", "fotos_min_publicar",
-             "vistas_visibles_publico"]
-    vals = {k: DEFAULTS[k][0] for k in _KEYS if k in DEFAULTS}
-    try:
-        from app.models import SystemSetting
-        rows = (await db.execute(select(SystemSetting).where(
-            SystemSetting.clave.in_(_KEYS)))).scalars().all()
-        for r in rows:
-            vals[r.clave] = r.valor
-    except Exception as e:
-        await rollback_seguro(db, "config_publica")
-        # Lectura pública: nunca 503, se sirven los DEFAULTS.
-        logger.warning("[config pública] ajustes desde BD fallaron: %s", exc_resumen(e))
-    def _iv(k, d):
-        try:
-            return int(vals.get(k, d))
-        except Exception:
-            return d
+    ajustes = await ajustes_repo.leer_todos(db)
     # Aditivo: catálogo de tipos dinámicos (caché 5min, fallback local).
     from app.services import housing_types as _ht
     tipos = await _ht.get_activos(db)  # nunca lanza: cae al catálogo estático
     return {
-        "dias_desactualizada": _iv("dias_desactualizada", 30),
-        "titulo_min": _iv("titulo_min", 10),
-        "titulo_max": _iv("titulo_max", 150),
-        "descripcion_min": _iv("descripcion_min", 20),
-        "descripcion_max": _iv("descripcion_max", 2000),
+        "dias_desactualizada": ajustes_repo.entero(ajustes, "dias_desactualizada"),
+        "titulo_min": ajustes_repo.entero(ajustes, "titulo_min"),
+        "titulo_max": ajustes_repo.entero(ajustes, "titulo_max"),
+        "descripcion_min": ajustes_repo.entero(ajustes, "descripcion_min"),
+        "descripcion_max": ajustes_repo.entero(ajustes, "descripcion_max"),
         "direccion_min": 10, "direccion_max": 200,
         "reglas_min": 10, "reglas_max": 2000,
-        "fotos_min": _iv("fotos_min_publicar", 3), "fotos_max": 10,
+        "fotos_min": ajustes_repo.entero(ajustes, "fotos_min_publicar"), "fotos_max": 10,
         "canon_max": 10_000_000,
-        "vistas_visibles_publico": str(vals.get("vistas_visibles_publico", "false")).lower() == "true",
+        "vistas_visibles_publico": ajustes_repo.booleano(ajustes, "vistas_visibles_publico"),
         "tipos_vivienda": tipos,
-        # Chatbot MVP: el front oculta el widget si viene false (Fase 3).
+        # Chatbot MVP: el front oculta el widget si viene false.
         "chat_enabled": bool(settings.CHAT_ENABLED),
     }

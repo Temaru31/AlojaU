@@ -1,4 +1,4 @@
-"""v15.2 auto-moderación AI-ready (motor de reglas + hook de proveedor IA).
+"""Auto-moderación AI-ready (motor de reglas + hook de proveedor IA).
 
 Fase 1 (activa): reglas programáticas puras, sin dependencias externas:
   - calidad textual (longitudes configurables, repetición, mayúsculas,
@@ -18,7 +18,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 from app.core.dominio import EstadoPublicacion
-from app.services.config_sistema import DEFAULTS
+from app.repositories import ajustes_repo
 
 # --- Resultado estándar (firma estable para proveedores futuros) ---
 APPROVE = "APPROVE"
@@ -48,23 +48,9 @@ EXTENSIONES_PERMITIDAS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 PALABRAS_DEFECTO = ["viagra", "casino", "cripto", "x1000"]
 
 
-def _cfg_valores(db_rows: dict[str, str] | None = None) -> dict[str, str]:
-    """Defaults + overrides de system_settings (testeable sin DB)."""
-    base = {k: v for k, (v, _t, _d, _s) in DEFAULTS.items()}
-    if db_rows:
-        base.update({k: v for k, v in db_rows.items() if k in base})
-    return base
-
-
 async def leer_config_moderacion(db) -> dict[str, str]:
-    """Lee system_settings (una query). Sin tabla -> defaults (sin cachear)."""
-    try:
-        from sqlalchemy import select as _select
-        from app.models import SystemSetting as _SS
-        rows = (await db.execute(_select(_SS))).scalars().all()
-        return _cfg_valores({r.clave: r.valor for r in rows})
-    except Exception:
-        return _cfg_valores(None)
+    """Ajustes del sistema; si la BD no responde, los valores por defecto."""
+    return await ajustes_repo.leer_todos(db)
 
 
 def _num(cfg: dict[str, str], clave: str, default: float) -> float:
@@ -130,7 +116,7 @@ def validar_imagenes(fotos: list[str], cfg: dict[str, str]) -> list[str]:
 
 
 class BaseAIModerationProvider(ABC):
-    """Interfaz para proveedores de moderación IA (Fase 2).
+    """Interfaz para proveedores de moderación IA.
 
     Implementaciones futuras (OpenAI moderation, Vertex, modelo local)
     heredan y sobreescriben `evaluate_publication`. El flujo
@@ -155,7 +141,7 @@ class HeuristicAIModerator(BaseAIModerationProvider):
     async def evaluate_publication(
         self, publicacion_data: dict[str, Any], imagenes: list[str]
     ) -> ModerationResult:
-        cfg = publicacion_data.get("_cfg") or _cfg_valores(None)
+        cfg = publicacion_data.get("_cfg") or ajustes_repo.valores_por_defecto()
         data = dict(publicacion_data)
         motivos = validar_texto(data.get("titulo", ""), data.get("descripcion", ""),
                                 cfg)

@@ -16,6 +16,6 @@ DEFAULTS = {
     "descripcion_max": ("2000", "int", "Máximo de caracteres de la descripción", "publicaciones"),
     "fotos_min_publicar": ("3", "int", "Mínimo de fotos al publicar", "publicaciones"),
     "palabras_prohibidas": ("viagra,casino,cripto,x1000", "str", "Spam separado por comas", "moderacion"),
-    # v15.x visibilidad de vistas (False = solo dueño/admin, prudente).
+    # Visibilidad de vistas (False = solo dueño/admin, prudente).
     "vistas_visibles_publico": ("false", "bool", "Mostrar vistas a todo visitante", "visibilidad"),
 }

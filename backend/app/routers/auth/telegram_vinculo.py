@@ -37,7 +37,7 @@ _TELEGRAM_PENDIENTES: dict[str, str] = {}  # chat_id -> nonce (espejo memoria/de
 def _firmar_vinculo(user_id: int, exp: int, nonce: str) -> str:
     """Firma un token de vinculación URL-safe para deep-linking de Telegram.
 
-    Bloque 1 fix: el formato legacy `uid.exp.nonce.sig` usa puntos, pero
+    El formato legacy `uid.exp.nonce.sig` usa puntos, pero
     Telegram solo acepta `start` con `[A-Za-z0-9_-]{1,64}` (los puntos se
     truncan y el payload nunca llega al webhook). El formato nuevo usa
     `_` como separador: `uid_exp_nonce_sig` (sig recortada a 16 hex = 64
@@ -122,7 +122,7 @@ def validar_token_vinculo(token: str) -> int | None:
 
 async def validar_token_vinculo_db(db: AsyncSession, token: str,
                                    commit: bool = True) -> int | None:
-    """Variante persistente para el webhook del bot (Bloque 2).
+    """Variante persistente para el webhook del bot.
 
     Misma semántica que `validar_token_vinculo` pero contra PG con
     `SELECT FOR UPDATE` (cierra la carrera de doble-consumo entre workers).

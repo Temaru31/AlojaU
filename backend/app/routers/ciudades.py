@@ -1,4 +1,4 @@
-"""GET /api/ciudades — catálogo multiciudad (Fase 4).
+"""GET /api/ciudades — catálogo multiciudad.
 
 Lista ciudades activas con slug URL-safe. Sin auth. Cache-Control 1h
 (mismo patrón que /api/campus). Sin DB -> 503.

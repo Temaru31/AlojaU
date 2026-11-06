@@ -3,6 +3,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from app.core.dominio import EstadoReporte
+from app.core.errores import NoEncontrado
 
 
 async def fetch_detail_bundle(db: AsyncSession, pub_id: int):
@@ -38,16 +39,14 @@ async def fetch_detail_campus_ref(db: AsyncSession, pub_id: int, campus_id: int)
     """Fila publicacion_campus + lugar para GET detalle ?campus_id= (004 POIs).
 
     Retorna (dist_m, campus) o (None, None) si el aviso no tiene coords
-    (edge case: la fila existe con dist NULL por trigger sin coords). Lanza 404 si
-    el lugar no existe o está inactivo. Uso: routers/publicaciones.py.
+    (edge case: la fila existe con dist NULL por trigger sin coords). Lanza
+    NoEncontrado si el lugar no existe o está inactivo. Uso: routers/publicaciones.py.
     """
-    from fastapi import HTTPException
-
     from app.models import CampusUniversitario, PublicacionCampus
 
     campus = await db.get(CampusUniversitario, campus_id)
     if not campus or not campus.activo:
-        raise HTTPException(status_code=404, detail=f"campus_id {campus_id} no existe o inactivo")
+        raise NoEncontrado(f"campus_id {campus_id} no existe o inactivo")
     row = await db.get(PublicacionCampus, (pub_id, campus_id))
     dist = row.distancia_geodesica_m if row else None
     return dist, campus

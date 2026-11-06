@@ -6,6 +6,7 @@ import { signInWithGoogle } from '../../services/supabaseClient'
 import GoogleButton from '../../components/GoogleButton'
 import RegistroForm from '../../components/RegistroForm'
 import { iniciarSesionConCorreo } from '../../services/cuentaApi'
+import { mensajeDeError } from '../../services/erroresApi'
 
 // Vista de Mi Perfil sin sesión: Google, login con email o registro.
 export default function AccesoPerfil({ onSesionIniciada }) {
@@ -30,7 +31,7 @@ export default function AccesoPerfil({ onSesionIniciada }) {
       const sesion = await iniciarSesionConCorreo(loginEmail, loginPass)
       iniciarSesion(sesion.access_token)
     } catch (err) {
-      setError(err?.response?.data?.detail || 'Error al iniciar sesión')
+      setError(mensajeDeError(err, 'Error al iniciar sesión'))
     } finally {
       setLoginLoading(false)
     }

@@ -12,6 +12,7 @@ import useTiposVivienda, { TIPOS_FALLBACK } from '../hooks/useTiposVivienda'
 import useFocusTrap from '../hooks/useFocusTrap'
 import TipoIcono from './TipoIcono'
 import { editarPublicacion, obtenerPublicacion, subirUnaFoto } from '../services/publicacionesApi'
+import { mensajeDeError } from '../services/erroresApi'
 
 // Fallback local (mismo contrato slug). El hook lo reemplaza por /config-publica.
 const TIPOS = TIPOS_FALLBACK.map((t) => t.slug)
@@ -160,14 +161,11 @@ export default function EditarPublicacionModal({ pub, token, onClose, onSaved })
       onClose?.()
     } catch (err) {
       const status = err?.response?.status
-      const detail = err?.response?.data?.detail
       setError(
         status === 401 ? 'Sesión vencida. Inicia sesión de nuevo.'
         : status === 403 ? 'Solo el dueño puede editar este aviso.'
         : status === 404 ? 'Este aviso ya no existe.'
-        : typeof detail === 'string' ? detail
-        : Array.isArray(detail) ? detail.map(d => d.msg).join(' | ')
-        : 'No se pudo guardar. Intenta de nuevo.'
+        : mensajeDeError(err, 'No se pudo guardar. Intenta de nuevo.')
       )
     } finally {
       setSaving(false)
@@ -196,7 +194,7 @@ export default function EditarPublicacionModal({ pub, token, onClose, onSaved })
       setFotos(prev => reordenarLocal([...prev, ...urls.map(url => ({ url, _nueva: true }))]))
       setFotosDirty(true)
     } catch (err) {
-      setError(err?.response?.data?.detail || 'No se pudieron subir las fotos (máx 5MB, JPG/PNG/WebP/GIF).')
+      setError(mensajeDeError(err, 'No se pudieron subir las fotos (máx 5MB, JPG/PNG/WebP/GIF).'))
     } finally {
       setSubiendo(false)
     }

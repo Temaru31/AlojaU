@@ -8,6 +8,7 @@ import { House } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import BreadcrumbsAdmin from '../components/BreadcrumbsAdmin'
 import { crearTipoVivienda, editarTipoVivienda, eliminarTipoVivienda, listarTiposVivienda } from '../services/adminApi'
+import { mensajeDeError } from '../services/erroresApi'
 
 
 export default function AdminTipos() {
@@ -61,7 +62,7 @@ export default function AdminTipos() {
       setOk('Tipo creado y visible en filtros/publicar.')
       await cargar()
     } catch (err) {
-      setError(err?.response?.data?.detail || 'No se pudo crear el tipo.')
+      setError(mensajeDeError(err, 'No se pudo crear el tipo.'))
     } finally {
       setSaving(null)
     }
@@ -81,7 +82,7 @@ export default function AdminTipos() {
       setTipos((prev) => prev.map((t) => (t.slug === slug ? actualizado : t)))
       setOk(`"${slug}" actualizado.`)
     } catch (err) {
-      setError(err?.response?.data?.detail || `No se pudo guardar "${slug}".`)
+      setError(mensajeDeError(err, `No se pudo guardar "${slug}".`))
     } finally {
       setSaving(null)
     }
@@ -96,7 +97,7 @@ export default function AdminTipos() {
       setTipos((prev) => prev.map((x) => (x.slug === t.slug ? actualizado : x)))
       setOk(`"${t.slug}" ${actualizado.esta_activo ? 'activado' : 'desactivado (lógico, sin romper avisos)'}.`)
     } catch (err) {
-      setError(err?.response?.data?.detail || 'No se pudo cambiar el estado.')
+      setError(mensajeDeError(err, 'No se pudo cambiar el estado.'))
     } finally {
       setSaving(null)
     }
@@ -115,7 +116,7 @@ export default function AdminTipos() {
       const status = err?.response?.status
       setError(status === 409
         ? `No se puede eliminar "${slug}": tiene avisos publicados (desactívalo en su lugar).`
-        : (err?.response?.data?.detail || 'No se pudo eliminar.'))
+        : mensajeDeError(err, 'No se pudo eliminar.'))
       setABorrar(null)
     } finally {
       setSaving(null)

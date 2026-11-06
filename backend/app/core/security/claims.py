@@ -22,3 +22,9 @@ def id_propietario(user: Mapping) -> int:
     if not isinstance(uid, int):
         raise HTTPException(status_code=401, detail="Token sin propietario válido")
     return uid
+
+
+def id_o_none(user: Mapping | None) -> int | None:
+    """Id entero del token o None (para auditoría: nunca lanza)."""
+    uid = (user or {}).get("id")
+    return uid if isinstance(uid, int) else None

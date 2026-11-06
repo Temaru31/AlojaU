@@ -22,7 +22,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.logseguro import exc_resumen
-from app.core.security import require_admin, require_arrendador, id_propietario, ClaimsUsuario
+from app.core.security import require_admin, require_arrendador, id_propietario, ClaimsUsuario, id_o_none
 from app.db.session import get_session
 from app.repositories.destacados_repo import DestacadosRepo, get_destacados_repo
 from app.services import idempotencia
@@ -231,7 +231,7 @@ async def decidir(
             d.estado, evento = EstadoDestacado.RECHAZADO, "REJECTED"
         db.add(PublicacionesAudit(
             publicacion_id=d.publicacion_id,
-            usuario_id=admin.get("id") if isinstance(admin.get("id"), int) else None,
+            usuario_id=id_o_none(admin),
             evento=evento,
             detalle=f"Publicidad: destacado {d.id} {payload.accion} por admin",
         ))

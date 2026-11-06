@@ -23,6 +23,7 @@ from abc import ABC, abstractmethod
 from fastapi import Request
 
 from app.core.config import settings
+from app.core.errores import DatoInvalido, ErrorDeProveedor, ServicioNoDisponible
 
 logger = logging.getLogger("alojau.storage")
 
@@ -34,14 +35,14 @@ class StorageBackend(ABC):
 
     @abstractmethod
     def save(self, content: bytes, filename: str, mime: str) -> str:
-        """Persiste `content` y retorna URL pública. Lanza HTTPException en fallo."""
+        """Persiste `content` y retorna URL pública. Lanza ErrorDeDominio en fallo."""
         raise NotImplementedError
 
 
 class LocalStorageBackend(StorageBackend):
     """Dev/test: disco local + URL `{base}/uploads/{filename}`.
 
-    AUDITORÍA PRE-PUSH (avatar M3): en Render el disco es EFÍMERO (se borra
+    En Render el disco es EFÍMERO (se borra
     al redeploy/reiniciar). Solo para dev/test; en prod se exige Cloudinary
     (ver `get_storage_backend` + aviso en logs). El `makedirs` es tolerante
     para no tumbar el arranque en contenedores con FS de solo lectura: si
@@ -67,9 +68,7 @@ class LocalStorageBackend(StorageBackend):
         # Defensa path traversal aunque el router ya usa uuid.
         dest = os.path.abspath(os.path.join(self.upload_dir, filename))
         if not dest.startswith(self.upload_dir):
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=400, detail="Nombre de archivo inválido")
+            raise DatoInvalido("Nombre de archivo inválido")
         with open(dest, "wb") as f:
             f.write(content)
         return f"{self.base_url}/uploads/{filename}"
@@ -94,16 +93,11 @@ class CloudinaryStorageBackend(StorageBackend):
             import cloudinary
             import cloudinary.uploader
         except ImportError as e:
-            from fastapi import HTTPException
-
-            raise HTTPException(
-                status_code=503,
-                detail="Cloudinary configurado pero lib 'cloudinary' no instalada (pip install cloudinary)",
+            raise ServicioNoDisponible(
+                "Cloudinary configurado pero lib 'cloudinary' no instalada (pip install cloudinary)"
             ) from e
         if not (self.cloud_name and self.api_key and self.api_secret):
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=503, detail="Cloudinary sin credenciales (CLOUDINARY_*)")
+            raise ServicioNoDisponible("Cloudinary sin credenciales (CLOUDINARY_*)")
         cloudinary.config(
             cloud_name=self.cloud_name,
             api_key=self.api_key,
@@ -121,14 +115,10 @@ class CloudinaryStorageBackend(StorageBackend):
                 overwrite=False,
             )
         except Exception as e:
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=502, detail=f"Cloudinary falló: {type(e).__name__}") from e
+            raise ErrorDeProveedor(f"Cloudinary falló: {type(e).__name__}") from e
         url = result.get("secure_url") or result.get("url") or ""
         if not url:
-            from fastapi import HTTPException
-
-            raise HTTPException(status_code=502, detail="Cloudinary sin secure_url")
+            raise ErrorDeProveedor("Cloudinary sin secure_url")
         return url
 
 
@@ -182,7 +172,7 @@ def get_storage_backend(base_url: str = "", upload_dir: str = "") -> StorageBack
         base_url: base para URLs locales (ej `str(request.base_url)`).
         upload_dir: override solo tests (default `backend/uploads/`).
 
-    AUDITORÍA PRE-PUSH: si `ENV=prod` y no hay Cloudinary, se usa disco
+    Si `ENV=prod` y no hay Cloudinary, se usa disco
     EFÍMERO y se deja warning explícito (el avatar/foto se pierde al
     redeploy; el endpoint responde igual 200 pero no es durable).
     """

@@ -8,7 +8,7 @@ from fastapi import Depends, HTTPException, Path, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.core.security import require_admin, ClaimsUsuario
+from app.core.security import require_admin, ClaimsUsuario, id_o_none
 from app.core.logseguro import exc_resumen
 from app.db.session import get_session
 from app.repositories import publicacion_repo as repo
@@ -51,7 +51,7 @@ async def cambiar_estado(
         p.estado = payload.estado
         db.add(PublicacionesAudit(
             publicacion_id=pub_id,
-            usuario_id=admin.get("id") if isinstance(admin.get("id"), int) else None,
+            usuario_id=id_o_none(admin),
             evento=ESTADO_A_EVENTO[payload.estado],
             detalle=f"Cambio a {payload.estado} por admin",
         ))
@@ -111,7 +111,7 @@ async def bulk_approve(
     db: AsyncSession = Depends(get_session),
     admin: ClaimsUsuario = Depends(require_admin),
 ):
-    """v15.2 moderación masiva. Transacción única: estados + audit APPROVED."""
+    """Moderación masiva. Transacción única: estados + audit APPROVED."""
     return await _bulk_cambiar_estado(db, admin, data.ids, EstadoPublicacion.ACTIVO, "APPROVED")
 
 
@@ -121,7 +121,7 @@ async def bulk_reject(
     db: AsyncSession = Depends(get_session),
     admin: ClaimsUsuario = Depends(require_admin),
 ):
-    """v15.2 moderación masiva. Transacción única: estados + audit REJECTED."""
+    """Moderación masiva. Transacción única: estados + audit REJECTED."""
     return await _bulk_cambiar_estado(db, admin, data.ids, EstadoPublicacion.RECHAZADO, "REJECTED")
 
 
@@ -144,7 +144,7 @@ async def _aplicar_cambios_bulk(db: AsyncSession, admin: ClaimsUsuario, ids: lis
     from app.models import Publicacion, PublicacionesAudit
 
     r = _ResultadoBulk()
-    admin_id = admin.get("id") if isinstance(admin.get("id"), int) else None
+    admin_id = id_o_none(admin)
     for pid in dict.fromkeys(ids):
         p = await db.get(Publicacion, pid) if isinstance(pid, int) and pid >= 1 else None
         if not p:

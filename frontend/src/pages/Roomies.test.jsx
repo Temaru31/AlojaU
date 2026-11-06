@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { BrowserRouter } from 'react-router-dom'
 import Roomies from './Roomies'
 import * as apiModule from '../services/api'
+import * as roomiesApi from '../services/roomiesApi'
 import * as authContextModule from '../contexts/AuthContext'
 
 describe('Roomies page', () => {
@@ -35,7 +36,7 @@ describe('Roomies page', () => {
       },
     })
 
-    vi.spyOn(apiModule, 'getCandidatosRoomies').mockResolvedValue({
+    vi.spyOn(roomiesApi, 'getCandidatosRoomies').mockResolvedValue({
       data: [
         {
           usuario_id: 101,
@@ -154,7 +155,7 @@ describe('Roomies page', () => {
   })
 
   it('si la API falla muestra perfiles de ejemplo avisados y sin contacto', async () => {
-    vi.spyOn(apiModule, 'getCandidatosRoomies').mockRejectedValueOnce(new Error('caída'))
+    vi.spyOn(roomiesApi, 'getCandidatosRoomies').mockRejectedValueOnce(new Error('caída'))
     render(
       <BrowserRouter>
         <Roomies />
@@ -167,7 +168,7 @@ describe('Roomies page', () => {
   })
 
   it('soporta candidatos con el formato minimal del backend (id, score, sin detalle ni preferencias)', async () => {
-    vi.spyOn(apiModule, 'getCandidatosRoomies').mockResolvedValueOnce({
+    vi.spyOn(roomiesApi, 'getCandidatosRoomies').mockResolvedValueOnce({
       data: [
         {
           id: 501,

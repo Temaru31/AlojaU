@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.routers.publicaciones.comun import select_con_relaciones
 from app.db.session import get_session
+from app.core.errores import ErrorDeDominio
 from app.core.security import get_current_user, get_optional_user, id_propietario, ClaimsUsuario
 from app.core.logseguro import exc_resumen
 from app.repositories import publicacion_repo as repo
@@ -102,7 +103,7 @@ async def get_publicacion(
                 _info is not None,
                 _info["vence"] if _info else None,
             )
-    except HTTPException:
+    except (HTTPException, ErrorDeDominio):
         raise
     except Exception as e:
         # CWE-117: pub_id viene del path; sanear CR/LF antes de loguear.
@@ -155,10 +156,10 @@ async def similares(
     limit: int = Query(4, ge=1, le=12),
     db: AsyncSession = Depends(get_session),
 ):
-    """v15.2 bloque 'similares': misma zona (o barrio libre), ACTIVO, dueño
+    """Bloque 'similares': misma zona (o barrio libre), ACTIVO, dueño
     activo, ordenados por confianza desc. 404 si el aviso base no existe.
 
-    Detalle #9: excluye avisos del propio dueño (usuario_id != base) — el
+    Excluye avisos del propio dueño (usuario_id != base) — el
     bloque es "alternativas para descubrir", no "mis otros avisos".
     """
     try:
@@ -211,7 +212,7 @@ async def registrar_vista(
     request: Request = ...,
     db: AsyncSession = Depends(get_session),
 ):
-    """v15.2 métrica de vistas. Pública (ver vitrinas cuenta como visita).
+    """Métrica de vistas. Pública (ver vitrinas cuenta como visita).
 
     Antifraude: 1 conteo por (aviso, IP, día) vía hash SHA256 (nunca la IP
     en claro) + throttle 120/min por IP.

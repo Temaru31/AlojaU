@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import PreferenciasRoomie from './PreferenciasRoomie'
-import * as apiModule from '../services/api'
+import * as apiModule from '../services/roomiesApi'
 
 describe('PreferenciasRoomie component', () => {
   beforeEach(() => {

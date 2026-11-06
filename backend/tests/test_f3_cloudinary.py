@@ -7,6 +7,7 @@ Cubre:
 - Validaciones se mantienen con Cloudinary (MIME/magic no llegan a save).
 - Cloudinary sin lib instalada -> 503 claro (import lazy).
 """
+from app.core.errores import DatoInvalido, ServicioNoDisponible, status_http
 import os
 
 from fastapi.testclient import TestClient
@@ -86,7 +87,7 @@ def test_f3_local_guarda_y_bloquea_traversal(tmp_path):
         backend.save(b"x", "../evil.png", "image/png")
         raise AssertionError("debió bloquear traversal")
     except Exception as e:
-        assert getattr(e, "status_code", 400) == 400
+        assert isinstance(e, DatoInvalido) and status_http(e) == 400
 
 
 def test_f3_upload_usa_cloudinary_mock_sin_red(monkeypatch):
@@ -168,7 +169,7 @@ def test_f3_cloudinary_sin_lib_503_claro(monkeypatch):
             backend.save(b"bytes", "a.png", "image/png")
             raise AssertionError("debió lanzar 503")
         except Exception as e:
-            assert getattr(e, "status_code", None) == 503
+            assert isinstance(e, ServicioNoDisponible) and status_http(e) == 503
     finally:
         _restore_cloudinary(prev)
         # Asegura que otros tests no queden con credenciales mock.

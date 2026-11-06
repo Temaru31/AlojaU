@@ -1,4 +1,4 @@
-"""Motor de búsqueda inteligente tokenizada (Fase 2).
+"""Motor de búsqueda inteligente tokenizada.
 
 Uso: repositories/publicacion_repo.py y services/publicacion_view.py.
 Ej: tokens = tokenize_query("Apartamento amoblado con closet en el centro")

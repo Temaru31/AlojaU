@@ -1,7 +1,7 @@
 // Detalle #2: validate() usa LIMITES (fuente única, sin hardcode).
 // Detalle #8: el gate de teléfono enlaza a /perfil#datos (tab directo).
 import { describe, it, expect } from 'vitest'
-import { validarPublicar, esFotoEjemplo } from '../utils/publicar'
+import { armarPayloadPublicacion, esFotoEjemplo, sanitizarTexto, validarPublicar } from '../utils/publicar'
 import { LIMITES } from '../constants'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -66,5 +66,30 @@ describe('CTA de teléfono abre el tab datos (detalle #8)', () => {
     const src = fs.readFileSync(path.join(__dirname, 'Publicar.jsx'), 'utf8')
     expect(src).toContain('to="/perfil#datos"')
     expect(src).toContain('Datos y contacto')
+  })
+})
+
+describe('armarPayloadPublicacion', () => {
+  const FORM = {
+    titulo: '  Habitación <b>amplia</b>  ', descripcion: 'Descripción larga', tipo_inmueble: 'APARTAESTUDIO',
+    canon_mensual: '$ 850.000', deposito_requerido: '', zona_barrio_id: '3', barrio_texto: '',
+    direccion_referencial: 'Calle 5 # 4-20', reglas_convivencia: 'Sin fiestas',
+    latitud: '', longitud: '-76.6', servicios_ids: [1, 2], fotos: ['https://a/1.jpg', '  ', 'https://a/2.jpg'],
+  }
+
+  it('convierte montos y coordenadas y descarta fotos vacías', () => {
+    const p = armarPayloadPublicacion(FORM)
+    expect(p.canon_mensual).toBe(850000)
+    expect(p.deposito_requerido).toBe(0)
+    expect(p.zona_barrio_id).toBe(3)
+    expect(p.barrio_texto).toBeNull()
+    expect(p.latitud).toBeNull()
+    expect(p.longitud).toBe(-76.6)
+    expect(p.fotos).toEqual(['https://a/1.jpg', 'https://a/2.jpg'])
+    expect(p.campus_ids).toEqual([])
+  })
+
+  it('sanea los textos', () => {
+    expect(armarPayloadPublicacion(FORM).titulo).toBe(sanitizarTexto(FORM.titulo, 150))
   })
 })

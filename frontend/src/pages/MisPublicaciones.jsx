@@ -2,11 +2,11 @@
 // Muestra exclusivamente las publicaciones del usuario autenticado vía GET /api/publicaciones/mias.
 // Cada tarjeta presenta imagen, título, tipo, zona, canon, estado, fecha de expiración,
 // cálculo de días restantes según reglas de vigencia y botón de renovación.
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Hourglass } from 'lucide-react'
-import { isCancelError } from '../services/api'
-import { useAuth, emitMiasChange } from '../contexts/AuthContext'
+import { mensajeDeError } from '../services/erroresApi'
+import { useAuth, emitMiasChange, sincronizarRolSiCambio } from '../contexts/AuthContext'
 import Paginacion from '../components/Paginacion'
 import ConfirmDialog from '../components/ConfirmDialog'
 import EditarPublicacionModal from '../components/EditarPublicacionModal'
@@ -15,7 +15,8 @@ import HistorialAvisos from '../components/HistorialAvisos'
 import useTiposVivienda from '../hooks/useTiposVivienda'
 import { ESTADO } from '../utils/estados'
 import TarjetaMiAviso from './misPublicaciones/TarjetaMiAviso'
-import { cambiarEstadoPublicacion, eliminarPublicacion, listarMisPublicaciones } from '../services/publicacionesApi'
+import { cambiarEstadoPublicacion, eliminarPublicacion } from '../services/publicacionesApi'
+import useMisPublicaciones from './misPublicaciones/useMisPublicaciones'
 
 // Orden del panel (server-side vía ?orden=: ordenar en cliente mentiría
 // con paginación multipágina).
@@ -33,20 +34,14 @@ const FILTROS = [
   { value: ESTADO.EXPIRADO, label: 'Vencidas' },
 ]
 
-const PAGE_SIZE = 12
-
 export default function MisPublicaciones() {
   const { token, refresh, user } = useAuth()
   // Catálogo dinámico con fallback estático.
   const { tipos: tiposCatalogo } = useTiposVivienda()
-  const [items, setItems] = useState([])
-  const [total, setTotal] = useState(0)
-  const [pages, setPages] = useState(1)
-  const [page, setPage] = useState(1)
-  const [filtro, setFiltro] = useState('')
-  const [loading, setLoading] = useState(!!token)
-  const [error, setError] = useState('')
-  const [reloadKey, setReloadKey] = useState(0)
+  const {
+    items, total, pages, page, setPage, filtro, cambiarFiltro, orden, cambiarOrden,
+    loading, error, setError, recargar, actualizarAviso, quitarAviso,
+  } = useMisPublicaciones(token)
   const [editando, setEditando] = useState(null)
   const [renovando, setRenovando] = useState(null)
   // Borrado con modal independiente (nunca cambia el texto del botón).
@@ -56,8 +51,6 @@ export default function MisPublicaciones() {
   const [cambiandoEstado, setCambiandoEstado] = useState(null)
   // Pausar oculta la vitrina -> confirmación en 2 pasos (reanudar no).
   const [aPausar, setAPausar] = useState(null)
-  // Orden server-side (se envía al backend y resetea la página).
-  const [orden, setOrden] = useState('recientes')
 
   const handleEstado = async (p) => {
     if (p.estado === ESTADO.ACTIVO && aPausar !== p.id) {
@@ -69,13 +62,11 @@ export default function MisPublicaciones() {
     setError('')
     try {
       const r = await cambiarEstadoPublicacion(p.id, nuevo, token)
-      setItems(prev => prev.map(x => x.id === p.id ? { ...x, estado: r?.estado || nuevo } : x))
+      actualizarAviso(p.id, { estado: r?.estado || nuevo })
       setAPausar(null)
-      if (r?.rol_actualizado) {
-        try { await refresh?.() } catch { /* noop */ }
-      }
+      await sincronizarRolSiCambio(r, refresh)
     } catch (err) {
-      setError(err?.response?.data?.detail || 'No se pudo cambiar el estado.')
+      setError(mensajeDeError(err, 'No se pudo cambiar el estado.'))
       setAPausar(null)
     } finally {
       setCambiandoEstado(null)
@@ -87,60 +78,18 @@ export default function MisPublicaciones() {
     setError('')
     try {
       const r = await eliminarPublicacion(p.id, token)
-      setItems(prev => prev.filter(x => x.id !== p.id))
-      setTotal(t => Math.max(0, t - 1))
+      quitarAviso(p.id)
       setAEliminar(null)
       // El navbar oculta "Mis publicaciones" al llegar a 0 avisos.
       emitMiasChange()
-      // Reactividad de rol: si hubo democión, re-sincroniza el perfil.
-      if (r?.rol_actualizado) {
-        try { await refresh?.() } catch { /* noop */ }
-      }
+      await sincronizarRolSiCambio(r, refresh)
     } catch (err) {
-      setError(err?.response?.data?.detail || 'No se pudo eliminar la publicación.')
+      setError(mensajeDeError(err, 'No se pudo eliminar la publicación.'))
       setAEliminar(null)
     } finally {
       setEliminando(false)
     }
   }
-
-  // AbortController — cambiar de filtro/página aborta la petición anterior
-  // para que una respuesta tardía no pise los resultados actuales.
-  useEffect(() => {
-    if (!token) {
-      setItems([])
-      setLoading(false)
-      return
-    }
-    const controller = new AbortController()
-    setLoading(true)
-    setError('')
-    listarMisPublicaciones(token,
-      { page, size: PAGE_SIZE, ...(filtro ? { estado: filtro } : {}), orden },
-      { signal: controller.signal })
-      .then(data => {
-        if (Array.isArray(data)) {
-          setItems(data); setTotal(data.length); setPages(1)
-        } else {
-          setItems(data.items || []); setTotal(data.total || 0); setPages(data.pages || 1)
-        }
-      })
-      .catch(err => {
-        if (isCancelError(err) || controller.signal.aborted) return
-        const status = err?.response?.status
-        setError(status === 401
-          ? 'Sesión vencida. Inicia sesión de nuevo.'
-          : status === 404 || status === 422
-            ? 'Tu backend está desactualizado (falta GET /mias). Reinicia uvicorn en la rama actual.'
-            : 'No se pudieron cargar tus publicaciones.')
-        setItems([])
-      })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false) })
-    return () => controller.abort()
-  }, [token, page, filtro, orden, reloadKey])
-
-  const cambiarFiltro = (v) => { setFiltro(v); setPage(1) }
-  const cambiarOrden = (v) => { setOrden(v); setPage(1) }
 
   // Estado no autenticado
   if (!token) {
@@ -243,7 +192,7 @@ export default function MisPublicaciones() {
               Volver a ingresar
             </Link>
           ) : (
-            <button type="button" onClick={() => setReloadKey(k => k + 1)} className="text-xs font-semibold text-red-700 hover:text-red-800 underline shrink-0">
+            <button type="button" onClick={recargar} className="text-xs font-semibold text-red-700 hover:text-red-800 underline shrink-0">
               Reintentar
             </button>
           )}
@@ -316,7 +265,7 @@ export default function MisPublicaciones() {
           pub={editando}
           token={token}
           onClose={() => setEditando(null)}
-          onSaved={(upd) => setItems(prev => prev.map(x => x.id === upd.id ? { ...x, ...upd } : x))}
+          onSaved={(upd) => actualizarAviso(upd.id, upd)}
         />
       )}
 
@@ -326,12 +275,10 @@ export default function MisPublicaciones() {
           pub={renovando}
           token={token}
           onClose={() => setRenovando(null)}
-          onRenovada={(upd) => {
-            setItems(prev => prev.map(x => x.id === (upd.id || upd.publicacion_id || renovando.id)
-              ? { ...x, fecha_expiracion: upd.fecha_expiracion_nueva, estado: upd.estado || x.estado }
-              : x
-            ))
-          }}
+          onRenovada={(upd) => actualizarAviso(upd.id || upd.publicacion_id || renovando.id, {
+            fecha_expiracion: upd.fecha_expiracion_nueva,
+            ...(upd.estado ? { estado: upd.estado } : {}),
+          })}
         />
       )}
 

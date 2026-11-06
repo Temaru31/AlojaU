@@ -16,15 +16,10 @@ from app.core.rate_limit import registrar_intento_persistente, verificar_intento
 from app.db.session import get_session
 from app.core.dominio import Rol
 from app.core.normalizacion import normalizar_email
-from app.routers.auth.comun import (
-    _emitir_token_con_sesion,
-    _gracia_restante,
-    _hash_password_async,
-    _intentar_purgar_usuario,
-    _respuesta_login,
-    normalizar_telefono,
-    validar_foto_url,
-)
+from app.routers.auth.contrasenas import hash_password_async
+from app.routers.auth.purga_cuentas import gracia_restante, intentar_purgar_usuario
+from app.routers.auth.sesiones import emitir_token_con_sesion, respuesta_login
+from app.routers.auth.validacion_perfil import normalizar_telefono, validar_foto_url
 from app.routers.auth.esquemas import GoogleCallbackIn, LoginOut
 from app.routers.auth.limites import _check_oauth_rate_limit
 
@@ -134,9 +129,9 @@ async def _vincular_cuenta_existente(db: AsyncSession, email: str, supabase_id: 
     usuario = res.scalars().first()
     if usuario is None:
         return None
-    restan = _gracia_restante(usuario)
+    restan = gracia_restante(usuario)
     if restan is not None and restan < 0:
-        await _intentar_purgar_usuario(db, usuario)
+        await intentar_purgar_usuario(db, usuario)
         return None
     if restan is not None:
         usuario.eliminado_en = None  # el login con Google revive la cuenta
@@ -160,7 +155,7 @@ async def _crear_cuenta_google(db: AsyncSession, data: GoogleCallbackIn, email: 
     usuario = Usuario(
         nombre_completo=data.nombre_completo.strip()[:150],
         email=email,
-        password_hash=await _hash_password_async(secrets.token_urlsafe(24)),
+        password_hash=await hash_password_async(secrets.token_urlsafe(24)),
         # Google no entrega teléfono -> NULL (nunca placeholder).
         telefono_whatsapp=normalizar_telefono(data.telefono_whatsapp) if data.telefono_whatsapp else None,
         foto_perfil_url=validar_foto_url(data.foto_perfil_url),
@@ -225,10 +220,10 @@ async def oauth_google_callback(data: GoogleCallbackIn, request: Request,
         es_nuevo = usuario is None
         if es_nuevo:
             usuario, es_nuevo = await _crear_cuenta_google(db, data, email, supabase_id, ip)
-        token = await _emitir_token_con_sesion(db, usuario, request, email_verificado=True)
+        token = await emitir_token_con_sesion(db, usuario, request, email_verificado=True)
         for clave in claves_intento:
             await registrar_intento_persistente(db, clave, True)
-        return {**_respuesta_login(token, usuario.rol, mock=False), "es_nuevo": es_nuevo}
+        return {**respuesta_login(token, usuario.rol), "es_nuevo": es_nuevo}
     except HTTPException:
         raise
     except Exception as e:

@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from 'react'
 import InfoTooltip from '../../components/InfoTooltip'
 import { Eye, Newspaper, Settings, ShieldCheck } from 'lucide-react'
 import { guardarAjuste, listarAjustes } from '../../services/adminApi'
+import { mensajeDeError } from '../../services/erroresApi'
 
 // Claves internas de PostgreSQL -> etiquetas de dominio.
 const SETTING_LABELS = {
@@ -126,7 +127,7 @@ export default function AjustesSistema({ token }) {
       setDraft((d) => ({ ...d, [clave]: guardado.valor }))
       setOk(`"${etiquetaSetting(guardado).titulo}" guardado.`)
     } catch (err) {
-      setError(err?.response?.data?.detail || `No se pudo guardar "${etiquetaSetting({ clave }).titulo}".`)
+      setError(mensajeDeError(err, `No se pudo guardar "${etiquetaSetting({ clave }).titulo}".`))
     } finally {
       setSaving(null)
     }

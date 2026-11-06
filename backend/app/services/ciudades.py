@@ -1,4 +1,4 @@
-"""Utilidades multiciudad (Fase 4).
+"""Utilidades multiciudad.
 
 Uso: routers/ciudades.py, repositories/publicacion_repo.py.
 Ej: slugify("Popayán") -> "popayan".

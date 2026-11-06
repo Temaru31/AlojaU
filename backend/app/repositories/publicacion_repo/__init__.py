@@ -15,10 +15,7 @@ from app.repositories.publicacion_repo.texto import (  # noqa: F401
     tokens_relevance,
     ts_rank_order,
 )
-from app.repositories.publicacion_repo.ajustes import (  # noqa: F401
-    leer_ajuste,
-    vistas_publicas,
-)
+from app.repositories.publicacion_repo.ajustes import vistas_publicas  # noqa: F401
 from app.repositories.publicacion_repo.lista import (  # noqa: F401
     count_total,
     destacados_vigentes_subq,

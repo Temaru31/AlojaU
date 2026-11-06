@@ -4,19 +4,8 @@ from decimal import Decimal
 from datetime import datetime
 
 # Tipos dinámicos: el catálogo vive en housing_types (esta_activo=true).
-# Pydantic valida forma + allowlist sincrónica (FALLBACK 6 slugs); el endpoint
-# valida contra la tabla (async, con caché 5min) para tipos creados por admin.
-# Cero breaking: los 4 históricos siguen válidos.
-try:
-    from app.services.housing_types import FALLBACK_TIPOS as _HT_FB
-    TIPOS_FALLBACK_SLUGS = frozenset(t["slug"] for t in _HT_FB)
-except Exception:
-    TIPOS_FALLBACK_SLUGS = frozenset({
-        "HABITACION_FAMILIAR", "HABITACION_INDEPENDIENTE",
-        "APARTAESTUDIO", "COMPARTIDO",
-        "APARTAMENTO_COMPLETO", "HABITACION_PISO_COMPARTIDO",
-    })
-
+# Pydantic solo valida la forma del slug; el endpoint valida la pertenencia
+# contra la tabla (async, con caché 5 min) para aceptar tipos creados por admin.
 TipoInmueble = str
 
 

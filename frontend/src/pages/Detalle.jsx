@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { ArrowRight, Pause } from 'lucide-react'
 import Indice from '../components/IndiceConfianza'
@@ -9,7 +9,7 @@ import { useFavoritos } from '../contexts/FavoritosContext'
 import { useComparar } from '../contexts/CompararContext'
 import { useAuth } from '../contexts/AuthContext'
 import EditarPublicacionModal from '../components/EditarPublicacionModal'
-import { haceRelativo, estaDesactualizada, diasDesactualizadaEfectiva } from '../constants'
+import { haceRelativo, estaDesactualizada } from '../constants'
 import { fotosOrdenadas } from '../utils/portada'
 import { getEtiquetaTipo } from '../utils/tiposVivienda'
 
@@ -24,224 +24,69 @@ import ContactoArrendador from './detalle/ContactoArrendador'
 import HistorialInmueble from './detalle/HistorialInmueble'
 import SimilaresZona from './detalle/SimilaresZona'
 import BarraContactoMovil from './detalle/BarraContactoMovil'
+import { DetalleCargando, DetalleNoDisponible } from './detalle/EstadosDetalle'
+import { referenciaDeLugar } from './detalle/referenciaLugar'
+import {
+  useAviso, useDiasDesactualizada, useHistorialAviso, useLugares, useRegistroVista, useSimilares, useToastLocal,
+} from './detalle/useDatosDetalle'
 import { guardarContacto, leerContactos, registrarVisto } from '../utils/actividadLocal'
-import { obtenerCampus, obtenerConfigPublica } from '../services/catalogosApi'
-import { historialDeAviso, obtenerPublicacion, registrarVista, similaresDe } from '../services/publicacionesApi'
 
 export default function Detalle() {
   const { id } = useParams()
   const [searchParams] = useSearchParams()
-  // 004 POIs: el mapa se sincroniza al lugar buscado (?campus_id= viene de Buscar).
+  // El mapa se sincroniza al lugar buscado (?campus_id= viene de Buscar).
   const campusIdParam = searchParams.get('campus_id')
-  const [lugares, setLugares] = useState([])
-  const [pub, setPub] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState('')
-  const [reportOpen, setReportOpen] = useState(false)
-  const [descExpandida, setDescExpandida] = useState(false)
-  const [toast, setToast] = useState('')
-  const [yaContactado, setYaContactado] = useState(false)
-  const [copiado, setCopiado] = useState('')
-  const favHook = useFavoritos()
   // Con sesión, el dueño/Admin ve su aviso aunque no esté ACTIVO.
   const { token: authToken, user: authUser } = useAuth()
-  const [editando, setEditando] = useState(false)
-  const [similares, setSimilares] = useState([])
-  // Umbral de frescura desde config pública (fallback 30 local).
-  // ANTES de los early-returns (hooks siempre en el mismo orden).
-  const [diasDesact, setDiasDesact] = useState(() => diasDesactualizadaEfectiva())
-  // Nombre dinámico del tipo con fallback estático.
+  const { pub, setPub, loading, loadError } = useAviso(id, campusIdParam, authToken)
+  const similares = useSimilares(pub)
+  const historial = useHistorialAviso(pub, authToken)
+  const lugares = useLugares(campusIdParam)
+  const diasDesact = useDiasDesactualizada()
+  const { toast, mostrarToast } = useToastLocal()
+  useRegistroVista(pub)
   const { tipos: tiposCatalogo } = useTiposVivienda()
-  const vistaEnviada = useRef(null)
+  const favHook = useFavoritos()
   const compHook = useComparar()
 
-  const mostrarToast = (msg) => {
-    setToast(msg)
-    try {
-      window.dispatchEvent(new CustomEvent('alojau:toast', { detail: { message: msg } }))
-    } catch { /* sin-toaster: toast local basta */ }
-    window.clearTimeout(mostrarToast._t)
-    mostrarToast._t = window.setTimeout(() => setToast(''), 3500)
-  }
+  const [reportOpen, setReportOpen] = useState(false)
+  const [descExpandida, setDescExpandida] = useState(false)
+  const [yaContactado, setYaContactado] = useState(false)
+  const [copiado, setCopiado] = useState('')
+  const [editando, setEditando] = useState(false)
 
-  // El toast local no debe aparecer en otra pantalla si se navega
-  // antes de los 3.5s (el global de Toaster sí sobrevive, es su trabajo).
-  useEffect(() => () => window.clearTimeout(mostrarToast._t), [])
-
+  // Al cambiar de aviso, las banderas de la pantalla vuelven a su estado inicial.
   useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    setLoadError('')
-    // Anti-stale: al cambiar de aviso se limpia el anterior para no mostrar
-    // su precio/estado/contacto mientras carga el nuevo (skeleton en vez de
-    // datos viejos). Incluye banderas por-aviso (contactado, copiado, etc.).
-    setPub(null)
     setYaContactado(false)
     setCopiado('')
     setDescExpandida(false)
     setReportOpen(false)
     setEditando(false)
-    const qs = campusIdParam ? `?campus_id=${encodeURIComponent(campusIdParam)}` : ''
-    obtenerPublicacion(id, { token: authToken, query: qs })
-      .then(datos => { if (!cancelled) setPub(datos) })
-      .catch((err) => {
-        if (cancelled) return
-        setPub(null)
-        const status = err?.response?.status
-        if (status === 404) setLoadError('not-found')
-        else setLoadError('network')
-      })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    // UX/perf: cambio rápido de aviso no pisa el detalle con respuesta tardía.
-    return () => { cancelled = true }
   }, [id, campusIdParam, authToken])
 
-  // Métrica de vistas: 1 POST por aviso (el backend deduplica por IP/día).
-  useEffect(() => {
-    if (!pub || vistaEnviada.current === pub.id) return
-    vistaEnviada.current = pub.id
-    try {
-      registrarVista(pub.id)
-    } catch { /* métrica best-effort */ }
-  }, [pub, id])
-
-  // Bloque "similares en la zona" (también alimenta el fallback).
-  useEffect(() => {
-    if (!pub) { setSimilares([]); return }
-    let vivo = true
-    similaresDe(pub.id, { limit: 4 })
-      .then(lista => { if (vivo) setSimilares(lista) })
-      .catch(() => { if (vivo) setSimilares([]) })
-    return () => { vivo = false }
-  }, [pub, id])
-
-  // Historial del inmueble: solo se pide si es el dueño (el backend
-  // responde 403 al resto; ni siquiera se intenta sin sesión).
-  const [historial, setHistorial] = useState(null)
-  useEffect(() => {
-    if (!pub || !authToken) { setHistorial(null); return }
-    let vivo = true
-    historialDeAviso(pub.id, authToken)
-      .then(lista => { if (vivo) setHistorial(lista) })
-      .catch(() => { if (vivo) setHistorial(null) })
-    return () => { vivo = false }
-  }, [pub, authToken])
-
-  // Catálogo de lugares para resolver ?campus_id= aunque el backend no traiga campus_ref.
-  useEffect(() => {
-    if (!campusIdParam) return
-    let cancelled = false
-    obtenerCampus()
-      .then(lista => { if (!cancelled && Array.isArray(lista)) setLugares(lista) })
-      .catch(() => { /* sin catálogo: se usa campus_ref o fallback legacy */ })
-    return () => { cancelled = true }
-  }, [campusIdParam])
-
-  // P-04: tracking local de contacto + historial de vistos (retención, sin backend).
+  // Actividad local (contactados y vistos), sin backend.
   useEffect(() => {
     if (!pub?.id) return
     setYaContactado(leerContactos().some(c => c.id === pub.id))
     registrarVisto(pub)
-  }, [pub?.id])
+  }, [pub?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // UX: al abrir (o cambiar) una publicación, volver al tope (fotos/título),
-  // no quedarse abajo en el mapa por el scroll heredado del catálogo.
+  // Al abrir (o cambiar) un aviso se vuelve al tope (fotos/título), no al
+  // scroll heredado del catálogo.
   useEffect(() => {
     try {
       window.scrollTo(0, 0)
     } catch {
-      // SSR/tests sin scroll: no rompe render
+      // SSR/tests sin scroll.
     }
   }, [id])
 
-  // Lee la config pública una vez (cache 5 min en constants.js).
-  useEffect(() => {
-    let vivo = true
-    obtenerConfigPublica()
-      .then((cfg) => { if (vivo && cfg?.dias_desactualizada) setDiasDesact(Number(cfg.dias_desactualizada)) })
-      .catch(() => {})
-    return () => { vivo = false }
-  }, [])
+  if (loading) return <DetalleCargando />
+  if (!pub) return <DetalleNoDisponible loadError={loadError} />
 
-  if (loading) {
-    return (
-      <div className="container-main py-8">
-        <div className="animate-pulse space-y-6">
-          <div className="h-8 bg-neutral-150 rounded w-1/2" />
-          <div className="h-5 bg-neutral-150 rounded w-1/3" />
-          <div className="grid md:grid-cols-3 gap-6">
-            <div className="md:col-span-2 space-y-4">
-              <div className="h-64 bg-neutral-150 rounded-lg" />
-            </div>
-            <div className="h-48 bg-neutral-150 rounded-lg" />
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (!pub) {
-    const es404 = loadError === 'not-found'
-    return (
-      <div className="container-main py-16 text-center">
-        <div className="card p-12 max-w-md mx-auto">
-          <div className="w-12 h-12 bg-neutral-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-6 h-6 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
-            </svg>
-          </div>
-          <p className="font-medium text-neutral-700 mb-1">
-            {es404 ? 'Esta publicación no se encuentra disponible actualmente'
-              : loadError === '' ? 'Publicación no encontrada'
-              : 'No se pudo cargar la publicación'}
-          </p>
-          {es404 && (
-            <p className="text-xs text-neutral-500 mb-4">
-              Pudo ser pausada, vendida o eliminada. Explora inmuebles similares en Buscar.
-            </p>
-          )}
-          {loadError === 'network' && (
-            <p className="text-xs text-neutral-500 mb-4">Revisa tu conexión o intenta de nuevo. Si persiste, el servidor puede estar iniciando.</p>
-          )}
-          <div className="flex items-center justify-center gap-3 mt-2">
-            {loadError === 'network' && (
-              <button type="button" onClick={() => window.location.reload()} className="btn-secondary text-sm">
-                Reintentar
-              </button>
-            )}
-            <Link to="/" className="text-sm text-navy-600 hover:text-navy-700 font-medium">Volver a buscar</Link>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  // 004 POIs: referencia dinámica al lugar buscado (reemplaza el campus hardcodeado).
-  // Prioridad: campus_ref del backend > catálogo /api/campus > fallback legacy Tulcán.
-  const refApi = pub.campus_ref || null
-  const distBase = pub.distancia_geodesica_m ?? pub.dist_m
-  const lugarLista = !refApi && campusIdParam
-    ? lugares.find(c => String(c.id) === String(campusIdParam))
-    : null
-  const nombreLugarLista = lugarLista
-    ? `${lugarLista.institucion || ''}${lugarLista.nombre_sede && lugarLista.nombre_sede !== 'Sede Única' ? ` - ${lugarLista.nombre_sede}` : ''}`.trim() || 'Lugar de referencia'
-    : null
-  const lugar = refApi
-    ? { lat: refApi.latitud, lng: refApi.longitud, nombre: `${refApi.institucion} - ${refApi.nombre_sede}` }
-    : (lugarLista
-      ? { lat: lugarLista.latitud ?? lugarLista.lat, lng: lugarLista.longitud ?? lugarLista.lng, nombre: nombreLugarLista }
-      : null)
-  // Trayectoria SOLO con lugar explícito (?campus_id= del flujo
-  // de búsqueda). Sin filtro previo -> modo inmueble único (1 pin, sin
-  // distancias hacia un campus no seleccionado).
+  const { lugar, distMapa, etiquetaDist } = referenciaDeLugar(pub, lugares, campusIdParam)
+  // Trayectoria SOLO con un lugar explícito.
   const modoTrayectoria = lugar != null
-  // Si se pidió una referencia y su distancia es desconocida (sin backfill,
-  // otra ciudad, sin coords), se muestra "No informado": nunca se hereda la
-  // distancia mínima a OTRO lugar bajo la etiqueta del lugar pedido.
-  const distMapa = refApi ? refApi.dist_m : (lugarLista ? null : distBase)
-  const etiquetaDist = refApi
-    ? `Distancia a ${refApi.nombre_sede}`
-    : (lugarLista ? `Distancia a ${nombreLugarLista}` : 'Distancia al campus')
 
   const isActivo = pub.estado === ESTADO.ACTIVO
   // Autoría reactiva (usuario_id lo expone DetailOut).

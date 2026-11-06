@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import require_admin, ClaimsUsuario
+from app.core.security import require_admin, ClaimsUsuario, id_o_none
 from app.core.logseguro import exc_resumen
 from app.db.session import get_session
 
@@ -73,7 +73,7 @@ async def _auditar(db: AsyncSession, admin: ClaimsUsuario, detalle: str) -> None
         from app.models import PublicacionesAudit
         db.add(PublicacionesAudit(
             publicacion_id=None,
-            usuario_id=admin.get("id") if isinstance(admin.get("id"), int) else None,
+            usuario_id=id_o_none(admin),
             evento="SETTINGS",
             detalle=detalle[:500],
         ))

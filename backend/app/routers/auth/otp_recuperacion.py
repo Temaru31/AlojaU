@@ -15,7 +15,7 @@ from app.core.rate_limit import registrar_intento, registrar_intento_persistente
 from app.db.session import get_session
 from app.core.flags import mock_enabled
 from app.core.normalizacion import normalizar_email
-from app.routers.auth.comun import _hash_password_async, _password_fuerte_v13
+from app.routers.auth.contrasenas import hash_password_async, motivo_password_debil
 from app.routers.auth.esquemas import OtpSolicitarIn, OtpVerificarIn, RecoveryConfirmarIn, RecoverySolicitarIn
 
 logger = logging.getLogger("alojau.auth")
@@ -195,7 +195,7 @@ async def recovery_solicitar(data: RecoverySolicitarIn, request: Request,
 @router.post("/recovery/confirmar", summary="Confirmar recuperación con token de un solo uso")
 async def recovery_confirmar(data: RecoveryConfirmarIn, db: AsyncSession = Depends(get_session)):
     email = normalizar_email(data.email)
-    err = _password_fuerte_v13(data.nueva_password)
+    err = motivo_password_debil(data.nueva_password)
     if err:
         raise HTTPException(status_code=422, detail=f"Contraseña débil: {err}")
     digest = hashlib.sha256(data.token.encode()).hexdigest()
@@ -213,7 +213,7 @@ async def recovery_confirmar(data: RecoveryConfirmarIn, db: AsyncSession = Depen
             ures = await db.execute(select(Usuario).where(Usuario.email == email))
             u = ures.scalars().first()
             if u:
-                u.password_hash = await _hash_password_async(data.nueva_password)
+                u.password_hash = await hash_password_async(data.nueva_password)
                 row.consumido = True
                 await db.commit()
                 # Revoca sesiones previas (el atacante con sesión vieja queda fuera).

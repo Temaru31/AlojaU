@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import PasswordStrength, { passwordValidaV13 } from '../components/PasswordStrength'
 import { confirmarRecuperacion } from '../services/cuentaApi'
+import { mensajeDeError } from '../services/erroresApi'
 
 export default function Restablecer() {
   const [params] = useSearchParams()
@@ -37,7 +38,7 @@ export default function Restablecer() {
       navTimer.current = window.setTimeout(() => navigate('/perfil'), 1500)
     } catch (err) {
       setEstado('error')
-      setMensaje(err?.response?.data?.detail || 'Enlace inválido, expirado o ya usado.')
+      setMensaje(mensajeDeError(err, 'Enlace inválido, expirado o ya usado.'))
     }
   }
 
