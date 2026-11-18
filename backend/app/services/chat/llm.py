@@ -17,6 +17,9 @@ import time
 import urllib.request
 
 
+_USER_AGENT = "AlojaU-Chat/1.0 (+https://aloja-u.vercel.app)"
+
+
 class LLMError(Exception):
     """Fallo del proveedor (red, timeout, respuesta inválida)."""
 
@@ -111,7 +114,10 @@ class HttpLLMProvider(LLMProvider):
         req = urllib.request.Request(
             f"{self.base_url}/chat/completions",
             data=json.dumps(cuerpo).encode("utf-8"),
+            # Cloudflare (delante de Groq) bloquea el User-Agent por defecto de
+            # urllib con 403 "error code: 1010" antes de llegar a la API.
             headers={"Content-Type": "application/json",
+                     "User-Agent": _USER_AGENT,
                      "Authorization": f"Bearer {self._api_key}"},
             method="POST",
         )

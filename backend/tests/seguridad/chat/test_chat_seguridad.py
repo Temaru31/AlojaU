@@ -107,6 +107,30 @@ def test_llave_solo_en_header_y_url_fija():
     assert out["texto"] == "hola"
 
 
+def test_user_agent_propio_no_es_el_de_urllib():
+    """Cloudflare (delante de Groq) devuelve 403 al User-Agent por defecto de urllib."""
+    capturado = {}
+
+    class Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self):
+            return b'{"choices":[{"message":{"content":"hola","tool_calls":[]}}]}'
+
+    import urllib.request as _url
+    real = _url.urlopen
+    _url.urlopen = lambda req, timeout=None: capturado.update(
+        {"ua": req.get_header("User-agent")}) or Resp()
+    try:
+        prov = HttpLLMProvider(base_url="https://llm.test/v1",
+                               api_key="x", modelo="modelo-x", timeout_s=5.0)
+        asyncio.run(prov.completar([{"rol": "user", "texto": "hola"}], []))
+    finally:
+        _url.urlopen = real
+    assert capturado["ua"]
+    assert not capturado["ua"].startswith("Python-urllib")
+
+
 def test_inyeccion_en_el_mensaje_no_obedece_ni_filtra():
     """Un mensaje malicioso solo recupera documentación; si el modelo repite
     PII/URLs/scripts, el filtro de salida los purga."""
