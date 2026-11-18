@@ -29,16 +29,49 @@ _RUIDO = frozenset({
     "aplicacion", "plataforma", "alojau", "hay", "hola", "necesito", "saber",
 })
 
+# Sinónimos de uso frecuente -> palabra canónica de la KB.
+_SINONIMOS = {
+    "companero": "roomies", "companera": "roomies", "companeros": "roomies",
+    "companeras": "roomies", "roommate": "roomies", "roommates": "roomies",
+    "roomie": "roomies",
+    "canon": "precio", "cuesta": "precio", "cuestan": "precio",
+    "vale": "precio", "valen": "precio", "arriendo": "precio",
+    "barrio": "zona", "barrios": "zona", "sector": "zona",
+    "guardar": "favoritos", "guardo": "favoritos", "guarda": "favoritos",
+    "gusta": "favoritos", "gustaria": "favoritos",
+    "avisar": "alertas", "avisarme": "alertas", "notificar": "alertas",
+    "notificacion": "alertas", "notificaciones": "alertas",
+    "olvide": "recuperar", "clave": "recuperar", "contrasena": "recuperar",
+}
+
+# Frases que se reemplazan antes de partir en palabras.
+_FRASES_SINONIMAS = (
+    ("cuanto cuesta", "precio"),
+    ("cuanto vale", "precio"),
+    ("me gustaria", "favoritos"),
+    ("me gusta", "favoritos"),
+    ("recuperar contrasena", "recuperar"),
+)
+
 
 def _sin_tildes(texto: str) -> str:
     base = unicodedata.normalize("NFD", texto.lower())
     return "".join(c for c in base if unicodedata.category(c) != "Mn")
 
 
+def _con_sinonimos(texto: str) -> str:
+    """Minúsculas sin tildes con frases y palabras llevadas a su canónico."""
+    base = _sin_tildes(texto or "")
+    for frase, canonica in _FRASES_SINONIMAS:
+        base = base.replace(frase, canonica)
+    return base
+
+
 def _raices(texto: str) -> set[str]:
     """Raíces (prefijo de 5 letras) de las palabras significativas."""
     salida: set[str] = set()
-    for palabra in _RE_PALABRA.findall(_sin_tildes(texto or "")):
+    for palabra in _RE_PALABRA.findall(_con_sinonimos(texto)):
+        palabra = _SINONIMOS.get(palabra, palabra)
         if (len(palabra) < 3 or palabra in _RUIDO
                 or palabra in STOP_WORDS_ES):
             continue
