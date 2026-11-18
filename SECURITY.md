@@ -40,10 +40,10 @@ Fail-closed: `backend/app/core/config.py` no arranca en `prod` con
 1. Supabase Dashboard → `Database → Advisors → Security`.
 2. Esperado: `0 errors` en `RLS disabled` / `Policy exists`. Si aparece tabla sin RLS:
 ```sql
--- Verificación RLS 11 tablas
+-- Verificación RLS (todas las tablas de public; 24 al 18/11/2026)
 SELECT tablename, rowsecurity AS rls_enabled
 FROM pg_tables WHERE schemaname='public' ORDER BY 1;
--- Esperado: 11 filas con rls_enabled=true
+-- Esperado: todas las filas con rls_enabled=true
 
 SELECT schemaname, tablename, policyname, roles, cmd, qual
 FROM pg_policies WHERE schemaname='public' ORDER BY tablename, policyname;

@@ -222,7 +222,7 @@ CREATE INDEX IF NOT EXISTS idx_publicaciones_trgm ON publicaciones USING gin(tit
 -- que una BD creada SOLO desde schema.sql (caso CI) quede igual que una
 -- migrada: sin esto el seed falla (estados) y faltan distancias/settings.
 CREATE OR REPLACE FUNCTION trg_fn_publicacion_recalcular_distancias()
-RETURNS trigger LANGUAGE plpgsql AS $$
+RETURNS trigger LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
 BEGIN
   IF NEW.latitud IS NULL OR NEW.longitud IS NULL THEN
     UPDATE publicacion_campus
@@ -320,7 +320,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_usuario ON publicaciones_audit(usuario_id);
 
 -- 12. Función Haversine (p26) - IMMUTABLE para índices
 CREATE OR REPLACE FUNCTION haversine_m(lat1 DOUBLE PRECISION, lon1 DOUBLE PRECISION, lat2 DOUBLE PRECISION, lon2 DOUBLE PRECISION)
-RETURNS INTEGER LANGUAGE plpgsql IMMUTABLE STRICT AS $$
+RETURNS INTEGER LANGUAGE plpgsql IMMUTABLE STRICT SET search_path = public, pg_temp AS $$
 DECLARE
   R CONSTANT DOUBLE PRECISION := 6371000;
   dlat DOUBLE PRECISION := radians(lat2-lat1);
