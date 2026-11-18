@@ -5,3 +5,5 @@ Antes de decidir: pregunta qué incluye exactamente el canon (servicios, adminis
 Señales de alerta: te piden anticipo sin mostrar el inmueble, precios muy por debajo del promedio de la zona, presión para decidir ya mismo, o se niegan a mostrar documentos o a firmar algo. Ante la duda, verifica en persona y usa el botón de reportar del aviso.
 
 AlojaU solo publica los avisos: el acuerdo final es entre tú y el propietario. Lee los términos antes de comprometerte.
+
+Palabras clave: consejos, recomendaciones, arrendar, contrato, depósito, visitar, seguridad al arrendar, anticipo

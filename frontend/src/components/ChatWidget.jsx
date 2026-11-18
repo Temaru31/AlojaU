@@ -1,4 +1,5 @@
-// ChatWidget — Asistente virtual AlojaU (MVP solo lectura).
+// ChatWidget — Asistente virtual AlojaU: explica cómo funciona la app y sus funciones
+// (no consulta publicaciones ni datos de la plataforma).
 // Flotante global (FAB + panel), perezoso vía React.lazy desde App.jsx.
 // - Oculto en /admin/* (el MVP es para estudiantes/visitantes) y cuando
 //   `chat_enabled` de /config-publica viene false (fail-closed en UI).
@@ -6,20 +7,19 @@
 // - Historial solo en estado local (nada de localStorage), tope 8 turnos.
 // - POST sin reintento automático; 429/503 con mensaje claro y reintento manual.
 import { useEffect, useRef, useState } from 'react'
-import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { MessageCircle, Send, X } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { leerConfigCache } from '../constants'
-import { formatCOP, formatDistancia } from '../utils/formatters'
-import BadgeConfianza from './BadgeConfianza'
 import { notifyToast } from './Toast'
 import useFocusTrap from '../hooks/useFocusTrap'
 import { obtenerConfigPublica } from '../services/catalogosApi'
 import { conversar } from '../services/chatApi'
 
 const MENSAJE_BIENVENIDA = (
-  'Hola, soy el asistente automático de AlojaU. Te ayudo a buscar vivienda '
-  + 'cerca de tu campus y a usar la plataforma. Por tu seguridad, no me '
+  'Hola, soy el asistente automático de AlojaU. Te explico cómo funciona '
+  + 'la plataforma y sus funciones: búsqueda, índice de confianza, favoritos, '
+  + 'alertas, Roomies, publicar avisos y más. Por tu seguridad, no me '
   + 'compartas documentos, claves ni datos bancarios.'
 )
 const MENSAJE_429 = (
@@ -33,39 +33,6 @@ function ultimosTurnos(mensajes) {
     .filter((m) => m.rol === 'user' || m.rol === 'assistant')
     .slice(-8)
     .map((m) => ({ rol: m.rol, texto: m.texto }))
-}
-
-function TarjetaChat({ tarjeta }) {
-  return (
-    <Link
-      to={tarjeta.url}
-      className="flex gap-2.5 p-2 rounded-xl border border-neutral-150 bg-white hover:border-navy-300 transition text-left"
-    >
-      {tarjeta.foto ? (
-        <img
-          src={tarjeta.foto}
-          alt=""
-          aria-hidden="true"
-          loading="lazy"
-          className="w-14 h-14 rounded-lg object-cover shrink-0 bg-neutral-100"
-          onError={(e) => { e.currentTarget.style.display = 'none' }}
-        />
-      ) : null}
-      <span className="min-w-0 flex-1">
-        <span className="block text-xs font-bold text-navy-900 truncate">{tarjeta.titulo}</span>
-        <span className="block text-xs text-neutral-600">
-          {tarjeta.precio != null ? formatCOP(tarjeta.precio) : 'No informado'}
-          {tarjeta.zona ? ` · ${tarjeta.zona}` : ''}
-          {tarjeta.distancia_m != null ? ` · ${formatDistancia(tarjeta.distancia_m)}` : ''}
-        </span>
-        {tarjeta.indice_confianza != null ? (
-          <span className="inline-block mt-1">
-            <BadgeConfianza indice={tarjeta.indice_confianza} />
-          </span>
-        ) : null}
-      </span>
-    </Link>
-  )
 }
 
 export default function ChatWidget() {
@@ -135,7 +102,6 @@ export default function ChatWidget() {
         setMensajes((m) => [...m, {
           rol: 'assistant',
           texto: data.respuesta || MENSAJE_ERROR,
-          tarjetas: Array.isArray(data.tarjetas) ? data.tarjetas.slice(0, 3) : [],
           acciones: Array.isArray(data.acciones_sugeridas)
             ? data.acciones_sugeridas.filter((a) => a && typeof a.ruta === 'string').slice(0, 5)
             : [],
@@ -201,11 +167,6 @@ export default function ChatWidget() {
                   ? 'max-w-[85%] rounded-2xl rounded-br-md bg-navy-800 text-white px-3 py-2 text-sm'
                   : 'max-w-[92%] rounded-2xl rounded-bl-md bg-neutral-100 text-neutral-800 px-3 py-2 text-sm space-y-2'}>
                   <p className="whitespace-pre-wrap break-words">{m.texto}</p>
-                  {Array.isArray(m.tarjetas) && m.tarjetas.length > 0 && (
-                    <div className="space-y-1.5">
-                      {m.tarjetas.map((t) => <TarjetaChat key={t.id} tarjeta={t} />)}
-                    </div>
-                  )}
                   {Array.isArray(m.acciones) && m.acciones.length > 0 && (
                     <div className="flex flex-wrap gap-1.5">
                       {m.acciones.map((a) => (
@@ -259,7 +220,7 @@ export default function ChatWidget() {
               type="text"
               value={texto}
               onChange={(e) => setTexto(e.target.value)}
-              placeholder="Pregunta por zona, precio o tipo…"
+              placeholder="Pregunta cómo funciona algo…"
               maxLength={500}
               autoComplete="off"
               className="input-field flex-1"

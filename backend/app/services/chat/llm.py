@@ -1,8 +1,8 @@
 """Capa LLM agnóstica de proveedor (solo chat; sin ejecución de código).
 
-- `LLMProvider`: interfaz (completar con tool calling).
+- `LLMProvider`: interfaz (completar; el chatbot de ayuda no usa tools).
 - `FakeLLMProvider`: determinista, sin red. Se usa en tests y cuando no hay
-  proveedor configurado. Heurística por palabras clave + guion inyectable.
+  proveedor configurado: redacta con la documentación recibida.
 - `HttpLLMProvider`: endpoint OpenAI-compatible `/chat/completions` por
   `urllib` stdlib (sin dependencias nuevas). La clave SOLO vive en env
   (`CHAT_LLM_API_KEY`, nunca en repo/logs/contexto) y la llamada corre con
@@ -10,8 +10,7 @@
 
 Formato de turnos interno: {"rol": "system"|"user"|"assistant"|"tool",
 "texto": str}. Respuesta del proveedor: {"texto": str, "tools": [
-{"nombre": str, "argumentos": dict}]}. Solo nombres en allowlist llegan a
-ejecutarse (el orquestador los revalida con Pydantic).
+{"nombre": str, "argumentos": dict}]}. El chatbot de ayuda no ejecuta tools.
 """
 import json
 import time
@@ -33,13 +32,33 @@ class LLMProvider:
 # Fake determinista (tests + sin proveedor)
 
 class FakeLLMProvider(LLMProvider):
-    """Heurística fija + guion opcional. `llamadas` cuenta usos (tests)."""
+    """Determinista y sin red: redacta con la documentación recibida.
+
+    Toma el primer párrafo del mejor fragmento del bloque DATOS (así el
+    asistente responde bien aun sin llave de proveedor). `guion` opcional
+    para tests; `llamadas` cuenta usos.
+    """
 
     nombre = "fake"
 
     def __init__(self, guion: list[dict] | None = None):
         self.guion = list(guion or [])
         self.llamadas = 0
+
+    @staticmethod
+    def _primer_parrafo(mensajes: list[dict]) -> str:
+        for m in reversed(mensajes):
+            if m.get("rol") != "tool":
+                continue
+            cuerpo = str(m.get("texto", "")).split("\n", 1)[-1]
+            cuerpo = cuerpo.rsplit("</datos>", 1)[0]
+            try:
+                frags = json.loads(cuerpo).get("fragmentos") or []
+            except ValueError:
+                return ""
+            if frags:
+                return str(frags[0].get("fragmento", "")).split("\n\n")[0].strip()
+        return ""
 
     async def completar(self, mensajes: list[dict],
                         herramientas: list[dict]) -> dict:
@@ -48,32 +67,7 @@ class FakeLLMProvider(LLMProvider):
             paso = self.guion.pop(0)
             return {"texto": str(paso.get("texto", "")),
                     "tools": list(paso.get("tools", []))}
-        if any(m.get("rol") == "tool" for m in mensajes):
-            return {"texto": ("Encontré estas opciones según tu búsqueda, "
-                              "ordenadas por recientes. Pregúntame por "
-                              "filtros, confianza o compáralas en la app."),
-                    "tools": []}
-        ultimo = ""
-        for m in reversed(mensajes):
-            if m.get("rol") == "user":
-                ultimo = str(m.get("texto", "")).lower()
-                break
-        if any(k in ultimo for k in ("busca", "arriendo", "habitaci", "apartamento",
-                                     "apartaestudio", "precio", "campus", "zona")):
-            return {"texto": "",
-                    "tools": [{"nombre": "buscar_publicaciones",
-                               "argumentos": {}}]}
-        if "confianza" in ultimo or "ndice" in ultimo:
-            return {"texto": "",
-                    "tools": [{"nombre": "buscar_en_faq",
-                               "argumentos": {"pregunta": ultimo[:200]}}]}
-        if "alerta" in ultimo:
-            return {"texto": "",
-                    "tools": [{"nombre": "buscar_en_faq",
-                               "argumentos": {"pregunta": ultimo[:200]}}]}
-        return {"texto": ("Puedo ayudarte a buscar vivienda cerca de tu campus: "
-                          "dime zona, presupuesto o tipo y te muestro opciones."),
-                "tools": []}
+        return {"texto": self._primer_parrafo(mensajes), "tools": []}
 
 
 # Proveedor HTTP OpenAI-compatible (urllib, sin dependencias)
@@ -108,11 +102,12 @@ class HttpLLMProvider(LLMProvider):
                  "content": str(m.get("texto", ""))[:2000]}
                 for m in mensajes if m.get("rol") in ("system", "user", "assistant", "tool")
             ],
-            "tools": herramientas,
-            "tool_choice": "auto",
             "temperature": 0.2,
             "max_tokens": self.max_tokens,
         }
+        if herramientas:
+            cuerpo["tools"] = herramientas
+            cuerpo["tool_choice"] = "auto"
         req = urllib.request.Request(
             f"{self.base_url}/chat/completions",
             data=json.dumps(cuerpo).encode("utf-8"),

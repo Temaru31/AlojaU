@@ -56,12 +56,11 @@ Backend -> Render / Railway (root: backend, start: uvicorn app.main:app --host 0
 BD -> Supabase / Neon
 Storage -> Cloudinary / Supabase Storage
 
-## Chatbot (MVP solo lectura, apagado por defecto)
-Ver `docs/CHATBOT.md`. Local con Fake (sin llave): `CHAT_ENABLED=true` +
-`CHAT_DATABASE_URL` en `backend/.env` (ver `.env.example`). En prod: mig 021
-en Supabase + `ALTER ROLE chatbot_ro WITH LOGIN` + `CHAT_DATABASE_URL` en
-Render (ver `docs/DESPLIEGUE.md:6`). E2E con proveedor real: la hace el
-operador con su propia llave (nunca en el repo).
+## Asistente virtual (ayuda sobre la app, apagado por defecto)
+Explica cómo funciona AlojaU y qué hace cada funcionalidad (Roomies, índice de
+confianza, alertas, publicar, etc.). **No consulta la base de datos**: responde
+desde `backend/app/services/chat/kb/*.md`. Ver `docs/CHATBOT.md`. Local sin llave
+(Fake): `CHAT_ENABLED=true` en `backend/.env`. Con proveedor real: añade `CHAT_LLM_*`.
 
 ## Fixes críticos ya aplicados (ver informe p25-31)
 - Índice confianza: PENDIENTE+CONFIRMADO (no ACTIVO)

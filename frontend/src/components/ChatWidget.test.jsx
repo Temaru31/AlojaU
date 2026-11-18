@@ -17,14 +17,8 @@ vi.mock('./Toast', () => ({ notifyToast: vi.fn(), default: () => null }))
 import { fetchConfigPublica } from '../constants'
 
 const RTA_OK = {
-  respuesta: 'Encontré estas opciones.',
-  tarjetas: [{
-    id: 1, titulo: 'Habitación cerca Tulcán', precio: 480000,
-    tipo: 'HABITACION_INDEPENDIENTE', zona: 'Tulcán', distancia_m: 320,
-    indice_confianza: 85, nivel_confianza: 'alto', foto: null,
-    url: '/publicacion/1',
-  }],
-  acciones_sugeridas: [{ etiqueta: 'Comparar opciones', ruta: '/comparar' }],
+  respuesta: 'Roomies sirve para encontrar compañero de apartamento.',
+  acciones_sugeridas: [{ etiqueta: 'Ir a Roomies', ruta: '/roomies' }],
   deshabilitado: false, request_id: 'abc',
 }
 
@@ -67,20 +61,18 @@ describe('ChatWidget', () => {
     expect(screen.getByText(/no me compartas documentos/i)).toBeInTheDocument()
   })
 
-  it('envía mensaje y renderiza respuesta + tarjeta + acción', async () => {
+  it('envía mensaje y renderiza respuesta + acción', async () => {
     montar()
     fireEvent.click(await screen.findByRole('button', { name: /abrir asistente/i }))
-    fireEvent.change(screen.getByLabelText(/escribe tu mensaje/i), { target: { value: 'busco habitación' } })
+    fireEvent.change(screen.getByLabelText(/escribe tu mensaje/i), { target: { value: '¿qué hace roomies?' } })
     fireEvent.click(screen.getByRole('button', { name: /enviar mensaje/i }))
     await waitFor(() => expect(api.post).toHaveBeenCalledWith(
       '/api/chat',
-      expect.objectContaining({ mensaje: 'busco habitación' }),
+      expect.objectContaining({ mensaje: '¿qué hace roomies?' }),
       undefined,
     ))
-    expect(await screen.findByText('Encontré estas opciones.')).toBeInTheDocument()
-    expect(screen.getByText('Habitación cerca Tulcán')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /habitación cerca tulcán/i })).toHaveAttribute('href', '/publicacion/1')
-    expect(screen.getByRole('button', { name: 'Comparar opciones' })).toBeInTheDocument()
+    expect(await screen.findByText('Roomies sirve para encontrar compañero de apartamento.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Ir a Roomies' })).toBeInTheDocument()
   })
 
   it('error 429 muestra mensaje claro sin toast', async () => {
@@ -101,12 +93,12 @@ describe('ChatWidget', () => {
     expect(await screen.findByRole('button', { name: /reintentar/i })).toBeInTheDocument()
     api.post.mockResolvedValueOnce({ data: RTA_OK })
     fireEvent.click(screen.getByRole('button', { name: /reintentar/i }))
-    expect(await screen.findByText('Encontré estas opciones.')).toBeInTheDocument()
+    expect(await screen.findByText('Roomies sirve para encontrar compañero de apartamento.')).toBeInTheDocument()
   })
 
   it('respuesta con HTML se renderiza como texto (no se ejecuta)', async () => {
     api.post.mockResolvedValue({
-      data: { ...RTA_OK, respuesta: 'Mira <script>alert(1)</script> esto', tarjetas: [], acciones_sugeridas: [] },
+      data: { ...RTA_OK, respuesta: 'Mira <script>alert(1)</script> esto', acciones_sugeridas: [] },
     })
     const { container } = montar()
     fireEvent.click(await screen.findByRole('button', { name: /abrir asistente/i }))

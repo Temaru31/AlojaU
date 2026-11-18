@@ -107,14 +107,15 @@ Fuente: `AlojaU_Story_Map_y_Backlog_Trello.xlsx` — 33 tarjetas (S1: 15, S2: 11
 ## 9. Estado actual (2026-10-09, noche)
 
 - `main` = `739f6ee` (+ `3007079` F2, `eb7826a`, `30a4857` F1; sin push: `main...origin/main [ahead 4]`). Limpio salvo 6 untracked de trabajo (`AUDITORIA*.md`, `*.xlsx`, `*_TAREA_AUDITORIA.md`, `CONTEXTO.md` este archivo).
-- Nuevo: **chatbot MVP solo lectura** F1–F3 (ver §10). Apagado por defecto.
+- Nuevo: **asistente de ayuda** (explica las funcionalidades; sin acceso a la BD, ver §10). Apagado por defecto.
 - Backend: 59 archivos de test; frontend: 92 archivos / 615 tests en verde.
-- Pendientes conocidos: aplicar mig 021 en Supabase prod (+ `ALTER ROLE chatbot_ro LOGIN`, `CHAT_DATABASE_URL` y `CHAT_ENABLED` al final); E2E con proveedor real la hace el operador; resto previo (vistas_dedup/FKs, rotar secreto Google + token Telegram, caché `require_arrendador`, acta pesos trust, Dependabot 6 avisos).
+- Pendientes conocidos: aplicar mig 023 en Supabase prod (elimina rol `chatbot_ro` y vistas `chat_v_*`) y activar `CHAT_ENABLED` al final; E2E con proveedor real la hace el operador; resto previo (vistas_dedup/FKs, rotar secreto Google + token Telegram, caché `require_arrendador`, acta pesos trust, Dependabot 6 avisos).
 
-## 10. Chatbot MVP (solo lectura, F1–F3, apagado por defecto)
+## 10. Asistente de ayuda (sin BD, apagado por defecto)
 
-- **F1 datos**: mig `021_chatbot_readonly` (9 vistas `chat_v_*` security_barrier solo ACTIVO + rol `chatbot_ro` NOLOGIN/LIMIT 5/timeout 3s/read-only, REVOKE resto) + espejo Alembic + `schema.sql`; `db/chat_session.py` (engine separado, fail-closed); `services/chat/readonly_queries.py` (solo `select()` + FTS normalizado con fallback ILIKE-OR).
-- **F2 backend**: 5 tools allowlist (`extra="forbid"`, salida recortada ≤5 + bloques DATOS), orquestador (máx. 3 iters, filtro anti-PII/secretos/eco), FakeLLM + adapter OpenAI-compatible (urllib, `to_thread`), kb 9 docs, `POST /api/chat` (auth opcional solo p/rate-limit, throttle IP/usuario, tope diario + breaker, kill switch, logs sin PII), `chat_enabled` en `/config-publica`.
-- **F3 frontend**: `ChatWidget` lazy (oculto en `/admin/*` y si `chat_enabled=false`, texto plano, historial local, 429/error/reintento); aviso en `/privacidad` (texto legal versionado intacto).
-- **Seguridad**: test AST anti-escritura (cubre router), `SET ROLE` (12 tablas ilegibles, escritura/DDL denegados), inyección vía contenido, allowlist, visibilidad, kill switch, logs. Regla permanente: el bot sigue read-only; escrituras futuras en el front con token del usuario.
-- Docs: `docs/CHATBOT.md` (arquitectura, env, probar con Fake, roadmap v2/v3).
+- **Qué es**: chatbot que explica cómo funciona AlojaU y qué hace cada funcionalidad (Roomies, índice de confianza, alertas, publicar, publicidad, perfil...). **No consulta la base de datos** ni muestra publicaciones: se retiró ese diseño (2026-11-18) porque exponía datos de la plataforma al modelo.
+- **Backend**: `routers/chat.py` (límites IP/usuario/tope diario, kill switch `CHAT_ENABLED`), `services/chat/` = `faq.py` (recuperación por raíces de palabras sobre `kb/*.md`, 16 documentos con línea `Palabras clave:`), `orchestrator.py` (entrega la documentación al modelo como bloque `<datos>`; sin documentación relevante responde fijo sin llamar al LLM; filtro de salida; botones desde allowlist de rutas), `llm.py` (FakeLLM que responde con el documento + adapter OpenAI-compatible), sin tools.
+- **Frontend**: `ChatWidget` lazy (oculto en `/admin/*` y si `chat_enabled=false`, texto plano, historial local, 429/error/reintento).
+- **BD**: la mig `021_chatbot_readonly` (rol `chatbot_ro` + vistas `chat_v_*`) fue reemplazada por la `023_retirar_chatbot_readonly`, que las elimina; `schema.sql` ya no las crea.
+- **Tests**: `tests/test_chat_endpoint.py`, `tests/seguridad/chat/` (estático: sin BD/escritura/ejecución; red team; logs sin PII).
+- Docs: `docs/CHATBOT.md` (arquitectura, cómo mantener la KB, variables).
