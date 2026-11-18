@@ -198,8 +198,8 @@ describe('MisPublicaciones', () => {
       )
     })
 
-    // Cerrar modal
-    fireEvent.click(screen.getByRole('button', { name: 'Cerrar' }))
+    // Cerrar modal: el botón aparece cuando llega la respuesta del PATCH
+    fireEvent.click(await screen.findByRole('button', { name: 'Cerrar' }))
 
     // La tarjeta ahora refleja los nuevos días calculados reactivamente
     await waitFor(() => {
