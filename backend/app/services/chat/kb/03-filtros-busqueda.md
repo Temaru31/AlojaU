@@ -5,3 +5,5 @@ En la página de búsqueda puedes filtrar por campus universitario o ciudad, ran
 Los filtros se combinan: precio + tipo + servicios a la vez. Puedes limpiarlos para volver al listado completo. La búsqueda por texto ignora palabras comunes y entiende sinónimos (por ejemplo "apartamento" o "cuarto").
 
 Los resultados se ordenan por recientes, precio o distancia al campus. Cada tarjeta muestra precio, tipo, zona y distancia aproximada; si un dato falta aparece como "No informado".
+
+Palabras clave: buscar, búsqueda, filtros, filtrar, precio, tipo, servicios, campus, zona, ordenar, apartamento, habitación, apartaestudio, arriendo, barato

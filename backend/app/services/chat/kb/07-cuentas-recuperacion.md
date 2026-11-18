@@ -5,3 +5,5 @@ Puedes registrarte con correo y contraseña o con Google. Al registrarte aceptas
 Si olvidaste tu contraseña, usa la opción Recuperar en el inicio de sesión: te llega un enlace de un solo uso y corta vigencia para crear una nueva. Si cambiaste de número, actualízalo en Mi Perfil (volverá a estado sin verificar hasta confirmarlo).
 
 Puedes cerrar sesión en un dispositivo o en todos desde Mi Perfil, y eliminar tu cuenta con un período de gracia de 30 días en el que puedes recuperarla.
+
+Palabras clave: cuenta, registro, registrarme, iniciar sesión, login, contraseña, olvidé, recuperar, restablecer, google, correo

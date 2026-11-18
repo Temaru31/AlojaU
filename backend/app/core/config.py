@@ -80,11 +80,9 @@ class Settings(BaseSettings):
     # Versión de política de datos vigente (Ley 1581/2012).
     POLITICA_VERSION: str = POLITICA_VERSION_VIGENTE
 
-    # Chatbot MVP (solo lectura, mig 021). Apagado por defecto.
-    # CHAT_ENABLED=true exige CHAT_DATABASE_URL (rol chatbot_ro); sin esa
-    # URL el bot responde deshabilitado, NUNCA usa la conexión principal.
+    # Asistente de ayuda (explica las funcionalidades). NO usa la BD: responde
+    # desde la KB estática. Apagado por defecto.
     CHAT_ENABLED: bool = False
-    CHAT_DATABASE_URL: str = ""
     # Proveedor LLM: adapter OpenAI-compatible por urllib stdlib.
     # "fake" (default) = determinista sin red. La llave NUNCA va al repo:
     # solo env / Render dashboard. Sin llave/modelo/base → Fake (fallback).
@@ -168,14 +166,6 @@ class Settings(BaseSettings):
     def mock_enabled(self) -> bool:
         # Credenciales de prueba solo si flag True Y ENV!=prod (doble check).
         return bool(self.USE_MOCK_FALLBACK) and self.ENV != "prod" and os.getenv("ENV", "dev") != "prod"
-
-    @property
-    def chat_configurado(self) -> bool:
-        """Chatbot listo: habilitado por flag Y con conexión de solo lectura.
-
-        Sin CHAT_DATABASE_URL el bot está deshabilitado (fail-closed): el
-        código NUNCA cae a DATABASE_URL principal."""
-        return bool(self.CHAT_ENABLED) and bool(self.CHAT_DATABASE_URL.strip())
 
     class Config:
         env_file = ".env"

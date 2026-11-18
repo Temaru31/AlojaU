@@ -1,14 +1,14 @@
-"""POST /api/chat — chatbot AlojaU (MVP solo lectura).
+"""POST /api/chat — asistente de ayuda de AlojaU (explica las funcionalidades).
 
-- Auth OPCIONAL (`get_optional_user` de core.security: solo verifica claims,
-  no escribe): con JWT válido se usa la identidad para el rate-limit; las
-  tools SIEMPRE ven lo público (visitante). Sin token = anónimo.
-- Kill switch: `CHAT_ENABLED=false` (default) responde controlado SIN tocar
-  LLM ni BD. Sin `CHAT_DATABASE_URL` tampoco se abre sesión principal.
+- NO usa la base de datos: responde desde la base de conocimiento estática
+  (`services/chat/kb`) y, si hay proveedor LLM configurado, la redacta con él.
+- Auth OPCIONAL (`get_optional_user`): con JWT válido se usa la identidad solo
+  para el rate-limit. Sin token = anónimo.
+- Kill switch: `CHAT_ENABLED=false` (default) responde controlado SIN LLM.
 - Defensas: throttle por IP y por usuario, tope diario global + circuit
   breaker, topes de mensaje/historial, timeout al LLM, fallback en español.
-- Logs: request_id, longitudes, tools usadas, latencia y resultado. NUNCA el
-  texto del mensaje ni PII (logseguro).
+- Logs: request_id, longitudes, documentos usados, latencia y resultado.
+  NUNCA el texto del mensaje ni PII (logseguro).
 """
 import time
 import uuid
@@ -16,14 +16,13 @@ import uuid
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from app.core.config import settings
-from app.core.logseguro import exc_resumen, una_linea
+from app.core.logseguro import una_linea
 from app.core.security import get_optional_user
-from app.db.chat_session import chat_configurado, get_chat_session
 from app.services.chat import orchestrator
 from app.services.chat.llm import FakeLLMProvider, HttpLLMProvider, LLMError, LLMProvider
 from app.core.net import client_ip
 from app.services.chat.prompts import FALLBACK_NO_DISPONIBLE
-from app.services.chat.schemas import AccionOut, ChatIn, ChatOut, TarjetaOut
+from app.services.chat.schemas import AccionOut, ChatIn, ChatOut
 from app.services.chat.throttle import (
     limite_por_clave,
     registrar_exito_llm,
@@ -45,8 +44,7 @@ def _request_id(request: Request | None) -> str:
 def _respuesta_apagado(rid: str) -> ChatOut:
     return ChatOut(
         respuesta=FALLBACK_NO_DISPONIBLE,
-        tarjetas=[],
-        acciones_sugeridas=[AccionOut(etiqueta="Buscar vivienda", ruta="/")],
+        acciones_sugeridas=[AccionOut(etiqueta="Ir a la búsqueda", ruta="/")],
         deshabilitado=True,
         request_id=rid,
     )
@@ -69,44 +67,14 @@ def obtener_proveedor() -> LLMProvider:
     )
 
 
-_ACCION_POR_DEFECTO = {"etiqueta": "Buscar vivienda", "ruta": "/"}
+_ACCION_POR_DEFECTO = {"etiqueta": "Ir a la búsqueda", "ruta": "/"}
 
 
 def _salida_fallback(evento: str) -> dict:
     """Salida del orquestador cuando el LLM o el flujo fallan: mensaje fijo en español."""
-    return {"respuesta": FALLBACK_NO_DISPONIBLE, "tarjetas": [],
+    return {"respuesta": FALLBACK_NO_DISPONIBLE,
             "acciones": [dict(_ACCION_POR_DEFECTO)],
-            "tools_usadas": [], "eventos": [evento]}
-
-
-def _texto_o_none(valor, tope: int) -> str | None:
-    return str(valor)[:tope] if valor else None
-
-
-def _tarjeta_out(c: dict) -> TarjetaOut:
-    pub_id = int(c.get("id", 0) or 0)
-    return TarjetaOut(
-        id=pub_id,
-        titulo=str(c.get("titulo") or "")[:150],
-        precio=c.get("precio"),
-        tipo=_texto_o_none(c.get("tipo"), 40),
-        zona=_texto_o_none(c.get("zona"), 120),
-        distancia_m=c.get("distancia_m"),
-        indice_confianza=c.get("indice_confianza"),
-        nivel_confianza=c.get("nivel_confianza"),
-        foto=_texto_o_none(c.get("foto"), 500),
-        url=f"/publicacion/{pub_id}")
-
-
-def _tarjetas_out(sal: dict) -> list[TarjetaOut]:
-    """Hasta 3 tarjetas; una tarjeta malformada se descarta sin tumbar la respuesta."""
-    tarjetas = []
-    for c in (sal.get("tarjetas") or [])[:3]:
-        try:
-            tarjetas.append(_tarjeta_out(c))
-        except (ValueError, TypeError, AttributeError):
-            continue
-    return tarjetas
+            "docs_usados": [], "eventos": [evento]}
 
 
 def _acciones_out(sal: dict) -> list[AccionOut]:
@@ -143,23 +111,12 @@ async def _aplicar_limites(request: Request, authorization: str | None, rid: str
         raise
 
 
-async def _abrir_sesion_chat(gen, rid: str):
-    """Primera sesión del generador de solo lectura, o None si no hay (se responde apagado)."""
-    try:
-        return await gen.__anext__()
-    except HTTPException:
-        logger.error("[chat] rid=%s sin-sesion-chat", una_linea(rid, 40))
-    except Exception:
-        logger.error("[chat] rid=%s error-sesion", una_linea(rid, 40))
-    return None
-
-
-async def _turno(db, body: ChatIn, proveedor: LLMProvider) -> tuple[dict, str]:
+async def _turno(body: ChatIn, proveedor: LLMProvider) -> tuple[dict, str]:
     """Llama al orquestador; ante fallo del LLM o interno, salida de respaldo. Devuelve (salida, resultado)."""
     historial = [{"rol": t.rol, "texto": t.texto} for t in body.historial]
     try:
         sal = await orchestrator.conversar(
-            db, mensaje=body.mensaje, historial=historial,
+            mensaje=body.mensaje, historial=historial,
             proveedor=proveedor, timeout_s=settings.CHAT_TIMEOUT_S)
     except LLMError:
         registrar_fallo_llm()
@@ -169,53 +126,41 @@ async def _turno(db, body: ChatIn, proveedor: LLMProvider) -> tuple[dict, str]:
     return sal, "ok"
 
 
-async def _cerrar_y_medir(gen, rid: str, t0: float, resultado: str,
-                          tools: list[str], eventos: list[str], msg_len: int) -> None:
-    """Cierra la sesión del chat y deja el log de métricas (nunca el texto del mensaje)."""
-    try:
-        await gen.aclose()
-    except Exception as e:
-        logger.warning("[chat] cierre del generador falló: %s", exc_resumen(e))
+def _medir(rid: str, t0: float, resultado: str,
+           docs: list[str], eventos: list[str], msg_len: int) -> None:
+    """Log de métricas (nunca el texto del mensaje)."""
     ms = int((time.monotonic() - t0) * 1000)
     logger.info(
-        "[chat] rid=%s resultado=%s tools=%s eventos=%s ms=%s msg_len=%s",
+        "[chat] rid=%s resultado=%s docs=%s eventos=%s ms=%s msg_len=%s",
         una_linea(rid, 40), una_linea(resultado, 20),
-        una_linea(",".join(tools), 120), una_linea(",".join(eventos), 120),
+        una_linea(",".join(docs), 120), una_linea(",".join(eventos), 120),
         ms, msg_len)
 
 
-@router.post("", response_model=ChatOut, summary="Chatbot (solo lectura)")
+@router.post("", response_model=ChatOut, summary="Asistente de ayuda de AlojaU")
 async def conversar_chat(body: ChatIn, request: Request,
                          authorization: str | None = Header(None),
                          proveedor: LLMProvider = Depends(obtener_proveedor)):
     rid = _request_id(request)
     t0 = time.monotonic()
-    tools: list[str] = []
+    docs: list[str] = []
     eventos: list[str] = []
     resultado = "ok"
 
-    # Kill switch: apagado = respuesta controlada, SIN LLM y SIN BD.
-    if not settings.CHAT_ENABLED or not chat_configurado():
-        logger.info("[chat] rid=%s deshabilitado (sin LLM ni BD)",
-                    una_linea(rid, 40))
+    # Kill switch: apagado = respuesta controlada, SIN LLM.
+    if not settings.CHAT_ENABLED:
+        logger.info("[chat] rid=%s deshabilitado", una_linea(rid, 40))
         return _respuesta_apagado(rid)
 
     await _aplicar_limites(request, authorization, rid)
-
-    # Sesión SEPARADA de solo lectura (rol chatbot_ro). Nunca la principal.
-    gen = get_chat_session()
-    db = await _abrir_sesion_chat(gen, rid)
-    if db is None:
-        return _respuesta_apagado(rid)
     try:
-        sal, resultado = await _turno(db, body, proveedor)
-        tools = [str(t)[:40] for t in (sal.get("tools_usadas") or [])]
+        sal, resultado = await _turno(body, proveedor)
+        docs = [str(d)[:40] for d in (sal.get("docs_usados") or [])]
         eventos = [str(e)[:40] for e in (sal.get("eventos") or [])]
         if "llm-error" not in eventos and "error-interno" not in eventos:
             registrar_exito_llm()
         return ChatOut(respuesta=str(sal.get("respuesta") or "")[:2000],
-                       tarjetas=_tarjetas_out(sal),
                        acciones_sugeridas=_acciones_out(sal),
                        deshabilitado=False, request_id=rid)
     finally:
-        await _cerrar_y_medir(gen, rid, t0, resultado, tools, eventos, len(body.mensaje or ""))
+        _medir(rid, t0, resultado, docs, eventos, len(body.mensaje or ""))

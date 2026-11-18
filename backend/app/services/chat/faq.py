@@ -1,18 +1,49 @@
-"""FAQ del chatbot: recuperación por palabras clave sobre kb/*.md.
+"""Base de conocimiento del chatbot: recuperación por palabras clave sobre kb/*.md.
 
 Sin embeddings ni servicios externos ($0): los documentos son pocos y se
-puntúan por solapamiento de tokens (misma tokenización ES de search.py).
-Puro y sin E/S en caliente (carga perezosa con caché en memoria).
+puntúan por solapamiento de raíces de palabras (sin tildes, prefijo de 5
+letras para que «publicar/publico/publicación» coincidan). Cada documento
+puede traer una línea final `Palabras clave: a, b, c` (pesa más que el
+cuerpo y NO se muestra al modelo). Sin E/S en caliente: carga perezosa con
+caché en memoria.
 """
 import pathlib
 import re
+import unicodedata
 
-from app.services.search import tokenize_query
+from app.services.search import STOP_WORDS_ES
 
 _KB_DIR = pathlib.Path(__file__).resolve().parent / "kb"
 _CACHE: dict[str, list[dict]] = {"docs": []}
 
-_FRAGMENTO_MAX = 400
+_FRAGMENTO_MAX = 1400
+_PUNTOS_MINIMOS = 2
+_RAIZ = 5
+_RE_PALABRA = re.compile(r"[a-z0-9]+")
+_RE_CLAVES = re.compile(r"\n*Palabras clave:\s*(.+?)\s*$", re.IGNORECASE | re.DOTALL)
+
+# Palabras de pregunta que no orientan hacia ningún documento.
+_RUIDO = frozenset({
+    "como", "que", "para", "sirve", "hace", "funciona", "funcionalidad",
+    "puedo", "quiero", "donde", "cual", "cuales", "dime", "explica", "app",
+    "aplicacion", "plataforma", "alojau", "hay", "hola", "necesito", "saber",
+})
+
+
+def _sin_tildes(texto: str) -> str:
+    base = unicodedata.normalize("NFD", texto.lower())
+    return "".join(c for c in base if unicodedata.category(c) != "Mn")
+
+
+def _raices(texto: str) -> set[str]:
+    """Raíces (prefijo de 5 letras) de las palabras significativas."""
+    salida: set[str] = set()
+    for palabra in _RE_PALABRA.findall(_sin_tildes(texto or "")):
+        if (len(palabra) < 3 or palabra in _RUIDO
+                or palabra in STOP_WORDS_ES):
+            continue
+        salida.add(palabra[:_RAIZ])
+    return salida
 
 
 def _cargar() -> list[dict]:
@@ -28,7 +59,16 @@ def _cargar() -> list[dict]:
             if m:
                 titulo = m.group(1).strip()
                 cuerpo = texto[m.end():].strip()
-            docs.append({"doc": path.stem, "titulo": titulo, "texto": cuerpo})
+            claves = ""
+            mc = _RE_CLAVES.search(cuerpo)
+            if mc:
+                claves = mc.group(1)
+                cuerpo = cuerpo[:mc.start()].strip()
+            docs.append({
+                "doc": path.stem, "titulo": titulo, "texto": cuerpo,
+                "r_titulo": _raices(titulo), "r_claves": _raices(claves),
+                "r_cuerpo": _raices(cuerpo),
+            })
     _CACHE["docs"] = docs
     return docs
 
@@ -37,22 +77,28 @@ def clear_faq_cache_for_tests() -> None:
     _CACHE["docs"] = []
 
 
-def buscar_en_faq(pregunta: str, tope: int = 3) -> list[dict]:
-    """Top-N fragmentos {doc, titulo, fragmento} por solapamiento de tokens."""
-    tokens = set(tokenize_query(pregunta))
-    if not tokens:
+def buscar_en_faq(pregunta: str, tope: int = 2) -> list[dict]:
+    """Top-N fragmentos {doc, titulo, fragmento} por solapamiento de raíces.
+
+    Pesos: palabra clave 3, título 3, cuerpo 1. Bajo el umbral mínimo no
+    devuelve nada (el orquestador responde «sin documentación»).
+    """
+    consulta = _raices(pregunta)
+    if not consulta:
         return []
-    scored: list[tuple[int, dict]] = []
+    puntuados: list[tuple[int, dict]] = []
     for doc in _cargar():
-        cuerpo_tokens = set(tokenize_query(doc["titulo"] + " " + doc["texto"]))
-        puntos = len(tokens & cuerpo_tokens)
-        # El título pesa doble (orienta al doc correcto).
-        puntos += len(set(tokenize_query(doc["titulo"])) & tokens)
-        if puntos > 0:
-            scored.append((puntos, doc))
-    scored.sort(key=lambda p: p[0], reverse=True)
+        puntos = (3 * len(consulta & doc["r_claves"])
+                  + 3 * len(consulta & doc["r_titulo"])
+                  + len(consulta & doc["r_cuerpo"]))
+        if puntos >= _PUNTOS_MINIMOS:
+            puntuados.append((puntos, doc))
+    puntuados.sort(key=lambda p: p[0], reverse=True)
+    mejor = puntuados[0][0] if puntuados else 0
     salida: list[dict] = []
-    for _, doc in scored[:max(1, min(int(tope or 3), 3))]:
+    for puntos, doc in puntuados[:max(1, min(int(tope or 2), 3))]:
+        if puntos * 2 < mejor:  # descarta documentos claramente menos relevantes
+            break
         salida.append({
             "doc": doc["doc"],
             "titulo": doc["titulo"],

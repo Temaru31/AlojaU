@@ -248,3 +248,15 @@ def test_migracion_022_cubre_indices_publicidad():
         assert pieza in schema, f"{pieza} falta en schema.sql"
     modelos = texto_modelos()
     assert "class PlanPublicidad" in modelos and "class PublicacionDestacado" in modelos
+
+
+def test_migracion_023_retira_capa_chatbot():
+    """023 elimina vistas chat_v_* y rol chatbot_ro; schema.sql ya no los crea."""
+    mig = (REPO / "alembic" / "versions" / "023_retirar_chatbot_readonly.py").read_text(encoding="utf-8")
+    sql = (REPO / "db" / "migrations" / "023_retirar_chatbot_readonly.sql").read_text(encoding="utf-8")
+    schema = SCHEMA.read_text(encoding="utf-8")
+    assert "down_revision" in mig and "022_publicidad_destacados" in mig
+    for pieza in ("chat_v_publicaciones", "chat_v_servicios", "DROP ROLE"):
+        assert pieza in mig, f"{pieza} falta en 023 (.py)"
+        assert pieza in sql, f"{pieza} falta en 023 (.sql)"
+    assert "chat_v_" not in schema and "chatbot_ro" not in schema

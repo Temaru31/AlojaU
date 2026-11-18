@@ -21,7 +21,7 @@ ROUTER_CHAT = REPO / "app" / "routers" / "chat.py"
 # Prefijos de módulo prohibidos en el código del chatbot.
 IMPORTS_PROHIBIDOS = (
     "app.repositories",
-    "app.db.session",
+    "app.db",
     "app.routers",
     "app.models",
     "app.services.auto_moderation",
