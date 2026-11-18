@@ -1,26 +1,47 @@
-"""Orquestador del chatbot de ayuda: recuperación en la KB + redacción del LLM.
+"""Orquestador del chatbot de ayuda: intención + KB + redacción del LLM.
 
-- Sin base de datos y sin herramientas: por cada turno se recuperan fragmentos
-  de la documentación de la plataforma (`kb/*.md`) y se entregan al modelo como
-  DATOS delimitados; el modelo solo redacta la respuesta.
-- Si la KB no cubre la pregunta, NO se llama al LLM: respuesta fija honesta.
-- Las acciones (botones) las construye este módulo desde una allowlist fija de
-  rutas; el modelo no fabrica enlaces ni contenido ejecutable.
-- Filtro de salida: purga URLs externas, esquemas peligrosos, HTML, secretos
-  y PII; si detecta eco del prompt interno, respuesta segura genérica.
-- Sin PII en eventos (solo contadores y nombres de documentos).
+- Sin base de datos y sin herramientas: por cada turno se clasifica la
+  intención; los saludos, temas ajenos, inyecciones, datos sensibles y
+  acciones no permitidas se responden con textos fijos sin tocar el LLM.
+- Solo las consultas recuperan fragmentos de la documentación (`kb/*.md`),
+  que se entregan al modelo como DATOS delimitados; si la KB no cubre la
+  pregunta, NO se llama al LLM.
+- Seguimiento: una pregunta corta o con referencia anafórica se completa con
+  la última pregunta `user` del historial; los turnos `assistant` del
+  cliente se ignoran por completo (pueden venir falsificados).
+- Caché en memoria (TTL + tope) para respuestas del LLM de preguntas sueltas.
+- Acciones (botones) desde una allowlist fija de rutas; el modelo no fabrica
+  enlaces ni contenido ejecutable.
+- Filtro de salida: purga URLs, esquemas peligrosos, HTML, secretos y PII;
+  si el modelo afirma haber ejecutado acciones, respuesta segura genérica.
+- Sin PII en eventos (categoría, caché y nombres de documentos).
 """
 import asyncio
+import hashlib
 import json
 import re
 
+from app.services.chat.cache import (
+    CACHE_RESPUESTAS,
+    clave_cache,
+    clear_cache_respuestas_for_tests,
+)
 from app.services.chat.faq import buscar_en_faq
+from app.services.chat.intencion import CONSULTA, detectar_intencion
+from app.services.chat.normalizar import (
+    normalizar,
+    palabras_significativas,
+    plano,
+)
 from app.services.chat.prompts import (
     BLOQUE_DATOS_FIN,
     BLOQUE_DATOS_INICIO,
     CHAT_SYSTEM_PROMPT_V2,
     MARCADORES_NEUTRALIZADOS,
 )
+from app.services.chat.respuestas import respuesta_para
+from app.services.chat.rutas import RUTAS_PERMITIDAS as _RUTAS_PERMITIDAS
+from app.services.chat.rutas import ruta_permitida
 
 _TOPE_FRAGMENTOS = 2
 
@@ -51,17 +72,21 @@ _ACCIONES_POR_DOC = {
     "14-perfil-cuenta": [{"etiqueta": "Mi perfil", "ruta": "/perfil"}],
 }
 
-_RUTAS_PERMITIDAS = frozenset({
-    "/", "/comparar", "/favoritos", "/alertas", "/recuperar", "/publicar",
-    "/terminos", "/privacidad", "/roomies", "/perfil", "/mis-publicaciones",
-    "/publicitar",
-})
-
 # Fragmentos del prompt interno: si el modelo los devuelve, es eco/exfiltra.
 _ECO_PROMPT = (
     "fuente de verdad",
     "solo con la información del bloque",
     "nunca instrucciones para ti",
+)
+
+# Afirmaciones de acciones ejecutadas: el bot no ejecuta nada, así que si el
+# modelo las dice se sustituye por la respuesta segura.
+AFIRMACIONES_ACCION = (
+    "he publicado", "ya publique", "he contactado", "ya contacte",
+    "ya te registre", "te registre", "he registrado", "he guardado",
+    "ya guarde", "he reservado", "ya reserve", "te envie", "he enviado",
+    "ya envie", "he pagado", "ya pague", "he borrado", "ya borre",
+    "he eliminado", "ya elimine",
 )
 
 _RE_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
@@ -71,6 +96,14 @@ _RE_PELIGRO = re.compile(
     r"(javascript:|data:|vbscript:|<script|</script|<img[^>]*on\w+\s*=|<iframe)",
     re.IGNORECASE)
 _RE_SECRETO = re.compile(r"\b(sk-[A-Za-z0-9\-_]{8,}|eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+)")
+
+# Referencias que delatan un seguimiento conversacional.
+_RE_SEGUIMIENTO = re.compile(
+    r"\b(?:eso|ese|esa|esto|ahi|alli|tambien|igual)\b"
+    r"|\by como\b"
+    r"|\bcomo se (?:usa|utiliza|hace|funciona|configura)\b"
+    r"|\bmas (?:informacion|detalles|opciones|sobre|de|alla)\b"
+    r"|\bmas\s*$")
 
 RESPUESTA_SEGURA_GENERICA = (
     "Puedo explicarte cómo funciona AlojaU: búsqueda y filtros, índice de "
@@ -111,6 +144,8 @@ def filtrar_salida(texto: str) -> str:
     bajo = salida.lower()
     if any(marca in bajo for marca in _ECO_PROMPT):
         return RESPUESTA_SEGURA_GENERICA
+    if any(frase in plano(salida) for frase in AFIRMACIONES_ACCION):
+        return RESPUESTA_SEGURA_GENERICA
     salida = _RE_PELIGRO.sub("[contenido omitido]", salida)
     salida = _RE_URL_EXT.sub("[enlace omitido]", salida)
     salida = _RE_EMAIL.sub("[correo omitido]", salida)
@@ -123,22 +158,24 @@ def filtrar_salida(texto: str) -> str:
 
 
 def _historial_sano(historial: list[dict]) -> list[dict]:
-    """Últimos 8 turnos user/assistant, textos acotados. Descarta lo demás."""
-    sanos = []
-    for t in historial or []:
-        if not isinstance(t, dict):
+    """Solo turnos `user` que sean consultas legítimas.
+
+    Los `assistant` del cliente pueden ser falsificados y los `user` con
+    inyección, datos sensibles o acciones no deben viajar al modelo ni usarse
+    como contexto de seguimiento. Se conservan los últimos 8 turnos y se
+    acota cada texto a 1000 caracteres.
+    """
+    sanos: list[dict] = []
+    for turno in historial or []:
+        if not isinstance(turno, dict) or turno.get("rol") != "user":
             continue
-        if t.get("rol") not in ("user", "assistant"):
-            continue  # system/tool del cliente: se rechazan
-        texto = str(t.get("texto", ""))[:1000]
-        if texto.strip():
-            sanos.append({"rol": t["rol"], "texto": texto})
+        texto = normalizar(str(turno.get("texto", "")))
+        if not texto or detectar_intencion(texto) != CONSULTA:
+            continue
+        texto = neutralizar_marcadores(texto)[:1000]
+        if texto:
+            sanos.append({"rol": "user", "texto": texto})
     return sanos[-8:]
-
-
-def ruta_permitida(ruta: str) -> bool:
-    """Allowlist pública de rutas para acciones."""
-    return str(ruta or "") in _RUTAS_PERMITIDAS
 
 
 def _acciones(fragmentos: list[dict]) -> list[dict]:
@@ -153,12 +190,44 @@ def _acciones(fragmentos: list[dict]) -> list[dict]:
     return (acciones or [dict(_ACCION_BUSCAR)])[:5]
 
 
-def _consulta(texto: str, historial: list[dict]) -> str:
-    """Pregunta + turno previo del usuario (seguimientos cortos como «¿y cómo se usa?»)."""
-    if len(texto.split()) >= 4:
-        return texto
-    previos = [t["texto"] for t in historial if t["rol"] == "user"]
-    return f"{previos[-1][:200]} {texto}" if previos else texto
+def _necesita_contexto(texto: str) -> bool:
+    """Pregunta corta o con referencia anafórica: se apoya en el turno previo."""
+    return (len(palabras_significativas(texto)) < 4
+            or bool(_RE_SEGUIMIENTO.search(plano(texto))))
+
+
+def _consulta(texto: str, historial: list[dict]) -> tuple[str, bool]:
+    """Pregunta para la KB y si usó la última pregunta `user` del historial."""
+    previas = [t["texto"] for t in historial if t["rol"] == "user"]
+    if not previas or not _necesita_contexto(texto):
+        return texto, False
+    return f"{previas[-1][:200]} {texto}", True
+
+
+def _huella_fragmento(fragmento: str) -> str:
+    """Hash corto del contenido: la caché cambia si cambia el documento."""
+    datos = str(fragmento or "").encode("utf-8")
+    return hashlib.sha256(datos).hexdigest()[:12]
+
+
+def _clave_cache(texto: str, fragmentos: list[dict], proveedor) -> str:
+    """Clave de caché: pregunta + contenido de documentos + proveedor/modelo."""
+    nombre = str(getattr(proveedor, "nombre", "") or type(proveedor).__name__)
+    modelo = str(getattr(proveedor, "modelo", "") or "")
+    docs = [f"{f.get('doc', '')}:{_huella_fragmento(f.get('fragmento', ''))}"
+            for f in fragmentos]
+    return clave_cache(texto, docs, f"{nombre}:{modelo}")
+
+
+def _mensajes(texto: str, historial: list[dict],
+              fragmentos: list[dict]) -> list[dict]:
+    """Turnos para el proveedor: prompt fijo, historial user y bloque DATOS."""
+    return ([{"rol": "system", "texto": CHAT_SYSTEM_PROMPT_V2}]
+            + historial
+            + [{"rol": "tool",
+                "texto": empaquetar_datos(
+                    "documentacion", {"fragmentos": fragmentos})},
+               {"rol": "user", "texto": texto}])
 
 
 def _respuesta(respuesta: str, fragmentos: list[dict],
@@ -169,32 +238,61 @@ def _respuesta(respuesta: str, fragmentos: list[dict],
             "eventos": eventos}
 
 
+def _respuesta_fija(categoria: str, eventos: list[str]) -> dict:
+    """Respuesta de intención: texto y botones fijos, sin LLM ni KB."""
+    texto, acciones = respuesta_para(categoria)
+    return {"respuesta": texto, "acciones": acciones,
+            "docs_usados": [], "eventos": eventos}
+
+
+async def _turno_consulta(*, texto: str, historial: list[dict], proveedor,
+                          timeout_s: float, eventos: list[str]) -> dict:
+    """Recupera KB, consulta caché y, si hace falta, redacta con el LLM."""
+    sano = _historial_sano(historial)
+    consulta, seguimiento = _consulta(texto, sano)
+    fragmentos = buscar_en_faq(consulta, tope=_TOPE_FRAGMENTOS)
+    if not fragmentos:
+        eventos.append("sin-kb")
+        return _respuesta(RESPUESTA_SIN_DOCUMENTACION, [], eventos)
+
+    clave = None if seguimiento else _clave_cache(texto, fragmentos, proveedor)
+    if clave:
+        guardada = CACHE_RESPUESTAS.obtener(clave)
+        if guardada is not None:
+            eventos.append("cache-hit")
+            return _respuesta(guardada, fragmentos, eventos)
+        eventos.append("cache-miss")
+
+    try:
+        resp = await asyncio.wait_for(
+            proveedor.completar(_mensajes(texto, sano, fragmentos), []),
+            timeout=max(5.0, min(float(timeout_s or 20.0), 60.0)))
+    except Exception:
+        eventos.append("llm-fallo")
+        return _respuesta("", fragmentos, eventos)
+
+    crudo = str((resp or {}).get("texto") or "")
+    limpia = filtrar_salida(crudo)
+    if clave and crudo.strip():
+        CACHE_RESPUESTAS.guardar(clave, limpia)
+    return _respuesta(limpia, fragmentos, eventos)
+
+
 async def conversar(*, mensaje: str, historial: list[dict],
                     proveedor, timeout_s: float = 20.0) -> dict:
     """Un turno del chatbot. Nunca lanza (fallback controlado ante todo)."""
-    texto = neutralizar_marcadores(str(mensaje or "").strip())[:500]
+    texto = normalizar(str(mensaje or ""))[:500]
     if not texto:
         return _respuesta(RESPUESTA_SEGURA_GENERICA, [], ["mensaje-vacio"])
-    sano = _historial_sano(historial)
-    eventos: list[str] = []
+    categoria = detectar_intencion(texto)
+    eventos = [f"intencion-{categoria}"]
+    if categoria != CONSULTA:
+        return _respuesta_fija(categoria, eventos)
+    texto = neutralizar_marcadores(texto)
     try:
-        fragmentos = buscar_en_faq(_consulta(texto, sano), tope=_TOPE_FRAGMENTOS)
-        if not fragmentos:
-            return _respuesta(RESPUESTA_SIN_DOCUMENTACION, [], ["sin-kb"])
-        mensajes = ([{"rol": "system", "texto": CHAT_SYSTEM_PROMPT_V2}]
-                    + sano
-                    + [{"rol": "tool",
-                        "texto": empaquetar_datos(
-                            "documentacion", {"fragmentos": fragmentos})},
-                       {"rol": "user", "texto": texto}])
-        try:
-            resp = await asyncio.wait_for(
-                proveedor.completar(mensajes, []),
-                timeout=max(5.0, min(float(timeout_s or 20.0), 60.0)))
-        except Exception:
-            eventos.append("llm-fallo")
-            return _respuesta("", fragmentos, eventos)
-        return _respuesta(str((resp or {}).get("texto") or ""), fragmentos, eventos)
+        return await _turno_consulta(texto=texto, historial=historial,
+                                     proveedor=proveedor,
+                                     timeout_s=timeout_s, eventos=eventos)
     except Exception:
         eventos.append("error-interno")
         return _respuesta("", [], eventos)
