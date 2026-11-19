@@ -14,7 +14,6 @@ from datetime import datetime, timezone, timedelta
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.core.security import MOCK_TOKENS
 
 client = TestClient(app)
 
@@ -53,13 +52,25 @@ def crear_publicacion(titulo_extra="") -> int:
     return r.json()["id"]
 
 
-def patch_fecha_mock(pub_id: int, fecha: datetime):
-    """Fuerza fecha_expiracion en MOCK_PUBS (sólo modo mock sin PG)."""
-    from app.routers.publicaciones import MOCK_PUBS
-    for p in MOCK_PUBS:
-        if p["id"] == pub_id:
-            p["fecha_expiracion"] = fecha
-            break
+def fijar_fecha_expiracion(pub_id: int, fecha: datetime):
+    """Fuerza fecha_expiracion de la publicación directamente en PG."""
+    import asyncio
+    import os
+
+    import asyncpg
+
+    async def _patch():
+        dsn = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
+        conn = await asyncpg.connect(dsn)
+        try:
+            await conn.execute(
+                "UPDATE publicaciones SET fecha_expiracion=$1 WHERE id=$2",
+                fecha, pub_id,
+            )
+        finally:
+            await conn.close()
+
+    asyncio.run(_patch())
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +143,7 @@ def test_pa01_c3_dueno_renueva_vencida_desde_ahora():
     """
     pub_id = crear_publicacion("vencida-c3")
     fecha_pasada = datetime.now(timezone.utc) - timedelta(days=5)
-    patch_fecha_mock(pub_id, fecha_pasada)
+    fijar_fecha_expiracion(pub_id, fecha_pasada)
 
     t0 = datetime.now(timezone.utc)
     r = client.patch(f"/api/publicaciones/{pub_id}/renovar", headers=OWNER_HEADER)

@@ -28,9 +28,9 @@ def test_publicaciones_rango_invalido():
     # debe ser 400 según HU-002 C1
     assert r.status_code in (400,422)
 def test_detalle_no_activo():
-    r=client.get("/api/publicaciones/3")
-    # 3 es PENDIENTE en mock
-    assert r.status_code in (200,404)  # mock retorna 200 con estado PENDIENTE, real debería 404
+    r=client.get("/api/publicaciones/14")
+    # 14 es PAUSADO_POR_REPORTE en el seed: privado -> 404 para no filtrar su existencia.
+    assert r.status_code == 404
 def test_post_sin_auth():
     r=client.post("/api/publicaciones", json={"titulo":"Test","tipo_inmueble":"APARTAESTUDIO","canon_mensual":500000,"zona_barrio_id":1,"direccion_referencial":"Cll 5","reglas_convivencia":"Reglas","servicios_ids":[1],"campus_ids":[1],"fotos":["https://a.com/1.jpg","https://a.com/2.jpg","https://a.com/3.jpg"]})
     assert r.status_code==401

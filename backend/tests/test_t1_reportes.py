@@ -1,4 +1,5 @@
 """T1 reportes - POST anónimo 201, anti-spam 429, admin 401/403, flujo PENDIENTE->revisado."""
+import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 from app.routers import reportes as reportes_mod
@@ -10,8 +11,21 @@ ARREND = {"Authorization": "Bearer mock-token-arrendador"}
 PAYLOAD = {"publicacion_id": 1, "motivo": "DATOS_FALSOS", "detalle": "foto no coincide"}
 
 
+@pytest.fixture(autouse=True)
+def _cuota_aislada():
+    """Aísla el bucket anti-spam por IP entre tests y archivos.
+
+    TestClient comparte IP ("testclient"): sin esto, test_t1_antispam_429
+    (que llena el bucket por diseño) dejaba 429 al archivo siguiente según
+    el orden de ejecución (falso negativo intermitente).
+    """
+    reportes_mod.clear_report_rate_limit_for_tests()
+    yield
+    reportes_mod.clear_report_rate_limit_for_tests()
+
+
 def _reset_quota():
-    reportes_mod._REPORT_ATTEMPTS.clear()
+    reportes_mod.clear_report_rate_limit_for_tests()
 
 
 def test_t1_crear_anonimo_201():

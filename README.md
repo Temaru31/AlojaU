@@ -56,6 +56,12 @@ Backend -> Render / Railway (root: backend, start: uvicorn app.main:app --host 0
 BD -> Supabase / Neon
 Storage -> Cloudinary / Supabase Storage
 
+## Asistente virtual (ayuda sobre la app, apagado por defecto)
+Explica cómo funciona AlojaU y qué hace cada funcionalidad (Roomies, índice de
+confianza, alertas, publicar, etc.). **No consulta la base de datos**: responde
+desde `backend/app/services/chat/kb/*.md`. Ver `docs/CHATBOT.md`. Local sin llave
+(Fake): `CHAT_ENABLED=true` en `backend/.env`. Con proveedor real: añade `CHAT_LLM_*`.
+
 ## Fixes críticos ya aplicados (ver informe p25-31)
 - Índice confianza: PENDIENTE+CONFIRMADO (no ACTIVO)
 - Endpoints: /api/publicaciones y /api/campus

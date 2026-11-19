@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatCOP, formatDistancia, getColorIndice, getLabelIndice, formatTiempoCaminando, formatDistanciaConTiempo } from './formatters'
+import { formatCOP, formatDistancia, getColorIndice, getLabelIndice, formatTiempoCaminando, formatDistanciaConTiempo, formatDistanciaPeatonal, PEATONAL_FACTOR, VELOCIDAD_M_MIN } from './formatters'
 
 describe('formatters', ()=>{
   it('formatCOP formatea moneda COP', ()=>{
@@ -33,16 +33,23 @@ describe('formatters', ()=>{
     const s = formatCOP(10000000)
     expect(s.length).toBeLessThan(30)
   })
-  it('formatTiempoCaminando realista (80m/min)', ()=>{
-    expect(formatTiempoCaminando(80)).toBe('~1 min a pie')
-    expect(formatTiempoCaminando(111)).toBe('~1 min a pie') // 111/80=1.38 -> 1
-    expect(formatTiempoCaminando(160)).toBe('~2 min a pie')
-    expect(formatTiempoCaminando(780)).toBe('~10 min a pie')
+  it('formatTiempoCaminando peatonal (×1.28, 66 m/min)', ()=>{
+    expect(PEATONAL_FACTOR).toBe(1.28)
+    expect(VELOCIDAD_M_MIN).toBe(66)
+    expect(formatTiempoCaminando(30)).toBe('<1 min a pie') // 38.4 < 66
+    expect(formatTiempoCaminando(80)).toBe('~2 min a pie') // 102.4/66=1.55 -> 2
+    expect(formatTiempoCaminando(111)).toBe('~2 min a pie')
+    expect(formatTiempoCaminando(160)).toBe('~3 min a pie')
+    expect(formatTiempoCaminando(780)).toBe('~15 min a pie')
     expect(formatTiempoCaminando(null)).toBeNull()
-    expect(formatTiempoCaminando(5000)).toContain('h') // 5000/80=62 -> 1h 2min
+    expect(formatTiempoCaminando(5000)).toBe('~1h 37min a pie')
+  })
+  it('formatDistanciaPeatonal aplica tortuosidad', ()=>{
+    expect(formatDistanciaPeatonal(1000)).toBe('1.3 km') // 1280 m
+    expect(formatDistanciaPeatonal(null)).toBe('No informado')
   })
   it('formatDistanciaConTiempo combina', ()=>{
-    expect(formatDistanciaConTiempo(320)).toBe('320 m • ~4 min a pie')
+    expect(formatDistanciaConTiempo(320)).toBe('320 m • ~6 min a pie')
     expect(formatDistanciaConTiempo(null)).toBe('No informado')
   })
 })

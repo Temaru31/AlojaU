@@ -66,3 +66,27 @@ def test_f2_menos_de_3_fotos_422():
         headers=ARR,
     )
     assert r.status_code == 422
+
+
+def test_f2_estudiante_puede_subir_fotos_antes_de_publicar():
+    """Regresión: el ESTUDIANTE se vuelve ARRENDADOR al publicar, y publicar exige
+    3 fotos ya subidas. Si /upload exigiera ARRENDADOR, nunca podría publicar."""
+    est = {"Authorization": "Bearer mock-token-estudiante"}
+    r = client.post(
+        "/api/publicaciones/upload",
+        files=_files([(f"e{i}.png", PNG_1PX, "image/png") for i in range(3)]),
+        headers=est,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["count"] == 3
+    r1 = client.post("/api/publicaciones/upload/una",
+                     files={"file": ("e.png", PNG_1PX, "image/png")}, headers=est)
+    assert r1.status_code == 200, r1.text
+
+
+def test_f2_upload_sin_token_401():
+    r = client.post(
+        "/api/publicaciones/upload",
+        files=_files([(f"x{i}.png", PNG_1PX, "image/png") for i in range(3)]),
+    )
+    assert r.status_code == 401

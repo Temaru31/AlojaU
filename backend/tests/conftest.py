@@ -15,7 +15,7 @@ El reseed es simple, determinista y rápido.
 
 SEGURIDAD: si DATABASE_URL apunta a prod (supabase.co o ENV=prod) la sesión
 se ABORTA con error explícito. JAMÁS truncar producción por accidente.
-Sin PG (modo mock), se omite con aviso y la suite corre como hoy.
+Sin PG se omite con aviso (la suite necesita PostgreSQL para pasar).
 """
 import asyncio
 import os
@@ -30,8 +30,18 @@ def _dsn_test() -> str:
     raw = os.getenv(
         "DATABASE_URL", "postgresql://alojau:alojau123@localhost:5432/alojau"
     )
-    dsn = raw.replace("postgresql+asyncpg://", "postgresql://")
-    return dsn
+    from app.db.session import dsn_asyncpg_a_psycopg
+    return dsn_asyncpg_a_psycopg(raw)
+
+
+def generar_password_prueba() -> str:
+    """Password fuerte ALEATORIA para usuarios temporales de tests.
+
+    Cumple motivo_password_debil (8+, mayúscula, número, especial) sin quemar
+    credenciales en el código (CodeQL/higiene de secretos).
+    """
+    import secrets
+    return f"T-{secrets.token_hex(5)}9!Q"
 
 
 def _es_url_segura(dsn: str) -> bool:
@@ -76,7 +86,7 @@ def _pg_disponible() -> bool:
         return True
     except Exception as e:
         if not _aviso_mostrado["mock"]:
-            print(f"\n[T5] PG no disponible ({type(e).__name__}): suite en modo mock, sin reseed.")
+            print(f"\n[T5] PG no disponible ({type(e).__name__}): suite sin reseed (las pruebas de BD fallarán).")
             _aviso_mostrado["mock"] = True
         return False
 
@@ -99,3 +109,111 @@ def _t5_test_hermetico():
     _pg_disponible()
     yield
     # Sin teardown por test: el setup del siguiente + el cierre de sesión restauran.
+
+
+def _uploads_dir() -> str:
+    import os
+
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "uploads"))
+
+
+@pytest.fixture(scope="function", autouse=True)
+def _uploads_limpio():
+    """Tarea 1 (v4): ningún test deja basura en backend/uploads/.
+
+    Foto del directorio antes/después; borra solo lo creado por el test
+    (respeta .gitkeep y archivos preexistentes).
+    """
+    import os
+
+    d = _uploads_dir()
+    try:
+        antes = set(os.listdir(d))
+    except FileNotFoundError:
+        antes = set()
+    yield
+    try:
+        despues = set(os.listdir(d))
+    except FileNotFoundError:
+        return
+    for name in despues - antes:
+        if name == ".gitkeep":
+            continue
+        try:
+            os.remove(os.path.join(d, name))
+        except FileNotFoundError:
+            pass
+
+
+@pytest.fixture(scope="function", autouse=True)
+def _memoria_hermetica():
+    """Aísla el estado global en memoria entre tests (orden-independiente).
+
+    TestClient comparte IP ("testclient") y los throttles/cachés viven en
+    el proceso: sin esto, un archivo que llena un bucket deja 429 al
+    siguiente (falso negativo intermitente, ej. reportes/oráculo).
+    La BD la resetea _t5_test_hermetico; aquí solo memoria.
+    """
+    _limpiar_memoria()
+    yield
+    _limpiar_memoria()
+
+
+def _limpiar_memoria() -> None:
+    # Caché de system_settings: cada test parte del seed, no de lo que leyó el anterior.
+    from app.repositories import ajustes_repo
+    ajustes_repo.limpiar_cache()
+    try:
+        from app.routers import reportes as _rep
+        _rep.clear_report_rate_limit_for_tests()
+    except Exception:
+        pass
+    try:
+        from app.services import telegram as _tg
+        _tg.clear_throttle_for_tests()
+    except Exception:
+        pass
+    try:
+        from app.core.security import clear_rol_cache_for_tests
+        clear_rol_cache_for_tests()
+    except Exception:
+        pass
+    try:
+        from app.core.security import clear_admin_revalid_for_tests
+        clear_admin_revalid_for_tests()
+    except Exception:
+        pass
+    try:
+        from app.routers import uploads as _up
+        _up.clear_upload_rate_limit_for_tests()
+    except Exception:
+        pass
+    try:
+        from app.routers import publicaciones as _pub2
+        _pub2.clear_pub_rate_limit_for_tests()
+    except Exception:
+        pass
+    try:
+        from app.main import clear_security_burst_for_tests as _clr_burst
+        _clr_burst()
+    except Exception:
+        pass
+    for _mod, _nombres in (
+        ("app.routers.auth", ("_TG_MEM", "_AVATAR_MEM", "_OTP_SOLICITAR",
+                              "_OTP_VERIFICAR",
+                              "_TELEGRAM_VINCULOS", "_TELEGRAM_USADOS",
+                              "_TELEGRAM_PENDIENTES",
+                              "_LOGIN_ATTEMPTS", "_PW_ATTEMPTS",
+                              "_OAUTH_ATTEMPTS")),
+        ("app.routers.publicaciones", ("_PUB_ATTEMPTS",)),
+        ("app.routers.uploads", ("_UPLOAD_ATTEMPTS",)),
+    ):
+        try:
+            import importlib as _il
+            _m = _il.import_module(_mod)
+            for _n in _nombres:
+                _o = getattr(_m, _n, None)
+                if isinstance(_o, (dict, set)):
+                    _o.clear()
+        except Exception:
+            pass

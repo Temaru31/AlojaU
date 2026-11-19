@@ -1,39 +1,136 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { api } from '../services/api'
-import Card from '../components/Card'
-import Casa3D from '../components/Casa3D'
-import CercanoA, { etiquetaLugar } from '../components/CercanoA'
-import Filtros from '../components/Filtros'
-import Paginacion from '../components/Paginacion'
-import SearchBar from '../components/SearchBar'
+import { useSearchParams } from 'react-router-dom'
+import { isCancelError } from '../services/api'
+
+import { CIUDADES_FALLBACK, etiquetaCiudad } from '../components/CiudadSelector'
+import { contarAvanzados } from '../components/Filtros'
+import { guardarCampusFiltro, guardarFiltrosBuscar, leerFiltrosBuscar, limpiarFiltrosBuscar } from '../utils/persistenciaBuscar'
+
+import HeroBuscar from './buscar/HeroBuscar'
+import FiltrosMovil from './buscar/FiltrosMovil'
+import BarraFiltrosEscritorio from './buscar/BarraFiltrosEscritorio'
+import ResultadosBusqueda from './buscar/ResultadosBusqueda'
+import { obtenerCampus, obtenerCiudades } from '../services/catalogosApi'
+import { buscarPublicaciones } from '../services/publicacionesApi'
+
+function parseCiudadId(searchParams) {
+  const raw = searchParams.get('ciudad_id')
+  if (raw == null || raw === '') return null
+  const n = Number(raw)
+  return Number.isInteger(n) && n >= 1 ? n : null
+}
+
+// Snapshot inicial: si se llega a `/` sin params (navbar, volver desde otra
+// zona), se restaura la última búsqueda de la sesión en vez de resetear.
+// El atrás nativo conserva params por historial; esto cubre el resto.
+function snapshotInicialBuscar(sp) {
+  const tiene = ['campus_id', 'ciudad_id', 'precio_min', 'precio_max', 'tipo', 'servicios', 'q']
+    .some((k) => { const v = sp.get(k); return v != null && v !== '' })
+  if (tiene) return null
+  try { return leerFiltrosBuscar() } catch { return null }
+}
 
 export default function Buscar() {
   const [campus, setCampus] = useState([])
+  // Una sola fuente de ciudades para el selector Y la píldora del Hero.
+  const [ciudades, setCiudades] = useState(CIUDADES_FALLBACK)
   const [searchParams, setSearchParams] = useSearchParams()
+  // Snapshot de la sesión (volver/navegar sin perder la búsqueda). Se lee
+  // UNA vez al montar: si la URL ya trae params, manda la URL (null).
+  const snapRef = useRef(undefined)
+  if (snapRef.current === undefined) snapRef.current = snapshotInicialBuscar(searchParams)
+  const snap = snapRef.current
+  // El snapshot SOLO rige en el montaje (para sembrar estado/URL). Si se
+  // consultara en cada render, borrar un campo (URL sin param) resucitaría
+  // el valor viejo del snapshot y el efecto lo re-grabaría (bug: lo
+  // "limpiado" reaparecía solo). El restore de abajo lo invalida.
+  const snapVigenteRef = useRef(snap != null)
+  const snapVigente = snapVigenteRef.current
   // 004 POIs: sin ?campus_id= no hay filtro de cercanía (estado inicial vacío).
   // NaN-safe: un valor manual inválido (?campus_id=abc) equivale a "Todos".
-  const campusIdRaw = searchParams.get('campus_id')
-  const campusIdNum = campusIdRaw != null ? Number(campusIdRaw) : NaN
+  const campusIdRaw = searchParams.get('campus_id') ?? (snapVigente ? snap?.campus_id : null) ?? null
+  const campusIdNum = campusIdRaw != null && campusIdRaw !== '' ? Number(campusIdRaw) : NaN
   const campusId = Number.isInteger(campusIdNum) && campusIdNum >= 1 ? campusIdNum : null
-  const page = Number(searchParams.get('page') || 1)
-  const q = searchParams.get('q') || ''
+  const ciudadId = parseCiudadId(searchParams) ?? (snapVigente && snap?.ciudad_id != null ? Number(snap.ciudad_id) || null : null)
+  // page saneado: ?page=abc o <=0 equivale a 1 (evita 422 y Paginacion rota).
+  const pageRaw = Number(searchParams.get('page') || 1)
+  const page = Number.isInteger(pageRaw) && pageRaw >= 1 ? pageRaw : 1
+  const q = searchParams.get('q') || (snapVigente ? snap?.q : '') || ''
   const [filtros, setFiltros] = useState({
-    min: searchParams.get('precio_min') || '',
-    max: searchParams.get('precio_max') || '',
-    tipo: searchParams.get('tipo') || '',
-    servicios: searchParams.get('servicios') || '',
+    min: searchParams.get('precio_min') ?? snap?.filtros?.min ?? '',
+    max: searchParams.get('precio_max') ?? snap?.filtros?.max ?? '',
+    tipo: searchParams.get('tipo') ?? snap?.filtros?.tipo ?? '',
+    servicios: searchParams.get('servicios') ?? snap?.filtros?.servicios ?? '',
   })
-  // OLA4: string primitivo estable (el objeto searchParams cambia de identidad
+
+  // Al montar con snapshot: deja la URL canónica (replace, sin historia).
+  // El campus restaurado también se publica como filtro global (Comparar).
+  // Tras escribir, el snapshot caduca: la URL manda desde aquí.
+  const restauradoRef = useRef(false)
+  useEffect(() => {
+    if (restauradoRef.current || !snap) return
+    restauradoRef.current = true
+    snapVigenteRef.current = false
+    const params = new URLSearchParams()
+    if (snap.campus_id) { params.set('campus_id', snap.campus_id); guardarCampusFiltro(snap.campus_id) }
+    if (snap.ciudad_id) params.set('ciudad_id', snap.ciudad_id)
+    if (snap.filtros?.min) params.set('precio_min', snap.filtros.min)
+    if (snap.filtros?.max) params.set('precio_max', snap.filtros.max)
+    if (snap.filtros?.tipo) params.set('tipo', snap.filtros.tipo)
+    if (snap.filtros?.servicios) params.set('servicios', snap.filtros.servicios)
+    if (snap.q) params.set('q', snap.q)
+    params.set('page', 1)
+    setSearchParams(params, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Snapshot continuo: cada cambio de búsqueda se guarda en la sesión para
+  // restaurarlo al volver desde una publicación u otra zona.
+  useEffect(() => {
+    guardarFiltrosBuscar({
+      filtros: { min: filtros.min || '', max: filtros.max || '', tipo: filtros.tipo || '', servicios: filtros.servicios || '' },
+      campus_id: campusId != null ? String(campusId) : '',
+      ciudad_id: ciudadId != null ? String(ciudadId) : '',
+      q: q || '',
+    })
+  }, [filtros, campusId, ciudadId, q])
+  // String primitivo estable (el objeto searchParams cambia de identidad
   // y provocaba doble-fetch). El efecto de resultados depende de este string.
   const queryString = searchParams.toString()
+
+  // Los chips/inputs locales siguen a la URL cuando esta cambia por
+  // navegación (atrás/adelante): sin esto, los resultados cambian pero la
+  // UI muestra los filtros viejos. No pisa mientras se escribe (firma).
+  const firmaFiltros = useRef(null)
+  useEffect(() => {
+    const desdeUrl = {
+      min: searchParams.get('precio_min') || '',
+      max: searchParams.get('precio_max') || '',
+      tipo: searchParams.get('tipo') || '',
+      servicios: searchParams.get('servicios') || '',
+    }
+    const firma = JSON.stringify(desdeUrl)
+    if (firmaFiltros.current === null) {
+      firmaFiltros.current = JSON.stringify(filtros)
+    }
+    if (firma !== firmaFiltros.current) {
+      firmaFiltros.current = firma
+      setFiltros(desdeUrl)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryString])
   const [pubs, setPubs] = useState([])
   const [total, setTotal] = useState(0)
   const [pages, setPages] = useState(1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  // Panel avanzado controlado desde la barra flotante (una sola fila).
+  const [avanzadosAbiertos, setAvanzadosAbiertos] = useState(false)
+  const numAvanzados = contarAvanzados(filtros)
 
   const setCampusId = (id) => {
+    // Filtro global: Comparar lo lee desde aquí (vive en otra ruta).
+    guardarCampusFiltro(id ?? '')
     const params = new URLSearchParams(searchParams)
     if (id == null || id === '') params.delete('campus_id')
     else params.set('campus_id', id)
@@ -41,16 +138,37 @@ export default function Buscar() {
     setSearchParams(params)
   }
 
+  const setCiudadId = (id) => {
+    const params = new URLSearchParams(searchParams)
+    if (id == null || id === '') params.delete('ciudad_id')
+    else params.set('ciudad_id', id)
+    params.set('page', 1)
+    setSearchParams(params)
+  }
+
   const setQ = (texto) => {
     const params = new URLSearchParams(searchParams)
-    texto.trim() ? params.set('q', texto.trim()) : params.delete('q')
+    if (texto.trim()) params.set('q', texto.trim())
+    else params.delete('q')
     params.set('page', 1)
     if (params.toString() !== searchParams.toString()) setSearchParams(params)
   }
 
   const limpiarTodo = () => {
     setFiltros({ min: '', max: '', tipo: '', servicios: '' })
-    setQ('')
+    limpiarFiltrosBuscar()
+    guardarCampusFiltro('')
+    const params = new URLSearchParams(searchParams)
+    params.delete('q')
+    params.delete('precio_min')
+    params.delete('precio_max')
+    params.delete('tipo')
+    params.delete('servicios')
+    params.delete('campus_id')
+    params.delete('ciudad_id')
+    params.set('page', 1)
+    setSearchParams(params)
+    setAvanzadosAbiertos(false)
   }
 
   const setPage = (p) => {
@@ -70,42 +188,59 @@ export default function Buscar() {
     const t = setTimeout(() => {
       filtrosAplicados.current = firma
       const params = new URLSearchParams(queryString)
-      filtros.min ? params.set('precio_min', filtros.min) : params.delete('precio_min')
-      filtros.max ? params.set('precio_max', filtros.max) : params.delete('precio_max')
-      filtros.tipo ? params.set('tipo', filtros.tipo) : params.delete('tipo')
-      filtros.servicios ? params.set('servicios', filtros.servicios) : params.delete('servicios')
+      if (filtros.min) params.set('precio_min', filtros.min)
+      else params.delete('precio_min')
+      if (filtros.max) params.set('precio_max', filtros.max)
+      else params.delete('precio_max')
+      if (filtros.tipo) params.set('tipo', filtros.tipo)
+      else params.delete('tipo')
+      if (filtros.servicios) params.set('servicios', filtros.servicios)
+      else params.delete('servicios')
       params.set('page', 1)
       if (params.toString() !== queryString) {
         setSearchParams(params)
       }
     }, 400)
     return () => clearTimeout(t)
-  }, [filtros.min, filtros.max, filtros.tipo, filtros.servicios, queryString])
+  }, [filtros.min, filtros.max, filtros.tipo, filtros.servicios, queryString, setSearchParams])
 
   useEffect(() => {
-    api.get('/api/campus')
-      .then(r => setCampus(r.data))
+    obtenerCampus()
+      .then(setCampus)
       .catch(() => setCampus([{ id: 1, institucion: 'Universidad del Cauca', nombre_sede: 'Campus Tulcan' }]))
+    // Catálogo de ciudades una sola vez (selector + píldora comparten).
+    obtenerCiudades()
+      .then((lista) => {
+        if (Array.isArray(lista) && lista.length > 0) setCiudades(lista)
+      })
+      .catch(() => { /* fallback Popayán */ })
   }, [])
 
-  // OLA4: AbortController + deps primitivas estables (sin objeto searchParams).
-  // La respuesta tardía de una búsqueda anterior ya no pisa a la actual.
+  // La píldora lee la ciudad SELECCIONADA en el CiudadSelector
+  // (misma lista, mismo value). Sin ciudad elegida -> default Popayán.
+  const ciudadSel = ciudades.find((c) => String(c.id) === String(ciudadId)) || ciudades[0] || null
+  const ciudadNombre = etiquetaCiudad(ciudadSel)
+
+  // AbortController + error SOLO ante HTTP >= 400 o fallo real de red.
+  // Un 200 OK con [] NUNCA pinta banner rojo: va a la tarjeta neutra de vacío.
+  // Deps: solo queryString (campusId/ciudadId/page ya viven dentro de él;
+  // listarlos además provocaba doble fetch).
   useEffect(() => {
     const controller = new AbortController()
     setLoading(true); setError('')
-    const q = new URLSearchParams(queryString)
+    const qq = new URLSearchParams(queryString)
     const params = {
       campus_id: campusId ?? undefined,
-      precio_min: q.get('precio_min') || undefined,
-      precio_max: q.get('precio_max') || undefined,
-      tipo: q.get('tipo') || undefined,
-      servicios: q.get('servicios') || undefined,
-      q: q.get('q') || undefined,
+      ciudad_id: ciudadId ?? undefined,
+      precio_min: qq.get('precio_min') || undefined,
+      precio_max: qq.get('precio_max') || undefined,
+      tipo: qq.get('tipo') || undefined,
+      servicios: qq.get('servicios') || undefined,
+      q: qq.get('q') || undefined,
       page, size: 9
     }
-    api.get('/api/publicaciones', { params, signal: controller.signal })
-      .then(r => {
-        const data = r.data
+    buscarPublicaciones(params, { signal: controller.signal })
+      .then(data => {
         if (Array.isArray(data)) {
           setPubs(data); setTotal(data.length); setPages(1)
         } else {
@@ -113,217 +248,41 @@ export default function Buscar() {
         }
       })
       .catch((err) => {
-        if (err?.code === 'ERR_CANCELED') return
+        if (isCancelError(err)) return
+        if (controller.signal.aborted) return
+        const status = err?.response?.status
+        // Solo errores HTTP reales (>=400) o fallos de red sin respuesta.
+        if (status != null && status < 400) return
         setError('No se pudo cargar publicaciones. Intenta de nuevo.'); setPubs([])
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [campusId, page, queryString])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryString])
 
   const currentCampus = campus.find(c => c.id == campusId)
 
-  // Linterna del Hero: un halo blanco sigue al cursor con inercia suave.
-  // Sin re-renders (mutación directa + RAF) y desactivado en táctil o
-  // con movimiento reducido.
-  const heroRef = useRef(null)
-  const luzRef = useRef(null)
-  useEffect(() => {
-    const hero = heroRef.current
-    const luz = luzRef.current
-    if (!hero || !luz) return
-    if (window.matchMedia?.('(hover: none)').matches) return
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
-
-    let raf = 0
-    let activo = false
-    const objetivo = { x: 0, y: 0 }
-    const actual = { x: 0, y: 0 }
-
-    const pintar = () => {
-      if (!activo) return
-      actual.x += (objetivo.x - actual.x) * 0.18
-      actual.y += (objetivo.y - actual.y) * 0.18
-      luz.style.background = `radial-gradient(circle 280px at ${actual.x}px ${actual.y}px, rgba(255,255,255,0.22), rgba(255,255,255,0.06) 45%, transparent 70%)`
-      raf = requestAnimationFrame(pintar)
-    }
-    const posicion = (e) => {
-      const rect = hero.getBoundingClientRect()
-      objetivo.x = e.clientX - rect.left
-      objetivo.y = e.clientY - rect.top
-    }
-    const entrar = (e) => {
-      posicion(e)
-      actual.x = objetivo.x
-      actual.y = objetivo.y
-      activo = true
-      luz.style.opacity = '1'
-      cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(pintar)
-    }
-    const salir = () => {
-      activo = false
-      cancelAnimationFrame(raf)
-      luz.style.opacity = '0'
-    }
-
-    hero.addEventListener('mouseenter', entrar)
-    hero.addEventListener('mousemove', posicion)
-    hero.addEventListener('mouseleave', salir)
-    return () => {
-      activo = false
-      cancelAnimationFrame(raf)
-      hero.removeEventListener('mouseenter', entrar)
-      hero.removeEventListener('mousemove', posicion)
-      hero.removeEventListener('mouseleave', salir)
-    }
-  }, [])
+  // Controles compartidos por la cápsula móvil y la barra de escritorio.
+  const busqueda = {
+    campus, campusId, setCampusId, ciudades, ciudadId, setCiudadId,
+    q, setQ, filtros, setFiltros, numAvanzados, total, limpiarTodo,
+  }
 
   return (
     <div>
-      {/* Hero */}
-      <section ref={heroRef} className="relative overflow-hidden bg-navy-950">
-        <div
-          className="absolute inset-0"
-          style={{ background: 'linear-gradient(115deg, #0c1426 0%, #14213D 42%, #1e3460 78%, #263A5A 100%)' }}
-        />
-        <div
-          className="absolute inset-0"
-          style={{ background: 'radial-gradient(ellipse 55% 70% at 12% 6%, rgba(59,82,127,0.55), transparent 65%)' }}
-        />
-        <div
-          className="absolute inset-0"
-          style={{ background: 'radial-gradient(ellipse 45% 60% at 88% 55%, rgba(244,185,66,0.10), transparent 65%)' }}
-        />
-        <div className="absolute inset-0 opacity-[0.05]"
-          style={{
-            backgroundImage: 'radial-gradient(circle at 1px 1px, white 1px, transparent 0)',
-            backgroundSize: '32px 32px',
-          }}
-        />
-        <div
-          className="absolute inset-0"
-          style={{ background: 'linear-gradient(to top, rgba(12,20,38,0.55), transparent 32%)' }}
-        />
-        <div className="container-main relative py-14 md:py-20">
-          <div className="grid items-center gap-8 lg:grid-cols-[1.05fr_0.95fr]">
-            <div className="max-w-2xl">
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-full mb-5">
-                <div className="w-1.5 h-1.5 bg-gold-400 rounded-full" />
-                <span className="text-xs font-medium text-gold-300 tracking-wide uppercase">Popayan, Cauca</span>
-              </div>
-              <h1 className="font-display text-3xl md:text-[2.75rem] font-extrabold text-white leading-tight tracking-tight mb-4 text-balance">
-                Encuentra tu vivienda<br />
-                <span className="text-gold-400">cerca del campus</span>
-              </h1>
-              <p className="text-navy-300 text-base md:text-lg leading-relaxed max-w-lg">
-                Compara opciones, revisa el indice de confianza y contacta directamente por WhatsApp.
-              </p>
-            </div>
-            <Casa3D />
-          </div>
-        </div>
-        <div
-          ref={luzRef}
-          aria-hidden="true"
-          className="absolute inset-0 pointer-events-none opacity-0 transition-opacity duration-300"
-          style={{ mixBlendMode: 'overlay' }}
-        />
-      </section>
-
-      {/* Buscador sticky: z-30 para quedar bajo nav (z-50) y backdrop del menú móvil (z-40) */}
-      <section className="bg-white border-b border-neutral-150 sticky top-16 z-30">
-        <div className="container-main py-4">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="flex-[1.2]">
-              <label className="block text-xs font-medium text-neutral-500 mb-1.5">Buscar</label>
-              <SearchBar value={q} onChange={setQ} />
-            </div>
-            <div className="flex-1">
-              <label htmlFor="cercano-a" className="block text-xs font-medium text-neutral-500 mb-1.5">Cercano a…</label>
-              <CercanoA lugares={campus} value={campusId} onChange={setCampusId} inputId="cercano-a" />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Filtros + Resultados */}
-      <div className="container-main py-6 md:py-8">
-        <Filtros filtros={filtros} setFiltros={setFiltros} />
-
-        <p className="text-xs text-neutral-400 mt-4" aria-live="polite">
-          {loading ? 'Cargando...' : `${total} publicaciones · página ${page}/${pages}`}
-        </p>
-        {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 rounded-md p-3 text-sm mt-3" role="alert">
-            {error}
-          </div>
-        )}
-
-        <div className="flex items-center justify-between mt-4 mb-5">
-          <div>
-            <p className="text-sm text-neutral-600">
-              <span className="font-semibold text-navy-800">{pubs.length}</span> {pubs.length === 1 ? 'resultado' : 'resultados'}
-              {currentCampus && (
-                <span className="text-neutral-400">
-                  {' '}en {currentCampus.institucion ? `${currentCampus.institucion} - ` : ''}{currentCampus?.nombre_sede}
-                </span>
-              )}
-            </p>
-          </div>
-        </div>
-
-        {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[1, 2, 3, 4, 5, 6].map(i => (
-              <div key={i} className="card p-4 animate-pulse">
-                <div className="h-36 bg-neutral-100 rounded-t-lg" />
-                <div className="p-4 space-y-2">
-                  <div className="h-4 bg-neutral-150 rounded w-24 mb-3" />
-                  <div className="h-5 bg-neutral-150 rounded w-3/4 mb-2" />
-                  <div className="h-4 bg-neutral-150 rounded w-1/2 mb-3" />
-                  <div className="h-3 bg-neutral-150 rounded w-full" />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : pubs.length > 0 ? (
-          <>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {pubs.map(p => (
-                <Link
-                  key={p.id}
-                  to={{ pathname: `/publicacion/${p.id}`, search: campusId ? `?campus_id=${campusId}` : '' }}
-                  className="block"
-                >
-                  <Card pub={p} lugarNombre={currentCampus ? etiquetaLugar(currentCampus) : null} />
-                </Link>
-              ))}
-            </div>
-            <Paginacion page={page} pages={pages} total={total} onPage={setPage} />
-          </>
-        ) : (
-          <div className="card p-12 text-center">
-            <div className="w-12 h-12 bg-neutral-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-6 h-6 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
-              </svg>
-            </div>
-            <p className="text-sm font-medium text-neutral-700 mb-1">Sin resultados{q && <> para “{q}”</>}</p>
-            <p className="text-xs text-neutral-400 max-w-sm mx-auto">
-              {q
-                ? <>Intenta con “habitación”, “amoblado” o “cerca a la universidad”, revisa la ortografía o limpia los filtros.</>
-                : <>Prueba otro campus o ajusta los filtros de búsqueda.</>}
-            </p>
-            <button
-              type="button"
-              onClick={limpiarTodo}
-              className="mt-5 text-xs font-semibold text-navy-700 border border-navy-200 rounded-md px-4 py-2 hover:bg-navy-50 transition"
-            >
-              Limpiar búsqueda y filtros
-            </button>
-          </div>
-        )}
-      </div>
+      <HeroBuscar ciudadNombre={ciudadNombre} />
+      <FiltrosMovil busqueda={busqueda} />
+      <BarraFiltrosEscritorio
+        busqueda={busqueda}
+        avanzadosAbiertos={avanzadosAbiertos}
+        setAvanzadosAbiertos={setAvanzadosAbiertos}
+      />
+      <ResultadosBusqueda
+        pubs={pubs} loading={loading} error={error} total={total}
+        page={page} pages={pages} setPage={setPage}
+        q={q} filtros={filtros} campusId={campusId} currentCampus={currentCampus}
+        limpiarTodo={limpiarTodo}
+      />
     </div>
   )
 }

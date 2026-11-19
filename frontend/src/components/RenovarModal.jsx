@@ -2,8 +2,11 @@
 // Muestra fecha actual + preview estimada de nueva fecha (cálculo local, sólo visual).
 // La fecha confirmada siempre viene del backend; si hay error NO se presenta fecha renovada.
 // Uso: <RenovarModal pub={pub} token={token} onClose={() => ...} onRenovada={(upd) => ...} />
-import { useState } from 'react'
-import { api } from '../services/api'
+import { useRef, useState } from 'react'
+import { TriangleAlert } from 'lucide-react'
+import useFocusTrap from '../hooks/useFocusTrap'
+import { renovarPublicacion } from '../services/publicacionesApi'
+import { mensajeDeError } from '../services/erroresApi'
 
 /** Formatea un Date o string ISO a texto legible en español. */
 function formatFecha(fechaRaw) {
@@ -37,6 +40,9 @@ function diasRestantes(fechaRaw) {
 }
 
 export default function RenovarModal({ pub, token, onClose, onRenovada }) {
+  // Tab cicla dentro + foco vuelve al disparador al cerrar.
+  const cajaRef = useRef(null)
+  useFocusTrap(cajaRef, true)
   const [estado, setEstado] = useState('idle') // 'idle' | 'loading' | 'success' | 'error'
   const [resultado, setResultado] = useState(null)
   const [errorMsg, setErrorMsg] = useState('')
@@ -50,27 +56,20 @@ export default function RenovarModal({ pub, token, onClose, onRenovada }) {
     setEstado('loading')
     setErrorMsg('')
     try {
-      const res = await api.patch(
-        `/api/publicaciones/${pub.id}/renovar`,
-        {},
-        { headers: { Authorization: `Bearer ${token}` } },
-      )
-      setResultado(res.data)
+      const renovada = await renovarPublicacion(pub.id, token)
+      setResultado(renovada)
       setEstado('success')
-      if (onRenovada) onRenovada(res.data)
+      if (onRenovada) onRenovada(renovada)
     } catch (err) {
       const status = err?.response?.status
-      const detail = err?.response?.data?.detail
       if (status === 401) {
         setErrorMsg('Sesión vencida. Inicia sesión de nuevo.')
       } else if (status === 403) {
         setErrorMsg('No tienes permisos para renovar esta publicación.')
       } else if (status === 404) {
         setErrorMsg('La publicación no fue encontrada.')
-      } else if (detail) {
-        setErrorMsg(String(detail))
       } else {
-        setErrorMsg('Error de red o de servidor. La publicación NO fue renovada.')
+        setErrorMsg(mensajeDeError(err, 'Error de red o de servidor. La publicación NO fue renovada.'))
       }
       setEstado('error')
       // Criterio Gherkin: no presentar fecha renovada ante error
@@ -79,6 +78,7 @@ export default function RenovarModal({ pub, token, onClose, onRenovada }) {
 
   return (
     <div
+      ref={cajaRef}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
       role="dialog"
       aria-modal="true"
@@ -148,7 +148,7 @@ export default function RenovarModal({ pub, token, onClose, onRenovada }) {
                   role="alert"
                   id="renovar-error-msg"
                 >
-                  <span className="text-red-500 mt-0.5 shrink-0" aria-hidden="true">⚠</span>
+                  <TriangleAlert aria-hidden="true" className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
                   <p className="text-xs text-red-700">{errorMsg}</p>
                 </div>
               )}

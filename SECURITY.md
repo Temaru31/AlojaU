@@ -40,10 +40,10 @@ Fail-closed: `backend/app/core/config.py` no arranca en `prod` con
 1. Supabase Dashboard → `Database → Advisors → Security`.
 2. Esperado: `0 errors` en `RLS disabled` / `Policy exists`. Si aparece tabla sin RLS:
 ```sql
--- Verificación RLS 11 tablas
+-- Verificación RLS (todas las tablas de public; 24 al 18/11/2026)
 SELECT tablename, rowsecurity AS rls_enabled
 FROM pg_tables WHERE schemaname='public' ORDER BY 1;
--- Esperado: 11 filas con rls_enabled=true
+-- Esperado: todas las filas con rls_enabled=true
 
 SELECT schemaname, tablename, policyname, roles, cmd, qual
 FROM pg_policies WHERE schemaname='public' ORDER BY tablename, policyname;
@@ -100,4 +100,20 @@ curl -s -X POST "$API/api/publicaciones" -H "Content-Type: application/json" \
 
 Si `mock-token-arrendador` da `201/422` en prod => `ENV`/`USE_MOCK_FALLBACK` mal
 configurados en Render. Revisar `render.yaml:22-25` y re-deploy.
+
+## 3) Mitigación de riesgo de sesión
+
+Decisión documentada (mitigación, no eliminación del riesgo XSS):
+
+- La aplicación usa JWT mediante `Authorization: Bearer` (`backend/app/core/security.py`).
+- El frontend almacena el token en `localStorage` (`frontend/src/contexts/AuthContext.jsx`).
+- El access token dura **2 horas** (`ACCESS_TOKEN_EXPIRE_HOURS=2`): la reducción
+  desde 8h acorta la ventana de exposición ante robo del token.
+- No existe refresh token ni revocación server-side por el alcance actual; el
+  logout elimina el token del cliente, pero un token ya copiado sigue válido
+  hasta su `exp`.
+- CSRF no aplica al flujo actual porque la autenticación no utiliza cookies.
+- Si se migra a cookies, reevaluar CSRF, SameSite, Secure, HttpOnly y CORS. Si
+  aparecen sesiones persistentes, app móvil o revocación centralizada, reevaluar
+  refresh tokens/sesiones server-side.
 

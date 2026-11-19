@@ -16,7 +16,8 @@ describe('ColdStartBanner', () => {
       window.dispatchEvent(new CustomEvent('alojau:api-slow-start'))
     })
     expect(screen.getByRole('status')).toBeInTheDocument()
-    expect(screen.getByText(/Despertando el servidor/)).toBeInTheDocument()
+    // v13: copia exacta requerida (compat: conserva mención al servidor dormido).
+    expect(screen.getByText(/Iniciando servidores seguros de AlojaU/)).toBeInTheDocument()
     act(() => {
       window.dispatchEvent(new CustomEvent('alojau:api-slow-end'))
     })

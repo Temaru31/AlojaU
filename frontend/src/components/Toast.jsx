@@ -28,8 +28,9 @@ export default function Toaster() {
 
   if (items.length === 0) return null
 
+  // bottom-24 en móvil: no tapa la sticky bar del Detalle (z-40, ~76px).
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[2100] w-[calc(100%-2rem)] max-w-md space-y-2" aria-live="polite">
+    <div className="fixed bottom-24 sm:bottom-4 left-1/2 -translate-x-1/2 z-[2100] w-[calc(100%-2rem)] max-w-md space-y-2" aria-live="polite">
       {items.map(t => (
         <div key={t.id} className="flex items-center justify-between gap-3 bg-navy-900 text-white text-xs rounded-lg px-4 py-3 shadow-xl border border-navy-700" role="status">
           <span className="leading-snug">{t.message}</span>

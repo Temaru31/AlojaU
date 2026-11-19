@@ -18,7 +18,8 @@ def test_prod_mock_401(monkeypatch):
     monkeypatch.setattr(cfg_mod.settings, "USE_MOCK_FALLBACK", True, raising=False)
 
     with pytest.raises(HTTPException) as exc:
-        sec_mod.get_current_user(authorization="Bearer mock-token-arrendador")
+        import asyncio
+        asyncio.run(sec_mod.get_current_user(authorization="Bearer mock-token-arrendador"))
     assert exc.value.status_code == 401
 
 
