@@ -105,6 +105,9 @@ export default function ChatWidget() {
           acciones: Array.isArray(data.acciones_sugeridas)
             ? data.acciones_sugeridas.filter((a) => a && typeof a.ruta === 'string').slice(0, 5)
             : [],
+          sugerencias: Array.isArray(data.sugerencias)
+            ? data.sugerencias.filter((s) => typeof s === 'string' && s.trim()).slice(0, 3)
+            : [],
         }])
       }
     } catch (err) {
@@ -177,6 +180,22 @@ export default function ChatWidget() {
                           className="text-xs font-semibold px-2.5 py-1.5 rounded-full border border-navy-300 text-navy-800 hover:bg-navy-50 min-h-[32px]"
                         >
                           {a.etiqueta}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {/* Solo en la última respuesta: las anteriores ya no aplican. */}
+                  {i === mensajes.length - 1 && estado !== 'cargando'
+                    && Array.isArray(m.sugerencias) && m.sugerencias.length > 0 && (
+                    <div className="flex flex-col items-start gap-1.5" role="group" aria-label="Preguntas sugeridas">
+                      {m.sugerencias.map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => enviar(s)}
+                          className="text-xs text-left px-2.5 py-1.5 rounded-lg bg-white border border-neutral-200 text-navy-800 hover:border-navy-300 min-h-[32px]"
+                        >
+                          {s}
                         </button>
                       ))}
                     </div>
