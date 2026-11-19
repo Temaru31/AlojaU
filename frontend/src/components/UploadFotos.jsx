@@ -163,7 +163,7 @@ export default function UploadFotos({ token, onUrls, initialUrls = [], endpoint 
       return
     }
     if (!token) {
-      setError('Necesitas iniciar sesión como ARRENDADOR')
+      setError('Necesitas iniciar sesión para subir fotos')
       return
     }
     setError('')

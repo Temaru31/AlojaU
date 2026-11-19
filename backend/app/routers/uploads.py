@@ -1,7 +1,9 @@
 """
 routers/uploads.py - HU-005 Subida real fotos 3-10 + F3 Cloudinary
 POST /api/publicaciones/upload -> {"urls": ["https://.../uploads/uuid.jpg", ...]}
-Seguridad: solo ARRENDADOR, valida 3-10 archivos, 5MB c/u, image/*, nombre seguro uuid
+Seguridad: cualquier usuario autenticado (un ESTUDIANTE sube fotos antes de su primera
+publicación, que es la que lo promueve a ARRENDADOR), con tope de subidas por hora;
+valida 3-10 archivos, 5MB c/u, image/*, nombre seguro uuid
 Persistencia (Strategy via services/storage.py):
 - Dev/test sin CLOUDINARY_*: disco local `backend/uploads/` (efímero en Render).
 - Prod con CLOUDINARY_CLOUD_NAME/API_KEY/API_SECRET: Cloudinary `secure_url` persistente.
@@ -14,7 +16,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Path
 from pydantic import BaseModel
 
-from app.core.security import get_current_user, require_arrendador, id_propietario, ClaimsUsuario
+from app.core.security import get_current_user, id_propietario, ClaimsUsuario
 from app.services.storage import StorageBackend, get_storage
 from app.db.session import get_session
 from app.repositories import publicacion_repo as repo
@@ -96,10 +98,10 @@ def _check_upload_rate_limit(uid: int) -> None:
                       "Demasiadas subidas, espera 1 hora")
 
 
-@router.post("", response_model=UploadOut, summary="HU-005 Upload 3-10 imágenes (solo ARRENDADOR)")
+@router.post("", response_model=UploadOut, summary="HU-005 Upload 3-10 imágenes (usuario autenticado)")
 async def upload_fotos(
     files: List[UploadFile] = File(..., description="3-10 imágenes, cada una max 5MB, image/*"),
-    user: ClaimsUsuario = Depends(require_arrendador),
+    user: ClaimsUsuario = Depends(get_current_user),
     backend: StorageBackend = Depends(get_storage),
 ):
     uid_t = id_propietario(user)
@@ -146,7 +148,7 @@ async def upload_fotos(
 @router.post("/una", response_model=UploadOut, summary="Dueño: subir 1 imagen (gestor multimedia)")
 async def upload_una_foto(
     file: UploadFile = File(..., description="1 imagen, max 5MB, image/*"),
-    user: ClaimsUsuario = Depends(require_arrendador),
+    user: ClaimsUsuario = Depends(get_current_user),
     backend: StorageBackend = Depends(get_storage),
 ):
     """Paso 1 del gestor: UNA foto (el /upload grupal exige 3-10).
