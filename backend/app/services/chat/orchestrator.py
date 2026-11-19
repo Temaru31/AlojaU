@@ -27,7 +27,20 @@ from app.services.chat.cache import (
     clear_cache_respuestas_for_tests,
 )
 from app.services.chat.faq import buscar_en_faq
-from app.services.chat.intencion import CONSULTA, detectar_intencion
+from app.services.chat.guiadas import (
+    SUGERENCIAS_INICIALES,
+    TEMAS_POR_DOC,
+    Tema,
+    acciones_de,
+    tema_de,
+    tema_guiado,
+)
+from app.services.chat.intencion import (
+    CONSULTA,
+    CONVERSACION,
+    RESUMIR,
+    detectar_intencion,
+)
 from app.services.chat.normalizar import (
     normalizar,
     palabras_significativas,
@@ -36,16 +49,24 @@ from app.services.chat.normalizar import (
 from app.services.chat.prompts import (
     BLOQUE_DATOS_FIN,
     BLOQUE_DATOS_INICIO,
-    CHAT_SYSTEM_PROMPT_V2,
+    CHAT_SYSTEM_PROMPT_V3,
     MARCADORES_NEUTRALIZADOS,
 )
-from app.services.chat.respuestas import respuesta_para
+from app.services.chat.ortografia import corregir
+from app.services.chat.respuestas import (
+    OFERTA_AMPLIAR,
+    respuesta_para,
+    sugerencias_para,
+)
 from app.services.chat.rutas import RUTAS_PERMITIDAS as _RUTAS_PERMITIDAS
 from app.services.chat.rutas import ruta_permitida
 
 _TOPE_FRAGMENTOS = 2
 
-_ACCION_BUSCAR = {"etiqueta": "Ir a la búsqueda", "ruta": "/"}
+# Respuestas del modelo: máximo 3 frases o unos 400 caracteres.
+MAX_FRASES = 3
+MAX_CARACTERES = 400
+_RE_FIN_FRASE = re.compile(r"(?<=[.!?])\s+")
 
 # Documento de la KB -> botones de navegación (solo rutas de _RUTAS_PERMITIDAS).
 _ACCIONES_POR_DOC = {
@@ -157,6 +178,25 @@ def filtrar_salida(texto: str) -> str:
     return salida[:2000] or RESPUESTA_SEGURA_GENERICA
 
 
+def recortar(texto: str, max_frases: int = MAX_FRASES,
+             max_caracteres: int = MAX_CARACTERES) -> str:
+    """Deja como máximo `max_frases` frases completas dentro del tope.
+
+    El prompt ya pide brevedad, pero el modelo no siempre obedece; este corte
+    lo garantiza sin partir frases (salvo una sola frase que exceda el tope).
+    """
+    frases = [f for f in _RE_FIN_FRASE.split(str(texto or "").strip()) if f]
+    salida = ""
+    for frase in frases[:max(1, max_frases)]:
+        candidata = f"{salida} {frase}".strip()
+        if salida and len(candidata) > max_caracteres:
+            break
+        salida = candidata
+    if len(salida) > max_caracteres:
+        salida = salida[:max_caracteres].rsplit(" ", 1)[0].rstrip(",;:") + "..."
+    return salida
+
+
 def _historial_sano(historial: list[dict]) -> list[dict]:
     """Solo turnos `user` que sean consultas legítimas.
 
@@ -178,16 +218,23 @@ def _historial_sano(historial: list[dict]) -> list[dict]:
     return sanos[-8:]
 
 
+def _sugerencias_de_doc(doc: str) -> list[str]:
+    """Preguntas sugeridas del tema del documento usado (o las generales)."""
+    tema = TEMAS_POR_DOC.get(str(doc or ""))
+    return list(tema.sugerencias if tema else SUGERENCIAS_INICIALES[:2])
+
+
 def _acciones(fragmentos: list[dict]) -> list[dict]:
-    """Botones server-side desde los documentos usados (rutas de la allowlist)."""
-    acciones: list[dict] = []
-    vistos: set[str] = set()
-    for frag in fragmentos:
-        for acc in _ACCIONES_POR_DOC.get(frag.get("doc") or "", []):
-            if acc["ruta"] not in vistos and ruta_permitida(acc["ruta"]):
-                vistos.add(acc["ruta"])
-                acciones.append(dict(acc))
-    return (acciones or [dict(_ACCION_BUSCAR)])[:5]
+    """Botones del documento principal (el más relevante), no de todos.
+
+    Sumar los botones de los dos documentos recuperados mostraba casi
+    siempre «Ir a la búsqueda» aunque el tema fuera otro.
+    """
+    if not fragmentos:
+        return []
+    principal = fragmentos[0].get("doc") or ""
+    return [dict(a) for a in _ACCIONES_POR_DOC.get(principal, [])
+            if ruta_permitida(a["ruta"])][:5]
 
 
 def _necesita_contexto(texto: str) -> bool:
@@ -222,7 +269,7 @@ def _clave_cache(texto: str, fragmentos: list[dict], proveedor) -> str:
 def _mensajes(texto: str, historial: list[dict],
               fragmentos: list[dict]) -> list[dict]:
     """Turnos para el proveedor: prompt fijo, historial user y bloque DATOS."""
-    return ([{"rol": "system", "texto": CHAT_SYSTEM_PROMPT_V2}]
+    return ([{"rol": "system", "texto": CHAT_SYSTEM_PROMPT_V3}]
             + historial
             + [{"rol": "tool",
                 "texto": empaquetar_datos(
@@ -232,8 +279,12 @@ def _mensajes(texto: str, historial: list[dict],
 
 def _respuesta(respuesta: str, fragmentos: list[dict],
                eventos: list[str]) -> dict:
-    return {"respuesta": filtrar_salida(respuesta),
+    """Salida de una respuesta redactada por el modelo (filtrada y recortada)."""
+    principal = fragmentos[0]["doc"] if fragmentos else ""
+    return {"respuesta": recortar(filtrar_salida(respuesta)),
             "acciones": _acciones(fragmentos),
+            "sugerencias": (_sugerencias_de_doc(principal) if fragmentos
+                            else list(SUGERENCIAS_INICIALES)),
             "docs_usados": [f["doc"] for f in fragmentos],
             "eventos": eventos}
 
@@ -242,40 +293,101 @@ def _respuesta_fija(categoria: str, eventos: list[str]) -> dict:
     """Respuesta de intención: texto y botones fijos, sin LLM ni KB."""
     texto, acciones = respuesta_para(categoria)
     return {"respuesta": texto, "acciones": acciones,
+            "sugerencias": sugerencias_para(categoria),
             "docs_usados": [], "eventos": eventos}
+
+
+def _respuesta_guiada(tema: Tema, eventos: list[str]) -> dict:
+    """Respuesta de un tema frecuente: texto de la KB, sin LLM."""
+    eventos.append(f"guiada-{tema.clave}")
+    return {"respuesta": tema.texto, "acciones": acciones_de(tema),
+            "sugerencias": list(tema.sugerencias),
+            "docs_usados": [tema.doc], "eventos": eventos}
+
+
+async def _redactar(*, texto: str, historial: list[dict], fragmentos: list[dict],
+                    proveedor, timeout_s: float, eventos: list[str],
+                    clave: str | None) -> dict:
+    """Llama al modelo con la documentación; guarda en caché si hay clave."""
+    try:
+        resp = await asyncio.wait_for(
+            proveedor.completar(_mensajes(texto, historial, fragmentos), []),
+            timeout=max(5.0, min(float(timeout_s or 20.0), 60.0)))
+    except Exception:
+        eventos.append("llm-fallo")
+        return _respuesta("", fragmentos, eventos)
+    crudo = str((resp or {}).get("texto") or "")
+    limpia = recortar(filtrar_salida(crudo))
+    if clave and crudo.strip():
+        CACHE_RESPUESTAS.guardar(clave, limpia)
+    return _respuesta(limpia, fragmentos, eventos)
 
 
 async def _turno_consulta(*, texto: str, historial: list[dict], proveedor,
                           timeout_s: float, eventos: list[str]) -> dict:
-    """Recupera KB, consulta caché y, si hace falta, redacta con el LLM."""
+    """Tema guiado si aplica; si no, KB + caché + LLM."""
+    corregido = corregir(texto)
+    tema = tema_guiado(corregido)
+    if tema:
+        return _respuesta_guiada(tema, eventos)
     sano = _historial_sano(historial)
-    consulta, seguimiento = _consulta(texto, sano)
+    consulta, seguimiento = _consulta(corregido, sano)
     fragmentos = buscar_en_faq(consulta, tope=_TOPE_FRAGMENTOS)
     if not fragmentos:
         eventos.append("sin-kb")
         return _respuesta(RESPUESTA_SIN_DOCUMENTACION, [], eventos)
 
-    clave = None if seguimiento else _clave_cache(texto, fragmentos, proveedor)
+    clave = None if seguimiento else _clave_cache(corregido, fragmentos, proveedor)
     if clave:
         guardada = CACHE_RESPUESTAS.obtener(clave)
         if guardada is not None:
             eventos.append("cache-hit")
             return _respuesta(guardada, fragmentos, eventos)
         eventos.append("cache-miss")
+    return await _redactar(texto=texto, historial=sano, fragmentos=fragmentos,
+                           proveedor=proveedor, timeout_s=timeout_s,
+                           eventos=eventos, clave=clave)
 
-    try:
-        resp = await asyncio.wait_for(
-            proveedor.completar(_mensajes(texto, sano, fragmentos), []),
-            timeout=max(5.0, min(float(timeout_s or 20.0), 60.0)))
-    except Exception:
-        eventos.append("llm-fallo")
-        return _respuesta("", fragmentos, eventos)
 
-    crudo = str((resp or {}).get("texto") or "")
-    limpia = filtrar_salida(crudo)
-    if clave and crudo.strip():
-        CACHE_RESPUESTAS.guardar(clave, limpia)
-    return _respuesta(limpia, fragmentos, eventos)
+def _resumir(previa: str, eventos: list[str]) -> dict:
+    """Primera frase del tema de la pregunta previa y oferta de ampliar."""
+    corregida = corregir(previa)
+    tema = tema_de(corregida)
+    if tema:
+        base, acciones, doc = tema.texto, acciones_de(tema), tema.doc
+    else:
+        fragmentos = buscar_en_faq(corregida, tope=1)
+        if not fragmentos:
+            return _respuesta_fija("sin_contexto", eventos)
+        base, acciones = fragmentos[0]["fragmento"], _acciones(fragmentos)
+        doc = fragmentos[0]["doc"]
+    corta = recortar(base, max_frases=1, max_caracteres=260)
+    return {"respuesta": f"{corta} {OFERTA_AMPLIAR}", "acciones": acciones,
+            "sugerencias": ["Explícame mejor"] + _sugerencias_de_doc(doc)[:1],
+            "docs_usados": [doc], "eventos": eventos}
+
+
+async def _turno_conversacion(*, categoria: str, historial: list[dict],
+                              proveedor, timeout_s: float,
+                              eventos: list[str]) -> dict:
+    """«Más corto» / «explícame mejor» sobre la última pregunta `user`.
+
+    Se recalcula el tema en el servidor desde la pregunta previa del usuario:
+    las respuestas del asistente que manda el cliente nunca se usan.
+    """
+    sano = _historial_sano(historial)
+    if not sano:
+        return _respuesta_fija("sin_contexto", eventos)
+    previa = sano[-1]["texto"]
+    if categoria == RESUMIR:
+        return _resumir(previa, eventos)
+    fragmentos = buscar_en_faq(corregir(previa), tope=_TOPE_FRAGMENTOS)
+    if not fragmentos:
+        return _respuesta_fija("sin_contexto", eventos)
+    return await _redactar(
+        texto=f"Explícame con más detalle y en palabras sencillas: {previa}",
+        historial=sano[:-1], fragmentos=fragmentos, proveedor=proveedor,
+        timeout_s=timeout_s, eventos=eventos, clave=None)
 
 
 async def conversar(*, mensaje: str, historial: list[dict],
@@ -286,12 +398,15 @@ async def conversar(*, mensaje: str, historial: list[dict],
         return _respuesta(RESPUESTA_SEGURA_GENERICA, [], ["mensaje-vacio"])
     categoria = detectar_intencion(texto)
     eventos = [f"intencion-{categoria}"]
-    if categoria != CONSULTA:
-        return _respuesta_fija(categoria, eventos)
-    texto = neutralizar_marcadores(texto)
     try:
-        return await _turno_consulta(texto=texto, historial=historial,
-                                     proveedor=proveedor,
+        if categoria in CONVERSACION:
+            return await _turno_conversacion(
+                categoria=categoria, historial=historial, proveedor=proveedor,
+                timeout_s=timeout_s, eventos=eventos)
+        if categoria != CONSULTA:
+            return _respuesta_fija(categoria, eventos)
+        return await _turno_consulta(texto=neutralizar_marcadores(texto),
+                                     historial=historial, proveedor=proveedor,
                                      timeout_s=timeout_s, eventos=eventos)
     except Exception:
         eventos.append("error-interno")

@@ -29,5 +29,7 @@ class AccionOut(BaseModel):
 class ChatOut(BaseModel):
     respuesta: str
     acciones_sugeridas: list[AccionOut] = Field(default_factory=list)
+    # Opcional: preguntas que el widget muestra como botones y envía tal cual.
+    sugerencias: list[str] = Field(default_factory=list)
     deshabilitado: bool = False
     request_id: str
