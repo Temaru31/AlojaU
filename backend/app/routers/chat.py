@@ -20,11 +20,13 @@ from app.core.logseguro import una_linea
 from app.core.security import get_optional_user
 from app.services.chat import orchestrator
 from app.services.chat.llm import FakeLLMProvider, HttpLLMProvider, LLMError, LLMProvider
-from app.core.net import client_ip
+from app.core.net import ip_para_limites
 from app.services.chat.prompts import FALLBACK_NO_DISPONIBLE
 from app.services.chat.schemas import AccionOut, ChatIn, ChatOut
 from app.services.chat.throttle import (
     limite_por_clave,
+    limite_por_hora,
+    turno_en_curso,
     registrar_exito_llm,
     registrar_fallo_llm,
     tope_diario,
@@ -68,6 +70,7 @@ def obtener_proveedor() -> LLMProvider:
 
 
 _ACCION_POR_DEFECTO = {"etiqueta": "Ir a la búsqueda", "ruta": "/"}
+_MAX_SUGERENCIAS = 3
 
 
 def _salida_fallback(evento: str) -> dict:
@@ -77,8 +80,17 @@ def _salida_fallback(evento: str) -> dict:
             "docs_usados": [], "eventos": [evento]}
 
 
+def _sugerencias_out(sal: dict) -> list[str]:
+    """Hasta 3 preguntas sugeridas (texto plano corto, generado en el servidor)."""
+    salida = []
+    for texto in (sal.get("sugerencias") or [])[:_MAX_SUGERENCIAS]:
+        if isinstance(texto, str) and texto.strip():
+            salida.append(texto.strip()[:80])
+    return salida
+
+
 def _acciones_out(sal: dict) -> list[AccionOut]:
-    """Hasta 5 acciones con ruta permitida; si no queda ninguna, la acción por defecto."""
+    """Hasta 5 acciones con ruta permitida (puede quedar vacía: no se fuerza un botón genérico)."""
     acciones = []
     for a in (sal.get("acciones") or [])[:5]:
         try:
@@ -88,27 +100,36 @@ def _acciones_out(sal: dict) -> list[AccionOut]:
                     etiqueta=str((a or {}).get("etiqueta") or "")[:60], ruta=ruta))
         except (ValueError, TypeError, AttributeError):
             continue
-    return acciones or [AccionOut(**_ACCION_POR_DEFECTO)]
+    return acciones
 
 
-async def _aplicar_limites(request: Request, authorization: str | None, rid: str) -> None:
-    """Tope diario/breaker (memoria, sin BD) y throttle por IP y por usuario: 429 si se exceden."""
-    try:
-        tope_diario(settings.CHAT_TOPE_DIARIO)
-    except HTTPException:
-        logger.warning("[chat] rid=%s tope-diario/429", una_linea(rid, 40))
-        raise
-    ip = client_ip(request)
+async def _aplicar_limites(request: Request, authorization: str | None, rid: str) -> str:
+    """Límites por IP y usuario y, al final, el tope diario global. Devuelve la IP.
+
+    La IP sale de `ip_para_limites` (no de X-Forwarded-For crudo): si no, un
+    cliente cambiaría la cabecera en cada petición y nunca chocaría el límite.
+    El tope diario va DESPUÉS de los límites por IP para que las peticiones
+    rechazadas de una sola IP no agoten el cupo diario de todos.
+    """
+    ip = ip_para_limites(request)
     usuario = await get_optional_user(authorization)
     uid = usuario.get("id") if isinstance(usuario, dict) else None
     try:
+        limite_por_clave(f"chat:rafaga:{ip}", settings.CHAT_LIMITE_IP_RAFAGA, 10.0)
         limite_por_clave(f"chat:ip:{ip}", settings.CHAT_LIMITE_IP_MIN, 60.0)
+        limite_por_hora(f"chat:hora:{ip}", settings.CHAT_LIMITE_IP_HORA)
         if isinstance(uid, int):
             limite_por_clave(f"chat:user:{uid}",
                              settings.CHAT_LIMITE_USUARIO_MIN, 60.0)
     except HTTPException:
         logger.warning("[chat] rid=%s 429 ip/user", una_linea(rid, 40))
         raise
+    try:
+        tope_diario(settings.CHAT_TOPE_DIARIO)
+    except HTTPException:
+        logger.warning("[chat] rid=%s tope-diario/429", una_linea(rid, 40))
+        raise
+    return ip
 
 
 async def _turno(body: ChatIn, proveedor: LLMProvider) -> tuple[dict, str]:
@@ -152,15 +173,17 @@ async def conversar_chat(body: ChatIn, request: Request,
         logger.info("[chat] rid=%s deshabilitado", una_linea(rid, 40))
         return _respuesta_apagado(rid)
 
-    await _aplicar_limites(request, authorization, rid)
+    ip = await _aplicar_limites(request, authorization, rid)
     try:
-        sal, resultado = await _turno(body, proveedor)
+        with turno_en_curso(f"chat:curso:{ip}", settings.CHAT_MAX_EN_CURSO_IP):
+            sal, resultado = await _turno(body, proveedor)
         docs = [str(d)[:40] for d in (sal.get("docs_usados") or [])]
         eventos = [str(e)[:40] for e in (sal.get("eventos") or [])]
         if "llm-error" not in eventos and "error-interno" not in eventos:
             registrar_exito_llm()
         return ChatOut(respuesta=str(sal.get("respuesta") or "")[:2000],
                        acciones_sugeridas=_acciones_out(sal),
+                       sugerencias=_sugerencias_out(sal),
                        deshabilitado=False, request_id=rid)
     finally:
         _medir(rid, t0, resultado, docs, eventos, len(body.mensaje or ""))

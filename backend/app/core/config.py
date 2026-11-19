@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     CHAT_MAX_TOKENS_SALIDA: int = 600
     # Abuso: throttle por IP/usuario (ventana 60 s) + tope diario global.
     CHAT_LIMITE_IP_MIN: int = 30
+    # Anti-saturación por IP (IP de `ip_para_limites`, no falsificable con
+    # cabeceras): ráfaga de 10 s, tope por hora y peticiones simultáneas.
+    CHAT_LIMITE_IP_RAFAGA: int = 6
+    CHAT_LIMITE_IP_HORA: int = 120
+    CHAT_MAX_EN_CURSO_IP: int = 2
     CHAT_LIMITE_USUARIO_MIN: int = 60
     CHAT_TOPE_DIARIO: int = 2000
 
