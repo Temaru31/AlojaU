@@ -110,3 +110,73 @@ def test_token_invalido_es_anonimo(throttle_limpio, monkeypatch):
                         json={"mensaje": "qué es el índice de confianza"},
                         headers={"Authorization": "Bearer token-invalido"})
     assert r.status_code == 200
+
+
+# --- Anti-saturación por IP ---------------------------------------------------
+
+def _encendido(monkeypatch, **limites):
+    monkeypatch.setattr(settings, "CHAT_ENABLED", True)
+    monkeypatch.setattr(settings, "TRUSTED_PROXY_HOPS", 0)
+    for nombre, valor in limites.items():
+        monkeypatch.setattr(settings, nombre, valor)
+    _usar_proveedor(lambda: FakeLLMProvider())
+
+
+def test_x_forwarded_for_falso_no_salta_el_limite(throttle_limpio, monkeypatch):
+    """Antes se usaba la primera IP de X-Forwarded-For: rotarla evitaba el límite."""
+    _encendido(monkeypatch, CHAT_LIMITE_IP_MIN=2)
+    c = _cliente()
+    codigos = [c.post("/api/chat", json={"mensaje": "hola"},
+                      headers={"X-Forwarded-For": f"203.0.113.{i}"}).status_code
+               for i in range(1, 4)]
+    assert codigos == [200, 200, 429]
+
+
+def test_rafaga_429_con_retry_after(throttle_limpio, monkeypatch):
+    _encendido(monkeypatch, CHAT_LIMITE_IP_RAFAGA=2)
+    c = _cliente()
+    assert [c.post("/api/chat", json={"mensaje": "hola"}).status_code
+            for _ in range(2)] == [200, 200]
+    r = c.post("/api/chat", json={"mensaje": "hola"})
+    assert r.status_code == 429
+    assert int(r.headers["retry-after"]) >= 1
+
+
+def test_tope_por_hora_por_ip(throttle_limpio, monkeypatch):
+    _encendido(monkeypatch, CHAT_LIMITE_IP_HORA=2)
+    c = _cliente()
+    codigos = [c.post("/api/chat", json={"mensaje": "hola"}).status_code
+               for _ in range(3)]
+    assert codigos == [200, 200, 429]
+
+
+def test_rechazos_de_una_ip_no_consumen_el_tope_diario(throttle_limpio, monkeypatch):
+    from app.services.chat import throttle
+    _encendido(monkeypatch, CHAT_LIMITE_IP_MIN=1, CHAT_TOPE_DIARIO=3)
+    c = _cliente()
+    codigos = [c.post("/api/chat", json={"mensaje": "hola"}).status_code
+               for _ in range(6)]
+    assert codigos == [200] + [429] * 5
+    assert sum(throttle._USO_DIARIO.values()) == 1
+    assert not throttle.breaker_abierto()
+
+
+def test_turno_en_curso_limita_peticiones_simultaneas():
+    from fastapi import HTTPException
+    from app.services.chat.throttle import turno_en_curso
+    clear_chat_throttle_for_tests()
+    with turno_en_curso("chat:curso:1.2.3.4", 2):
+        with turno_en_curso("chat:curso:1.2.3.4", 2):
+            with pytest.raises(HTTPException) as e:
+                with turno_en_curso("chat:curso:1.2.3.4", 2):
+                    pass
+            assert e.value.status_code == 429
+    with turno_en_curso("chat:curso:1.2.3.4", 2):
+        pass  # liberado al salir
+
+
+def test_respuesta_incluye_sugerencias(throttle_limpio, monkeypatch):
+    _encendido(monkeypatch)
+    cuerpo = _cliente().post("/api/chat", json={"mensaje": "Hola"}).json()
+    assert len(cuerpo["sugerencias"]) == 3
+    assert all(isinstance(s, str) and len(s) <= 80 for s in cuerpo["sugerencias"])

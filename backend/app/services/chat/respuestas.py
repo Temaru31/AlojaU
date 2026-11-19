@@ -6,10 +6,19 @@ colombiano, sin emojis, y botones cuyas rutas pertenecen a la allowlist.
 from app.services.chat.rutas import ruta_permitida
 
 RESPUESTA_SALUDO = (
-    "Hola, soy el asistente virtual de AlojaU, la plataforma de vivienda "
-    "universitaria para estudiantes de Popayán. Te puedo explicar la búsqueda "
-    "y los filtros, Roomies, los favoritos, las alertas y cómo publicar un "
-    "aviso. ¿Sobre cuál quieres saber?")
+    "Hola, soy el asistente de AlojaU. ¿Qué quieres saber de la plataforma?")
+
+RESPUESTA_IDENTIDAD = (
+    "Soy el asistente automático de AlojaU: un programa con inteligencia "
+    "artificial, no una persona. Solo explico cómo funciona AlojaU y no veo "
+    "tus datos personales ni los de otros usuarios.")
+
+RESPUESTA_SIN_CONTEXTO = (
+    "¿Sobre qué tema quieres que te explique? Puedo contarte, por ejemplo, "
+    "cómo publicar un aviso, qué es Roomies o cómo funciona el índice de "
+    "confianza.")
+
+OFERTA_AMPLIAR = "¿Quieres que te dé más detalle?"
 
 RESPUESTA_AGRADECIMIENTO = (
     "Con gusto. Si te queda otra duda sobre AlojaU, aquí estoy para explicarte "
@@ -56,13 +65,13 @@ def _accion(etiqueta: str, ruta: str) -> dict:
 
 _FIJAS: dict[str, tuple[str, tuple[dict, ...]]] = {
     "saludo": (RESPUESTA_SALUDO, (
-        _accion("Ir a la búsqueda", "/"),
+        _accion("Publicar un aviso", "/publicar"),
         _accion("Ir a Roomies", "/roomies"),
         _accion("Ver favoritos", "/favoritos"),
     )),
-    "agradecimiento": (RESPUESTA_AGRADECIMIENTO, (
-        _accion("Ir a la búsqueda", "/"),
-    )),
+    "identidad": (RESPUESTA_IDENTIDAD, ()),
+    "sin_contexto": (RESPUESTA_SIN_CONTEXTO, ()),
+    "agradecimiento": (RESPUESTA_AGRADECIMIENTO, ()),
     "despedida": (RESPUESTA_DESPEDIDA, ()),
     "ayuda_general": (RESPUESTA_AYUDA_GENERAL, (
         _accion("Ir a la búsqueda", "/"),
@@ -88,6 +97,22 @@ _FIJAS: dict[str, tuple[str, tuple[dict, ...]]] = {
         _accion("Publicar un aviso", "/publicar"),
     )),
 }
+
+
+# Preguntas sugeridas por categoría (texto que el widget envía tal cual).
+_SUGERENCIAS_GENERALES = (
+    "¿Cómo publico un aviso?",
+    "¿Qué es Roomies?",
+    "¿Qué es el índice de confianza?",
+)
+_SIN_SUGERENCIAS = frozenset({"despedida", "dato_sensible"})
+
+
+def sugerencias_para(categoria: str) -> list[str]:
+    """Preguntas sugeridas de una respuesta fija (vacío en despedida y datos)."""
+    if str(categoria or "") in _SIN_SUGERENCIAS:
+        return []
+    return list(_SUGERENCIAS_GENERALES)
 
 
 def respuesta_para(categoria: str) -> tuple[str, list[dict]]:

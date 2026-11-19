@@ -1,7 +1,8 @@
 """Detección de intención del mensaje por reglas (puro: sin LLM, red ni E/S).
 
-Categorías: saludo, agradecimiento, despedida, ayuda_general, inyeccion,
-dato_sensible, accion_no_permitida, fuera_de_tema y consulta. El orden de
+Categorías: saludo, agradecimiento, despedida, ayuda_general, identidad,
+resumir, ampliar, inyeccion, dato_sensible, accion_no_permitida,
+fuera_de_tema y consulta. El orden de
 evaluación importa: las defensas van antes que los temas y solo `consulta`
 llega a la base de conocimiento y al LLM.
 """
@@ -17,10 +18,18 @@ INYECCION = "inyeccion"
 DATO_SENSIBLE = "dato_sensible"
 ACCION_NO_PERMITIDA = "accion_no_permitida"
 FUERA_DE_TEMA = "fuera_de_tema"
+IDENTIDAD = "identidad"
+RESUMIR = "resumir"
+AMPLIAR = "ampliar"
 CONSULTA = "consulta"
 
-CATEGORIAS = (SALUDO, AGRADECIMIENTO, DESPEDIDA, AYUDA_GENERAL, INYECCION,
-              DATO_SENSIBLE, ACCION_NO_PERMITIDA, FUERA_DE_TEMA, CONSULTA)
+CATEGORIAS = (SALUDO, AGRADECIMIENTO, DESPEDIDA, AYUDA_GENERAL, IDENTIDAD,
+              RESUMIR, AMPLIAR, INYECCION, DATO_SENSIBLE, ACCION_NO_PERMITIDA,
+              FUERA_DE_TEMA, CONSULTA)
+
+# Preguntas sobre la conversación: se responden con el último turno `user`
+# del historial, nunca con lo que el cliente diga que respondió el asistente.
+CONVERSACION = (RESUMIR, AMPLIAR)
 
 _SALUDOS = (r"hola+|hey|hi|buenas|buenos dias|buenas tardes|buenas noches|"
             r"que mas|quiubo|que hubo|saludos|bendiciones")
@@ -44,10 +53,49 @@ _RE_AYUDA_GENERAL = re.compile(
     r"^(?:ayuda|ayudame|necesito ayuda|me ayudas|"
     r"(?:que|en que) (?:me )?(?:puedes|podrias|sabes) "
     r"(?:hacer|ayudar(?:me)?)|en que (?:me )?ayudas|"
-    r"para que (?:sirves|funcionas|estas)|quien eres|que eres|que haces|"
+    r"para que (?:sirves|funcionas|estas)|que haces|"
     r"como funcionas|que sabes hacer|"
     r"que informacion (?:tienes|me puedes dar)|"
     r"de que se trata (?:la aplicacion|alojau|esto))$")
+
+# Identidad: qué es el asistente. Respuesta honesta sin proveedor ni modelo.
+_RE_IDENTIDAD = re.compile(
+    r"^(?:y )?(?:tu )?(?:quien|que) eres(?: tu)?$"
+    r"|\beres (?:un |una )?(?:humano|humana|persona|real|robot|bot|maquina|"
+    r"ia|inteligencia artificial|chatgpt|gpt|llm|modelo|agente)\b"
+    r"|\b(?:que|cual|cuales) (?:agente|llm|modelo|ia|inteligencia artificial|"
+    r"bot|motor|version)\b.{0,30}\b(?:eres|usas|utilizas|te mueve|tienes)\b"
+    r"|\b(?:con|en) que (?:modelo|llm|ia|inteligencia artificial) "
+    r"(?:funcionas|trabajas|estas hecho)\b"
+    r"|\bquien te (?:creo|hizo|programo|desarrollo|entreno)\b"
+    r"|\bhablo con (?:un |una )?(?:humano|humana|persona|robot|bot|maquina)\b")
+
+# Peticiones sobre la respuesta anterior.
+_CORTESIA_FINAL = re.compile(r"\s+(?:por favor|porfa|porfavor|pls)$")
+_RE_RESUMIR = re.compile(
+    r"^(?:y )?(?:por que|porque|pa que) (?:tanto|tan largo|mucho|tanta) "
+    r"(?:texto|letra|explicacion)$"
+    r"|^(?:muy|demasiado|super|re) largo$|^es (?:muy|demasiado) largo$"
+    r"|^(?:mas|en) (?:corto|breve|resumen|pocas palabras)$"
+    r"|^resum\w*(?: (?:lo|eso|la respuesta|todo))?$"
+    r"|^(?:hazlo|dilo|dimelo|explicalo|ponlo|dame algo) (?:mas )?"
+    r"(?:corto|breve|simple|resumido)$"
+    r"|^(?:en )?pocas palabras$|^tl ?dr$|^sintetiza\w*$")
+_RE_AMPLIAR = re.compile(
+    r"^(?:explicame|explica|explicamelo|explicalo) (?:mejor|mas|de nuevo|"
+    r"otra vez|con mas detalle)$"
+    r"|^(?:dame |quiero )?mas (?:detalle|detalles|informacion)$"
+    r"|^amplia\w*$|^no (?:te )?entendi$|^no me quedo claro$|^como asi$")
+
+
+def _conversacion(texto: str) -> str | None:
+    texto = _CORTESIA_FINAL.sub("", texto)
+    if _RE_RESUMIR.fullmatch(texto):
+        return RESUMIR
+    if _RE_AMPLIAR.fullmatch(texto):
+        return AMPLIAR
+    return None
+
 
 # Inyección: cambio de rol, extracción del prompt o marcadores de sistema.
 # «reglas/instrucciones de convivencia» es contenido legítimo de la KB, así
@@ -162,6 +210,11 @@ def detectar_intencion(mensaje: str) -> str:
     texto = _quitar_saludo(texto)
     if not texto or _RE_SALUDO.fullmatch(texto):
         return SALUDO
+    if _RE_IDENTIDAD.search(texto):
+        return IDENTIDAD
+    conversacion = _conversacion(texto)
+    if conversacion:
+        return conversacion
     if _RE_AGRADECIMIENTO.fullmatch(texto):
         return AGRADECIMIENTO
     if _RE_DESPEDIDA.fullmatch(texto):

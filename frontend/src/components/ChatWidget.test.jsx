@@ -116,4 +116,31 @@ describe('ChatWidget', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /asistente virtual/i })).not.toBeInTheDocument())
   })
+
+  it('muestra las sugerencias y al pulsar una la envía como mensaje', async () => {
+    api.post.mockResolvedValueOnce({
+      data: { ...RTA_OK, sugerencias: ['¿Cómo edito mi perfil?', '¿Cómo guardo favoritos?'] },
+    })
+    montar()
+    fireEvent.click(await screen.findByRole('button', { name: /abrir asistente/i }))
+    fireEvent.change(screen.getByLabelText(/escribe tu mensaje/i), { target: { value: '¿qué es roomies?' } })
+    fireEvent.click(screen.getByRole('button', { name: /enviar mensaje/i }))
+    const grupo = await screen.findByRole('group', { name: /preguntas sugeridas/i })
+    expect(grupo).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '¿Cómo edito mi perfil?' }))
+    await waitFor(() => expect(api.post).toHaveBeenLastCalledWith(
+      '/api/chat',
+      expect.objectContaining({ mensaje: '¿Cómo edito mi perfil?' }),
+      undefined,
+    ))
+  })
+
+  it('sin campo sugerencias (backend anterior) no muestra el grupo', async () => {
+    montar()
+    fireEvent.click(await screen.findByRole('button', { name: /abrir asistente/i }))
+    fireEvent.change(screen.getByLabelText(/escribe tu mensaje/i), { target: { value: 'hola' } })
+    fireEvent.click(screen.getByRole('button', { name: /enviar mensaje/i }))
+    expect(await screen.findByText(RTA_OK.respuesta)).toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: /preguntas sugeridas/i })).not.toBeInTheDocument()
+  })
 })
